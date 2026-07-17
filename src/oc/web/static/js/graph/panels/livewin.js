@@ -42,10 +42,18 @@ let liveFrames = 0, liveT0 = 0, liveFps = 0;
 // real pipeline (confirm_frames -> dedup -> store -> triggers). When live + disarmed, only
 // the read-only client detect/preview loop runs (tuning, no writes).
 let liveSave = true;
+// "save all images" arm (default OFF): when on, the server collector saves EVERY OCR-due grab to
+// the live/ image bucket, not only the frames that wrote a record. Rides the collector, so a mid-
+// run toggle restarts it (like the frame limiter / save arm). Read-only tuning mode is unaffected.
+let liveSaveRecog = false;
 // Frame limiter (min SECONDS between collector reads) now lives in the SETTINGS modal and is
 // persisted server-side; the collector reads it on start. applyLiveInterval() (exported) restarts
 // a running collector when the modal changes it, so the new limit takes effect immediately.
 let liveColStatus = null;   // latest server collector status (from the heartbeat) while collecting
+// Last non-null collector status, kept AFTER live stops so the stat rows freeze on their final
+// values instead of blanking to "–" (user: don't clear live stats when exiting live mode). Updated
+// each beat while collecting; never cleared on stop. A fresh start overwrites it on its first beat.
+let liveStatsLast = null;
 let liveColUnsub = null;    // hub subscription active while the server collector runs
 let liveSawServer = false;  // we've observed the server collector actually running this run (gates the external-stop reflect, so an optimistic pre-start beat can't kill a just-started toggle)
 let liveImg = { count: 0, bytes: 0 };   // saved live-image stat (live tuning saves one frame/round)
@@ -112,6 +120,11 @@ function mountLive(adapter) {
                     h("button", { class: "act-enable live-save", role: "switch", "aria-checked": "true", title: "save reads to datasets (runs the real collector: confirm-frames, dedup, store, triggers)" },
                         switchSvg()),
                     h("span", { class: "live-save-lbl" }, "save to datasets"))),
+            h("div", { class: "live-row" },
+                h("label", { class: "live-toggle" },
+                    h("button", { class: "act-enable live-saverecog", role: "switch", "aria-checked": "false", title: "save one image per OCR-due grab whose frame matched a window (any recognised window/state), not just frames that wrote a record — debug aid, off by default" },
+                        switchSvg()),
+                    h("span", { class: "live-saverecog-lbl" }, "capture recognised windows"))),
             h("div", { class: "live-wins" }));
         // Stats collapsible (open by default): live-run readouts as fixed rows with placeholders so
         // the height is stable whether live is on or off. Boxed body, styled like the OCR log below.
@@ -155,6 +168,7 @@ function mountLive(adapter) {
         });
         liveRoot.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
         liveRoot.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
+        liveRoot.querySelector(".live-saverecog").addEventListener("click", () => setLiveSaveRecog(!liveSaveRecog));
         // clear saved live images -- armed two-click (no blocking confirm)
         const clr = liveRoot.querySelector(".live-clear");
         clr.addEventListener("click", () => {
@@ -289,6 +303,8 @@ function buildDebugRow(e) {
     const head = h("div", { class: "live-dbg-row-head" },
         h("span", { class: "live-dbg-time" }, fmtTimeSec(e.t * 1000)),
         h("span", { class: "live-dbg-phase" }, phase),
+        // capture-recognised mode names the image file this grab was written to (server sends `saved`)
+        e.saved ? h("span", { class: "live-dbg-file", title: e.saved }, e.saved) : null,
         h("span", { class: "live-dbg-wrote" + (e.new ? " wrote" : "") }, wrote || `${e.kept ?? 0}/${e.read ?? 0} read`));
     const reads = (e.reads || []).map((rd) => buildReadRow(rd));
     // Readouts (live HUD scalars) read on a separate path — shown here too, tagged so they read
@@ -336,33 +352,40 @@ function renderLiveWindow() {
     };
     syncSwitch(liveRoot.querySelector(".live-switch"), liveOn);
     syncSwitch(liveRoot.querySelector(".live-save"), liveSave);
+    syncSwitch(liveRoot.querySelector(".live-saverecog"), liveSaveRecog);
     // Stats render as fixed rows below the window list; "–" placeholder when off so height holds.
     // collecting (armed): show what the server collector saved; tuning (disarmed): client img rate.
     const collecting = liveOn && liveSave;
+    if (collecting && liveColStatus) liveStatsLast = liveColStatus;   // remember the last live snapshot
+    // Stat source: the live collector while running, else the frozen final snapshot so the numbers
+    // stay put after exiting live mode (rather than blanking). `frozen` = stopped but we have one.
+    const statSrc = collecting ? liveColStatus : liveStatsLast;
+    const frozen = !collecting && !!statSrc;
     // mirror datasets report the current visible row-index span [vlo,vhi] + calibration -> show live
-    const sc = collecting ? liveColStatus?.scroll : null;
-    const scm = collecting ? liveColStatus?.scroll_meta : null;
+    const sc = (collecting || frozen) ? statSrc?.scroll : null;
+    const scm = (collecting || frozen) ? statSrc?.scroll_meta : null;
     const setStat = (cls, txt) => {
         const el = liveRoot.querySelector(cls);
         if (el && el.textContent !== txt) el.textContent = txt;
     };
     // current phase: the window/state being read now, else the REASON we aren't reading — taken
     // from the raw tick status (throttled between OCR slots, no-window, unrecognised, …).
-    const win = collecting ? liveColStatus?.window : null;
+    const win = (collecting || frozen) ? statSrc?.window : null;
     const reasonText = { throttled: "waiting (throttle)", unrecognised: "no window recognised",
         no_window: "game not found", not_foreground: "window not focused",
         state_invalid: "wrong state", moving: "screen moving" };
-    setStat(".live-stat-phase", !collecting ? "–"
-        : win ? (liveColStatus.state ? `${win} / ${liveColStatus.state}` : win)
-        : (reasonText[liveColStatus?.phase_status] || "waiting"));
+    setStat(".live-stat-phase", !collecting && !frozen ? "–"
+        : win ? (statSrc.state ? `${win} / ${statSrc.state}` : win)
+        : (reasonText[statSrc?.phase_status] || "waiting"));
     const phaseEl = liveRoot.querySelector(".live-stat-phase");
-    // same scheme as the gate verdict: reading a phase = green, idle = amber, off = muted
-    const phaseCls = "live-statval live-stat-phase " + (win ? "conf-ok" : collecting ? "conf-warn" : "muted");
+    // same scheme as the gate verdict: reading a phase = green, idle = amber, frozen/off = muted
+    const phaseCls = "live-statval live-stat-phase " + (win && collecting ? "conf-ok" : collecting ? "conf-warn" : "muted");
     if (phaseEl && phaseEl.className !== phaseCls) phaseEl.className = phaseCls;
-    setStat(".live-stat-saved", collecting ? String(liveColStatus?.written ?? 0) : "–");
+    setStat(".live-stat-saved", (collecting || frozen) ? String(statSrc?.written ?? 0) : "–");
     setStat(".live-stat-rate",
         collecting ? `${(liveColStatus?.fps ?? 0).toFixed(1)}/s`
-        : liveOn ? `${liveFps.toFixed(1)} img/s` : "–");
+        : liveOn ? `${liveFps.toFixed(1)} img/s`
+        : frozen ? `${(statSrc?.fps ?? 0).toFixed(1)}/s` : "–");
     setStat(".live-stat-rows", sc
         ? `${Math.round(sc[0])}–${Math.round(sc[1])}${scm && scm.total ? ` / ${Math.round(scm.total)}` : ""}`
         : "–");
@@ -581,7 +604,7 @@ function startServerCollect() {
     // has actually started: the immediate kick races the worker and usually reads live=false, which
     // would schedule the hub at IDLE cadence (~3s) — so activity:live-gated elements lagged badly.
     // Requesting a beat on resolution flips them as soon as the worker is up.
-    api.live.start(game, null).then(() => hub.kick()).catch((e) => setStatus(String(e.message || e)));   // null => server uses the persisted frame limiter
+    api.live.start(game, null, liveSaveRecog).then(() => hub.kick()).catch((e) => setStatus(String(e.message || e)));   // null => server uses the persisted frame limiter; liveSaveRecog => save every recognised grab
     subscribeCollector();
     hub.kick();   // beat now so collection status shows immediately
 }
@@ -700,6 +723,18 @@ function setLiveSave(on) {
         registerWorker("live", on ? "live collection" : "live view", () => setLiveMode(false));
         log(on ? "live saving armed" : "live saving disarmed", on ? "run" : undefined);
     }
+    renderLiveWindow();
+}
+
+// Toggle "capture recognised windows". The flag rides the server collector (started with
+// save_recognized), so a change while it's running restarts it in place to take effect (like the
+// frame limiter). No effect in read-only tuning mode — there's no server collector, only the
+// client detect loop.
+function setLiveSaveRecog(on) {
+    if (on === liveSaveRecog) return;
+    liveSaveRecog = on;
+    if (liveOn && liveSave) { stopServerCollect().then(startServerCollect); }   // restart so save_recognized applies
+    log(on ? "saving every recognised-window grab" : "saving write frames only");
     renderLiveWindow();
 }
 

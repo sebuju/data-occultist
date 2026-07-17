@@ -104,7 +104,7 @@ def set_interval(seconds: float):
 
 
 @router.post("/{game}/start")
-def start(game: str, interval: float | None = None):
+def start(game: str, interval: float | None = None, save_recognized: bool = False):
     s = _session(game, create=True)
     _refresh_profile(game, s)   # pick up profile edits made since the last run
     # auto-mode runs the live loop on GPU (then frees it on stop); cpu/gpu leave the device
@@ -112,7 +112,7 @@ def start(game: str, interval: float | None = None):
     s.batch_device = "gpu" if read_mode() == "auto" else None
     if interval is None:
         interval = _read_interval()   # persisted frame limiter (settings modal owns it)
-    s.start(interval=interval)
+    s.start(interval=interval, save_recognized=save_recognized)   # save every recognised grab, not just writes
     _fire_on_capture(game)
     _fire_lifecycle(game, "fire_live_start")   # a live start is also its own distinct event
     return s.status()

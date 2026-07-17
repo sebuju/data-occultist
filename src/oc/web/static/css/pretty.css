@@ -173,6 +173,11 @@ g.pw-cue-hot .pw-cue-lbl-tx { font-weight: 700; }
 .pw-ro-x .pw-ro-after  { box-shadow: inset -2px 0 0 0 #4ea1ff; }
 .pw-ro-y .pw-ro-before { box-shadow: inset 0 2px 0 0 #4ea1ff; }
 .pw-ro-y .pw-ro-after  { box-shadow: inset 0 -2px 0 0 #4ea1ff; }
+/* wrap axis (2-D grid): an absolute caret bar drawn at the drop gap, unambiguous across rows */
+.pw-ro-wrap { position: relative; }
+.pw-ro-caret { position: absolute; width: 3px; background: #4ea1ff; border-radius: 2px;
+    box-shadow: 0 0 5px #4ea1ff; pointer-events: none; z-index: 6; }
+.pw-ro-caret[hidden] { display: none; }
 /* drag-to-resize: a right-edge grip on each header (edit mode). Width persists as a % on the
    column config; the table goes table-layout:fixed once any column has an explicit width so
    the <col> widths are honoured and overflow clips. (colResizeDrag, dragresize.js — rule 7) */

@@ -35,8 +35,12 @@ def save(captures_dir: Path | str, game: str, data: bytes, clock=None, sub: str 
     return name
 
 
-def listing(captures_dir: Path | str, game: str) -> list[str]:
+def listing(captures_dir: Path | str, game: str, sub: str = "") -> list[str]:
+    """Filenames of the .jpg files in ``captures/<game>[/<sub>]/`` (non-recursive), newest first.
+    ``sub`` reaches a bucket like ``LIVE`` — the top-level listing (``sub=""``) never sees those."""
     d = Path(captures_dir) / _safe(game)
+    if sub:
+        d = d / _safe(sub)
     if not d.exists():
         return []
     return sorted((p.name for p in d.glob("*.jpg")), reverse=True)
@@ -72,12 +76,29 @@ def clear(captures_dir: Path | str, game: str, sub: str = "") -> int:
     return removed
 
 
-def path_for(captures_dir: Path | str, game: str, name: str) -> Path | None:
-    # Guard against traversal: only a bare filename in the game's folder.
+def path_for(captures_dir: Path | str, game: str, name: str, sub: str = "") -> Path | None:
+    # Guard against traversal: only a bare filename in the game's folder (or its ``sub`` bucket).
     if "/" in name or "\\" in name or ".." in name:
         return None
-    p = Path(captures_dir) / _safe(game) / name
+    base = Path(captures_dir) / _safe(game)
+    if sub:
+        base = base / _safe(sub)
+    p = base / name
     return p if p.exists() else None
+
+
+def promote_live(captures_dir: Path | str, game: str, name: str) -> str | None:
+    """Copy a live-bucket image up into the top-level (permanent) captures folder so it survives a
+    live-bucket flush. Returns the (unchanged) filename, or None if the source is missing. Idempotent
+    — if a top-level file of that name already exists it's left as-is."""
+    src = path_for(captures_dir, game, name, sub=LIVE)
+    if src is None:
+        return None
+    dst = Path(captures_dir) / _safe(game) / src.name
+    if not dst.exists():
+        import shutil
+        shutil.copy2(src, dst)
+    return src.name
 
 
 # ---- frozen item cutouts (the item template's saved image) ----------------

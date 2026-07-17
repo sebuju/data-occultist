@@ -206,6 +206,11 @@ class Collector:
         # mode saves an image just when collection produced something, not on every recognised
         # grab) — lets a caller persist what was grabbed without the collector knowing how to store.
         self.on_frame = None
+        # When True, on_frame fires on every OCR-due grab whose frame MATCHED a window (any
+        # recognised window/state), not only the write frames — the live panel's "capture
+        # recognised windows" debug toggle. Off by default so the image bucket stays write-only
+        # (the on-write save below is skipped while this is on).
+        self.save_recognized_frames = False
 
     # ---- save-gating -------------------------------------------------------
 
@@ -372,6 +377,13 @@ class Collector:
             window = self._profile.window(window_id)
             if window is None:
                 return TickResult(TickStatus.unrecognised, window_id=window_id)
+
+            # "capture recognised windows" debug bucket: persist one grab per OCR-due tick whose
+            # frame matched a window (any state, incl. moving / state-invalid), not only the write
+            # frames the on-write save handles. Opt-in via the live panel; when on, the on-write
+            # save below is skipped (this recognised superset already covers it).
+            if self.save_recognized_frames and self.on_frame is not None:
+                self.on_frame(frame)
 
             # Live readouts (health/bars/counters): read EVERY OCR-due tick the window declares
             # them, BEFORE the motion/state gates below — they're ephemeral HUD values, not the
@@ -619,7 +631,9 @@ class Collector:
 
         # Persist the frame image only when this tick actually WROTE a record (live mode
         # saves the grab) — a recognised-but-nothing-new frame produces no screenshot.
-        if new and self.on_frame is not None:
+        # Skipped in capture-recognised mode: this grab was already saved above, so this would
+        # double it.
+        if new and self.on_frame is not None and not self.save_recognized_frames:
             self.on_frame(frame)
 
         stats_store.record_timing(self._profile.name, f"win:{window_id}", "tk",

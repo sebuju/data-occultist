@@ -101,6 +101,31 @@ def live_clear(game: str):
     return captures_store.stats(settings.captures_dir, game, captures_store.LIVE)
 
 
+@router.get("/captures/{game}/live/list")
+def list_live(game: str):
+    """Saved live-bucket image filenames for the game, newest first (the picker's live tab)."""
+    return captures_store.listing(get_settings().captures_dir, game, captures_store.LIVE)
+
+
+@router.get("/captures/{game}/live/img/{name}")
+def get_live_image(game: str, name: str):
+    """Serve one live-bucket image (the picker's live-tab thumbnail/preview)."""
+    path = captures_store.path_for(get_settings().captures_dir, game, name, sub=captures_store.LIVE)
+    if path is None:
+        raise HTTPException(status_code=404, detail="live image not found")
+    return FileResponse(str(path), media_type="image/jpeg")
+
+
+@router.post("/captures/{game}/live/promote")
+def promote_live_image(game: str, name: str = Query(...)):
+    """Copy a live image into the permanent top-level bucket so it survives a live flush; returns
+    its (unchanged) filename. Called when the picker chooses a live image."""
+    nm = captures_store.promote_live(get_settings().captures_dir, game, name)
+    if nm is None:
+        raise HTTPException(status_code=404, detail="live image not found")
+    return {"name": nm}
+
+
 @router.get("/captures/{game}/bindings")
 def get_bindings(game: str):
     """Which stashes each window opens with: {window_id: [capture_name, …]}. Always a list

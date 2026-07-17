@@ -50,6 +50,12 @@
 /* capture picker: thumbnail grid of stashed captures */
 .cap-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
 .cap-head .spacer { flex: 1; }
+/* picker tabs: stashed (permanent bucket) vs live (live-mode bucket, click a thumb to keep it) */
+.cap-tab { background: transparent; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: var(--fs-sm); }
+.cap-tab:hover { border-color: var(--accent); color: var(--text); }
+.cap-tab.on { border-color: var(--accent); color: var(--text);
+    background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .cap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 8px; padding: 0 12px 12px; }
 .cap-cell { position: relative; padding: 4px; background: var(--bg); border: 1px solid var(--line);
@@ -63,11 +69,12 @@
     display: inline-flex; align-items: center; justify-content: center; padding: 0 5px;
     border-radius: 5px; font-size: var(--fs-xs); font-weight: 600; line-height: 1;
     color: var(--black); background: var(--accent); }
-/* chosen row: the picked captures in page order, above the pool. Single horizontal scroll row
-   (fixed-width thumbs) so the axis-x drag-reorder math stays in one line. */
-.cap-chosen { display: flex; gap: 8px; padding: 0 12px 10px; overflow-x: auto;
-    border-bottom: 1px solid var(--line); margin-bottom: 10px; }
-.cap-chosen .cap-cell { width: 150px; flex: 0 0 auto; cursor: grab; }
+/* chosen row: the picked captures in page order, above the pool. A wrapping grid (mirrors
+   .cap-grid) so it grows DOWNWARD instead of scrolling sideways; reorder uses the 2-D "wrap"
+   axis (caret marker) so the drop point stays clear across wrapped rows. */
+.cap-chosen { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 8px; padding: 0 12px 10px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.cap-chosen .cap-cell { cursor: grab; }
 .cap-cell img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px;
     display: block; background: var(--black); }
 .cap-time { font-size: var(--fs-xs); color: var(--muted); text-align: center; white-space: nowrap; }
@@ -77,6 +84,16 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
     min-height: 1.3em; line-height: 1.3em; }
 .cap-empty { padding: 16px; color: var(--muted); }
+/* split picker: thumbs on the left (owns the scroll — .modal.large .modal-body is overflow:hidden),
+   a large hover-driven preview pinned on the right. */
+.cap-split { display: flex; height: 100%; min-height: 0; }
+.cap-left  { flex: 1; min-width: 0; overflow-y: auto; }
+.cap-right { flex: 0 0 60%; border-left: 1px solid var(--line);
+    padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.cap-preview-img   { width: 100%; flex: 1; min-height: 0; object-fit: contain; object-position: top;
+     border-radius: 6px; }
+.cap-preview-cap   { font-size: var(--fs-xs); color: var(--muted); text-align: center; white-space: pre-line; }
+.cap-preview-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); }
 
 /* bottom terminal log bar (fixed; overlays, never shifts layout) */
 .logbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1100;
@@ -94,6 +111,12 @@
 .logbar.boot { z-index: 3100; background: transparent; border-top: none; }
 .logbar.boot .log-head { display: none; }
 .logbar.boot .log-body { border-top: none; max-height: 100vh; max-height: 100dvh; }
+/* veil lift: the boot log slides down off-screen + fades, in step with the veil crop */
+.logbar.boot.liftout { animation: logbar-slideout .3s ease-in forwards; }
+@keyframes logbar-slideout {
+    from { transform: translateY(0);    opacity: 1; }
+    to   { transform: translateY(110%); opacity: 0; }
+}
 
 /* background-worker indicator (far right of the log head): live count + per-worker
    emergency kill. Hidden when nothing is running. */
@@ -112,8 +135,15 @@
    the user can't poke a half-loaded, laggy UI. main.js removes it once boot quiesces
    (and before showing a startup-halt, which sits below it). */
 #bootveil { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: center;
-    justify-content: center; background: var(--bg); transition: opacity .25s; }
-#bootveil.fade { opacity: 0; pointer-events: none; }
+    justify-content: center; background: var(--bg); }
+/* Lift = crop inward to a rounded square at centre, then fade the last sliver. Fast (.24s) so it
+   reads as a reveal, not a wait. clip-path insets from all four edges together (square crop), round
+   corners grow as it shrinks; forwards holds the collapsed end-state until JS removes the node. */
+#bootveil.fade { pointer-events: none; animation: bootveil-crop .3s ease-in forwards; }
+@keyframes bootveil-crop {
+    from { clip-path: circle(75% at 50% 50%); opacity: 1; }
+    to   { clip-path: circle(0%  at 50% 50%); opacity: 1; }
+}
 .bootveil-box { display: flex; flex-direction: column; align-items: center; gap: 14px;
     color: var(--muted); user-select: none; }
 /* matches the cauldron palette: rim teal text, a faint amber-bubble glow */

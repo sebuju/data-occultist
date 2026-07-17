@@ -364,6 +364,10 @@
 .live-dbg-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .live-dbg-phase { flex: 1; min-width: 0; color: var(--text); font-weight: 600;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* capture-recognised: image file this grab was written to (between phase and the write summary) */
+.live-dbg-file { flex: 0 1 auto; min-width: 0; max-width: 45%; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums; opacity: 0.8; }
 .live-dbg-wrote { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .live-dbg-wrote.wrote { color: var(--ok); font-weight: 600; }
 /* a read: field chips wrap; each shows fid + optional raw->value */

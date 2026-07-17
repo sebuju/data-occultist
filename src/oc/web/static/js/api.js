@@ -320,6 +320,12 @@ export const liveCaptures = {
     grab: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/grab`, { method: "POST" }, OCR_MS).then((r) => ok(r, "live grab")).then((r) => r.json()),
     stats: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/stats`).then((r) => r.json()),
     clear: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/clear`, { method: "POST" }).then((r) => ok(r, "clear live")).then((r) => r.json()),
+    // Live-bucket image names (newest first) for the picker's live tab, the URL to load one, and
+    // "promote" — copy a live image into the permanent bucket so a flush can't delete it (returns
+    // the chosen filename, now a normal capture).
+    list: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/list`).then((r) => (r.ok ? r.json() : [])),
+    imgUrl: (game, name) => `/api/captures/${encodeURIComponent(game)}/live/img/${encodeURIComponent(name)}`,
+    promote: (game, name) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/promote?name=${encodeURIComponent(name)}`, { method: "POST" }).then((r) => ok(r, "promote live")).then((r) => r.json()).then((j) => j.name),
 };
 
 // URL of one frame image (NNNNN.jpg) of a saved precapture session — for the capture picker.
@@ -482,9 +488,14 @@ export const precapture = {
 export const live = {
     // interval omitted (null/undefined) => server uses tuning.collect_interval; a number
     // overrides it (the live panel's frame limiter — min seconds between collector reads).
-    start: (game, interval, signal) => {
+    // saveRecognized => the collector saves every OCR-due grab whose frame matched a window to
+    // the live/ bucket, not only writes.
+    start: (game, interval, saveRecognized, signal) => {
         let url = `/api/live/${encodeURIComponent(game)}/start`;
-        if (interval != null && Number.isFinite(interval)) url += `?interval=${encodeURIComponent(interval)}`;
+        const q = [];
+        if (interval != null && Number.isFinite(interval)) q.push(`interval=${encodeURIComponent(interval)}`);
+        if (saveRecognized) q.push("save_recognized=1");
+        if (q.length) url += `?${q.join("&")}`;
         return tfetch(url, { method: "POST", signal }).then((r) => r.json());
     },
     stop: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/stop`, { method: "POST", signal }).then((r) => ok(r, "live stop")).then((r) => r.json()),

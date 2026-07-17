@@ -870,7 +870,7 @@ async function openCaptureModal(winId) {
     // save on ANY close (×, Esc, backdrop) — only if something changed. Fire-and-forget: apply
     // reloads the canvas + label itself, and onClose isn't awaited.
     const modal = openModal({
-        title: `${winId} — choose images`, size: "data", node,
+        title: `${winId} — choose images`, size: "large", node,
         onClose: () => { if (dirty) apply(orderedSel()).catch((e) => setStatus(String(e.message || e))); },
     });
     let caps = [], binds = {};
@@ -907,36 +907,121 @@ async function openCaptureModal(winId) {
             } catch (e) { setStatus(String(e.message || e)); }
         };
         // one thumb factory shared by both grids: badgeNum (1-based page order) shown only when set.
+        // Hovering a thumb (either grid) drives the large preview on the right.
         const cell = (name, badgeNum, onClick) => {
             const wins = usedBy(name), label = wins.join(", ");
             return h("button", {
                 class: "cap-cell" + (order.includes(name) ? " sel" : "") + (wins.length ? " used" : ""),
-                dataset: { name }, title: name, onClick,
+                dataset: { name }, title: name, onClick, onMouseEnter: () => setPreview(name),
             },
                 h("img", { loading: "lazy", src: api.captureUrl(game, name), alt: "" }),
                 badgeNum ? h("span", { class: "cap-order" }, String(badgeNum)) : null,
                 h("span", { class: "cap-time" }, fmtCaptureTime(name)),
                 h("span", { class: "cap-wins", title: label }, label));
         };
+
+        // --- split shell (built ONCE) so the preview element survives every draw() ---
+        const left = h("div", { class: "cap-left" });
+        const previewImg = h("img", { class: "cap-preview-img", alt: "" });
+        const previewCap = h("div", { class: "cap-preview-cap" });
+        const previewEmpty = h("div", { class: "cap-preview-empty" }, "hover an image to preview");
+        const right = h("div", { class: "cap-right" }, previewImg, previewCap, previewEmpty);
+        // node IS the split flex row (no wrapper) so height:100% resolves against modal-body —
+        // an intermediate auto-height div breaks the chain and .cap-left never gets to scroll.
+        node.className = "cap-split";
+        node.replaceChildren(left, right);
+        let previewName = null, previewLive = false;
+        let tab = "stashed", live = null;   // picker tab; live = lazily-loaded live-bucket names (null = unloaded)
+        // show `name` big on the right; null -> the hint. `liveOnly` previews a not-yet-promoted
+        // live-bucket image from its live URL. Caption: time · page N (or "live") · bound windows.
+        const setPreview = (name, liveOnly = false) => {
+            previewName = name; previewLive = liveOnly && !!name;
+            const on = !!name;
+            previewImg.hidden = !on; previewCap.hidden = !on; previewEmpty.hidden = on;
+            if (!on) return;
+            previewImg.src = previewLive ? api.liveCaptures.imgUrl(game, name) : api.captureUrl(game, name);
+            const pg = order.indexOf(name), wins = usedBy(name);
+            previewCap.textContent = [fmtCaptureTime(name),
+                previewLive ? "live" : (pg >= 0 ? `page ${pg + 1}` : null),
+                wins.length ? wins.join(", ") : null].filter(Boolean).join("\n");
+        };
+
+        // Choosing a live image PROMOTES it (copies into the permanent bucket so a flush can't
+        // delete it), then selects it and flips to the stashed tab so the kept capture is visible.
+        const promoteLive = async (name) => {
+            try {
+                const nm = await api.liveCaptures.promote(game, name);
+                if (!nm) return;
+                if (!caps.includes(nm)) caps.unshift(nm);   // newest-first, like a fresh grab
+                if (!order.includes(nm)) order.push(nm);
+                dirty = true; tab = "stashed"; draw();
+            } catch (e) { setStatus(String(e.message || e)); }
+        };
+        // one live-tab thumb: click promotes+keeps it; an already-promoted name reads "saved".
+        const liveCell = (name) => {
+            const saved = caps.includes(name);
+            return h("button", {
+                class: "cap-cell" + (saved ? " used" : ""), dataset: { name },
+                title: saved ? `${name} (saved)` : name,
+                onClick: () => promoteLive(name), onMouseEnter: () => setPreview(name, !saved),
+            },
+                h("img", { loading: "lazy", src: api.liveCaptures.imgUrl(game, name), alt: "" }),
+                h("span", { class: "cap-time" }, fmtCaptureTime(name)),
+                h("span", { class: "cap-wins" }, saved ? "saved" : ""));
+        };
+        // switch tabs; lazy-load the live bucket the first time its tab opens.
+        const switchTab = async (t) => {
+            if (tab === t) return;
+            tab = t;
+            if (t === "live" && live === null) {
+                try { live = await api.liveCaptures.list(game); } catch { live = []; }
+            }
+            draw();
+        };
+
         const draw = () => {
-            // chosen row (page order, drag to reorder) sits above the full pool grid.
-            const chosen = order.length
-                ? h("div", { class: "cap-chosen" }, order.map((n, i) => cell(n, i + 1, null)))
-                : null;
-            const pool = caps.length
-                ? h("div", { class: "cap-grid" },
-                    caps.map((n) => cell(n, order.includes(n) ? order.indexOf(n) + 1 : 0, () => toggle(n))))
-                : h("p", { class: "cap-empty" }, "no stashed captures yet");
-            node.replaceChildren(
-                h("div", { class: "cap-head" },
-                    h("button", { class: "cap-new", onClick: onCapNew }, "capture"),
-                    h("span", { class: "muted" }, `${order.length} of ${caps.length} selected`)),
-                chosen, pool);
-            // drag-to-reorder the chosen row via the shared primitive (marks only, never mutates DOM).
+            const tabBtn = (t, label) => h("button",
+                { class: "cap-tab" + (tab === t ? " on" : ""), onClick: () => switchTab(t) }, label);
+            const head = h("div", { class: "cap-head" },
+                tabBtn("stashed", "stashed"),
+                tabBtn("live", live && live.length ? `live (${live.length})` : "live"),
+                h("span", { class: "spacer" }),
+                tab === "stashed" ? h("button", { class: "cap-new", onClick: onCapNew }, "capture") : null,
+                h("span", { class: "muted" }, tab === "live"
+                    ? `${(live || []).length} live` : `${order.length} of ${caps.length} selected`));
+            const kids = [head];
+            let chosen = null;
+            if (tab === "live") {
+                kids.push((live && live.length)
+                    ? h("div", { class: "cap-grid" }, live.map((n) => liveCell(n)))
+                    : h("p", { class: "cap-empty" }, live === null ? "loading…" : "no live images saved"));
+            } else {
+                // chosen row (page order, drag to reorder) sits above the full pool grid.
+                chosen = order.length
+                    ? h("div", { class: "cap-chosen" }, order.map((n, i) => cell(n, i + 1, null)))
+                    : null;
+                const pool = caps.length
+                    ? h("div", { class: "cap-grid" },
+                        caps.map((n) => cell(n, order.includes(n) ? order.indexOf(n) + 1 : 0, () => toggle(n))))
+                    : h("p", { class: "cap-empty" }, "no stashed captures yet");
+                if (chosen) kids.push(chosen);
+                kids.push(pool);
+            }
+            left.replaceChildren(...kids);
+            // drag-to-reorder the chosen row via the shared primitive. Wrapping grid -> 2-D "wrap"
+            // axis (caret marker); marks only, never mutates DOM.
             if (chosen) makeReorderable(chosen, {
-                itemSel: ".cap-cell", axis: "x",
+                itemSel: ".cap-cell", axis: "wrap",
                 onReorder: (from, insertBefore) => { arrayMove(order, from, insertBefore); dirty = true; draw(); },
             });
+            // keep the last hover if still valid, else default: first live image (live tab) / first chosen.
+            if (tab === "live") {
+                const keep = previewName && (live || []).includes(previewName);
+                const pn = keep ? previewName : ((live || [])[0] || null);
+                setPreview(pn, pn ? !caps.includes(pn) : false);
+            } else {
+                setPreview(previewName && caps.includes(previewName) ? previewName : (order[0] || null));
+            }
         };
         draw();
     } catch (e) {
