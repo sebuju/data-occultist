@@ -73,6 +73,30 @@ def test_extract_alphanum_before_and_after_separator():
     assert coerce(g, "7 / 30 (max)") == "30 max"
 
 
+# ---- decimal rule (restore an OCR-dropped decimal point) --------------------
+
+def test_decimal_restores_dropped_point():
+    f = _f([rule(then=RuleThen.decimal)], FieldType.number)
+    assert coerce(f, "05") == 0.5
+    assert coerce(f, "025") == 0.25
+    assert coerce(f, "005") == 0.05
+
+
+def test_decimal_leaves_normal_numbers_untouched():
+    f = _f([rule(then=RuleThen.decimal)], FieldType.number)
+    assert coerce(f, "12") == 12        # no leading zero
+    assert coerce(f, "0") == 0          # length 1
+    assert coerce(f, "0.5") == 0.5      # already has a dot
+
+
+def test_decimal_ignored_on_text_field():
+    # `decimal` is number-only; on a TEXT field it must be IGNORED, not run
+    f = _f([rule(then=RuleThen.decimal)], FieldType.text)
+    assert coerce(f, "05") == "05"
+    res = run_rules(f, "05", trace=True)
+    assert res.trace[0]["ignored"] is True and res.trace[0]["fired"] is False
+
+
 # ---- set / drop -------------------------------------------------------------
 
 def test_set_on_empty():

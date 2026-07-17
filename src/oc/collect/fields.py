@@ -122,7 +122,7 @@ _WHEN_TYPES = {
 }
 _THEN_TYPES = {
     "set": "any", "drop": "any", "lowercase": "t", "uppercase": "t", "fold": "t",
-    "round": "n", "floor": "n", "ceil": "n", "extract": "tn", "dictionary": "t",
+    "round": "n", "floor": "n", "ceil": "n", "decimal": "n", "extract": "tn", "dictionary": "t",
 }
 
 
@@ -181,6 +181,19 @@ def _matches(when: RuleWhen, value: str, arg: str) -> bool:
     return False
 
 
+_LEADING_ZERO_RE = re.compile(r"^0\d+$")
+
+
+def _decimal_zero(value: str) -> str:
+    """Restore a decimal point OCR dropped from a sub-1 reading: an all-digit value with a
+    leading zero and no dot ("05", "025") is the fingerprint of a "0.x" number that lost its
+    point, so re-insert it right after the leading zero ("05" -> "0.5", "025" -> "0.25").
+    Anything else (no leading zero, already has a dot, empty, non-digit) passes through
+    unchanged."""
+    s = value.strip()
+    return "0." + s[1:] if _LEADING_ZERO_RE.match(s) else value
+
+
 def _round(then: RuleThen, value: str) -> str:
     n = _to_number(_first_number(value))
     if n is None:
@@ -236,6 +249,8 @@ def run_rules(field: FieldDef, raw: str, *, dict_hook=None,
                 value = fold_accents(value)
             elif then in (RuleThen.round, RuleThen.floor, RuleThen.ceil):
                 value = _round(then, value)
+            elif then is RuleThen.decimal:
+                value = _decimal_zero(value)
             elif then is RuleThen.extract:
                 value = _apply_extract(rule.strategy, rule.sep, value)
             elif then is RuleThen.dictionary and dict_hook is not None:
