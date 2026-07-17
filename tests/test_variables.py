@@ -65,20 +65,34 @@ def test_disabled_readout_skipped():
     assert RegionReader(StubOcr("450")).read_readouts(_frame(), win, fields) == {}
 
 
-# ---- on_readout trigger firing (edge-triggered) --------------------------------
+# ---- on_readout trigger firing --------------------------------
 
 def _runner(trigger):
     p = GameProfile(name="g", windows=[WindowDef(id="w")], triggers=[trigger])
     return TriggerRunner(p, tempfile.gettempdir())
 
 
-def test_on_readout_fires_once_on_crossing_then_holds():
-    r = _runner(TriggerDef(id="low", kind="on_readout", readout_watch=["hp"], readout_op="lte", readout_value=30))
-    assert r.on_readout({"hp": 50}) == []      # above threshold
-    assert r.on_readout({"hp": 20}) == ["low"]  # crosses below -> fire
-    assert r.on_readout({"hp": 15}) == []      # still below -> held, no re-fire
-    assert r.on_readout({"hp": 60}) == []      # recovers -> re-arm
-    assert r.on_readout({"hp": 10}) == ["low"]  # below again -> fire
+def test_on_readout_comparison_fires_on_every_move_while_held():
+    # a comparison op (at-or-below) fires on ENTERING the condition and on every further move while
+    # it still holds; a static reading between ticks does NOT re-fire.
+    r = _runner(TriggerDef(id="low", kind="on_readout", readout_watch=["hp"], readout_op="lte", readout_value=3))
+    assert r.on_readout({"hp": 5}) == []        # above threshold -> no
+    assert r.on_readout({"hp": 3}) == ["low"]    # enters at-or-below -> fire
+    assert r.on_readout({"hp": 3}) == []        # same value, no move -> no re-fire
+    assert r.on_readout({"hp": 2}) == ["low"]    # moved while still <=3 -> re-fire
+    assert r.on_readout({"hp": 1}) == ["low"]    # moved again -> re-fire
+    assert r.on_readout({"hp": 6}) == []        # recovers -> no
+
+
+def test_on_readout_crosses_down_is_edge_once():
+    # edge-once ("fire only on entering the band") is the crosses_down op: it fires only on the tick
+    # the value crosses down through the threshold, not on further moves while below.
+    r = _runner(TriggerDef(id="low", kind="on_readout", readout_watch=["hp"], readout_op="crosses_down", readout_value=3))
+    assert r.on_readout({"hp": 5}) == []        # above, no prev crossing
+    assert r.on_readout({"hp": 2}) == ["low"]    # 5 -> 2 crosses down through 3 -> fire once
+    assert r.on_readout({"hp": 1}) == []        # still below, no crossing -> no re-fire
+    assert r.on_readout({"hp": 6}) == []        # recovers
+    assert r.on_readout({"hp": 2}) == ["low"]    # crosses down again -> fire
 
 
 def test_on_readout_crosses_up_uses_prev():

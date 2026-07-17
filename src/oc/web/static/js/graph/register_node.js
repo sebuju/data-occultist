@@ -28,7 +28,7 @@ import { liveCollecting } from "./panels/livewin.js";
 // ring). "" is the default `<latest>` option (no fold — expose the ring tail). Deliberately its
 // OWN list (uses "avg", the user's word) — not the dataset node's collapse policy (which says
 // "mean"); the two concepts are unrelated, so they don't share a select.
-const REG_AGGREGATES = [["", "latest"], ["min", "min"], ["max", "max"], ["avg", "avg"], ["sum", "sum"], ["median", "median"]];
+const REG_AGGREGATES = [["", "latest"], ["min", "min"], ["max", "max"], ["avg", "avg"], ["sum", "sum"], ["median", "median"], ["stable", "stable"]];
 
 // Most decimal places any numeric ring member carries (mirrors LiveSession._ring_decimals): "1.50"
 // -> 2, "10" -> 0. Drives the aggregate's display precision.
@@ -153,18 +153,36 @@ function applyCell(rec, r) {
     if (r.key !== rec.k) { rec.kEl.textContent = r.key; rec.kEl.title = r.key; rec.k = r.key; }
 
     // Build the ordered lines (text + class). MULTI (more than one held value): the aggregate rides
-    // on TOP and every raw sample is styled uniformly (no bold "latest") — the stack reads as one
-    // ranked column, top-justified. SINGLE value (or dead): the latest sits big on top and the agg
-    // (if any) trails below. Reconcile the line pool in place (rule 1): a change-gate string skips
-    // untouched slots, line nodes are added/removed only when the entry count changes.
+    // on TOP, then the raw ring in STABLE PHYSICAL-SLOT order — each sample sits at its circular
+    // write slot (writes-1 % cap) so a slot never moves; the last-written slot carries a `mb-v-cur`
+    // arrow that advances as new samples come (rule 1: a new sample repaints one line + shifts the
+    // marker, nothing reorders). SINGLE value (or dead): the latest sits big on top and the agg (if
+    // any) trails below. Reconcile the line pool in place: a change-gate string skips untouched
+    // slots, line nodes are added/removed only when the entry count changes.
     const vals = Array.isArray(r.values) ? r.values : [r.value];
     const rawNewest = dead ? ["∅"] : vals.slice().reverse().map(String);   // server stores oldest->newest
     const multi = !dead && !!r.multi;   // styling driven by the "recent values" SETTING (capacity > 1), not the live count
+    const latest = (r.aggMode || "") === "";   // <latest> fold: the exposed value IS the ring tail (cursor slot)
     const aggTxt = (!dead && r.agg != null) ? fmtAgg(r.agg, r.aggMode, r.values) : null;   // just the value — the mode shows in the select
     const lines = [];
     if (multi) {
         if (aggTxt != null) lines.push({ t: aggTxt, c: "mb-v-agg" });   // agg first
-        for (const t of rawNewest) lines.push({ t, c: "mb-v-old" });    // raw samples, all uniform
+        const vlist = vals.map(String);   // oldest -> newest
+        const L = vlist.length;
+        const cap = Math.max(1, r.cap || L);
+        const W = (r.writes == null) ? L : r.writes;   // preview fallback: no live cursor -> treat as in-order
+        const cursor = (((W - 1) % cap) + cap) % cap;   // physical slot the last write landed in
+        // place each retained sample at its physical ring slot; before the ring fills (W < cap) this
+        // is identity, so the stack grows in order then wraps once full — slots stay put thereafter.
+        const slots = new Array(cap).fill(null);
+        for (let j = 0; j < L; j++) slots[(((W - L + j) % cap) + cap) % cap] = vlist[j];
+        for (let s = 0; s < cap; s++) {
+            if (slots[s] == null) continue;   // unfilled slot (ring not yet full)
+            // cursor = last-written = the ring tail. In <latest> fold it's ALSO the exposed value, so
+            // tint it nt (mb-v-live) — the same signal the agg line carries when a real fold is chosen.
+            const c = s === cursor ? (latest ? "mb-v-old mb-v-cur mb-v-live" : "mb-v-old mb-v-cur") : "mb-v-old";
+            lines.push({ t: slots[s], c });
+        }
     } else {
         rawNewest.forEach((t, i) => lines.push({ t, c: i === 0 && !dead ? "mb-v-latest" : "mb-v-old" }));
         if (aggTxt != null) lines.push({ t: aggTxt, c: "mb-v-agg" });   // agg trails below
@@ -180,11 +198,14 @@ function applyCell(rec, r) {
         while (rec.vlines.length > lines.length) rec.vlines.pop().remove();
         lines.forEach((l, i) => {
             const line = rec.vlines[i];
+            const cls = l.c.split(" ");   // a line may carry two tokens (e.g. "mb-v-old mb-v-cur")
             line.textContent = l.t;
             line.title = dead ? "" : l.t;   // full value on hover (the line clamps)
-            line.classList.toggle("mb-v-latest", l.c === "mb-v-latest");
-            line.classList.toggle("mb-v-old", l.c === "mb-v-old");
-            line.classList.toggle("mb-v-agg", l.c === "mb-v-agg");
+            line.classList.toggle("mb-v-latest", cls.includes("mb-v-latest"));
+            line.classList.toggle("mb-v-old", cls.includes("mb-v-old"));
+            line.classList.toggle("mb-v-agg", cls.includes("mb-v-agg"));
+            line.classList.toggle("mb-v-cur", cls.includes("mb-v-cur"));   // last-written arrow
+            line.classList.toggle("mb-v-live", cls.includes("mb-v-live"));   // exposed value (<latest> fold) -> nt tint
         });
         rec.vkey = vkey;
     }
@@ -312,11 +333,14 @@ export function refreshRegister(id) {
                     last_seen: null,
                 });
             }
-            const multi = (model.registerNode(id)?.capacity ?? 1) > 1;   // the "recent values" setting drives the stack styling
+            const cap = model.registerNode(id)?.capacity ?? 1;
+            const multi = cap > 1;   // the "recent values" setting drives the stack styling
             const rows = [...byKey.values()].map((e) => ({
                 key: e.key,
                 value: e.value,                                  // raw: null / "" -> dead slot; else shown
                 values: Array.isArray(e.values) ? e.values : [e.value],   // full ring (oldest->newest); preview fallback = [value]
+                writes: e.writes ?? null,                        // total writes -> circular cursor; null on /api/preview (no live ring)
+                cap,
                 agg: e.agg == null ? null : e.agg,               // aggregated value (server fold) or null (no aggregate / preview)
                 aggMode,
                 multi,

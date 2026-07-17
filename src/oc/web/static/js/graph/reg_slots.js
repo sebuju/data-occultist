@@ -8,9 +8,6 @@ import { h, srcRow } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
 import { wireArmedRemove } from "./rules_editor.js";
 
-// text prefix marking a register (zero-innerHTML — a label prefix, not markup).
-export const REG_TAG = "⛃ ";
-
 // active keys = the stored slot narrowed to still-wired keys, or ALL keys when the slot is empty
 // ([] = all, the canonical form setActionSlots/setTriggerRegisterSlots persist).
 function activeKeys(keys, targeted) {

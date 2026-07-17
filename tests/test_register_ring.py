@@ -28,6 +28,9 @@ def test_ring_holds_last_n_distinct_values():
     assert r["value"] == 40
     assert r["depth"] == 3
     assert r["values"] == [20, 30, 40]   # oldest -> newest, the client reverses to stack latest-first
+    # writes = total sample count -> the membank derives the circular cursor ((writes-1) % cap) to
+    # place the ring in stable physical slots and arrow the last-written one. 4 feeds -> 4 writes.
+    assert r["writes"] == 4
 
 
 def test_repeated_value_fills_the_ring():
@@ -131,7 +134,7 @@ def _agg_session(mode, cap=4):
 
 
 def test_aggregate_folds_the_ring():
-    for mode, want in [("min", 10), ("max", 40), ("sum", 100), ("avg", 25), ("median", 25)]:
+    for mode, want in [("min", 10), ("max", 40), ("sum", 100), ("avg", 25), ("median", 25), ("stable", 40)]:
         s = _agg_session(mode)
         for v in (10, 20, 30, 40):
             s._feed_registers({"health": v}, {})
@@ -139,6 +142,24 @@ def test_aggregate_folds_the_ring():
         assert r["agg"] == want, mode
         assert r["values"] == [10, 20, 30, 40]   # raw ring always retained alongside the fold
         assert s.register_latest("hp", "health") == want   # exposed value = the fold
+
+
+def test_aggregate_stable_rejects_outlier():
+    # a lone confident misread (400 among 10s) deviates > 3*MAD from the median -> skipped;
+    # expose the newest value that agrees with the ring, kept int since it's a whole selected value
+    s = _agg_session("stable")
+    for v in (10, 10, 10, 400):
+        s._feed_registers({"health": v}, {})
+    got = s.register_latest("hp", "health")
+    assert got == 10 and isinstance(got, int)
+
+
+def test_aggregate_stable_tolerates_jitter():
+    # mild spread (median 10.5, MAD 0.5, thr 1.5) still admits the newest non-spike read
+    s = _agg_session("stable")
+    for v in (10, 11, 10, 400):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == 10
 
 
 def test_aggregate_rounds_to_input_decimals_plus_one():

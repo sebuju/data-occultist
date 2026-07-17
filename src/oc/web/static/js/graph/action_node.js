@@ -6,7 +6,7 @@
 // main.js (wireAction). Config persists in the profile YAML.
 import { h, frag, labCell, srcRow } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
-import { slotRow, REG_TAG } from "./reg_slots.js";
+import { slotRow } from "./reg_slots.js";
 
 // dataset ops this node can perform. "" = no-op. clone/move copy into `dest` (batches = keep batch
 // grouping; resolved = collapse to one). move also clears the source.
@@ -36,7 +36,7 @@ export function actionParts(x, model) {
             h("div", { class: "lab-grid" },
                 srcRow("sources", "datasets and registers this action operates on when fired",
                     sourcesInput({
-                        chips: srcs.map((s) => ({ value: s.ref, label: s.kind === "register" ? REG_TAG + s.id : s.id, node: model.refNode(s.ref) })),
+                        chips: srcs.map((s) => ({ value: s.ref, label: s.id, node: model.refNode(s.ref) })),
                         free, addLabel: "+ source", addinCls: "sv-addin ac-addsrc", rmCls: "sv-rmin ac-rmsrc" })),
                 labCell("action", "what this node does to its sources when fired"),
                 h("select", { class: "ac-action" },

@@ -33,6 +33,11 @@ from .readout_stability import gate_readouts
 # long-running collector can't grow memory without limit; the UI polls incrementally by seq.
 _DEBUG_CAP = 300
 
+# MAD multiplier for the "stable" aggregate: a ring value deviating more than k*MAD from the ring's
+# median counts as an outlier and is skipped. k=3 is the usual robust-outlier cutoff (raw MAD, no
+# 1.4826 scaling). Fixed by design — the mode is parameterless (no per-register threshold field).
+_STABLE_K = 3.0
+
 # The live session per game, keyed by profile name — the ONE holder of a game's register held maps
 # (server memory). A LiveSession registers itself here on construction so any firing path can reach
 # the held map to run an action-on-register op WITHOUT a web-layer import: the manual "fire now"
@@ -101,6 +106,14 @@ class LiveSession:
         # (every frame OCRs many regions -> GPU throughput wins), then restore the baseline
         # device on stop (which frees the GPU). None = use whatever device the engine is on.
         self.batch_device: str | None = None
+        # "capture recognised windows" toggle (live panel): when set, the collector saves every
+        # OCR-due grab whose frame matched a window to the live/ bucket, not only the write frames.
+        # Read into the collector on start().
+        self._save_recognized = False
+        # Filename of the frame the CURRENT tick saved to the live/ bucket (set by _save_frame,
+        # consumed + cleared by the next _on_tick). Surfaced in the debug log only in
+        # capture-recognised mode so the OCR log names the image each grab was written to.
+        self._last_saved_frame: str | None = None
 
     # ---- profile -----------------------------------------------------------
 
@@ -118,7 +131,7 @@ class LiveSession:
         t = self._thread
         return bool(t is not None and t.is_alive())
 
-    def start(self, interval: float | None = None) -> None:
+    def start(self, interval: float | None = None, save_recognized: bool = False) -> None:
         if self.is_running():
             return
         if interval is None:
@@ -126,6 +139,7 @@ class LiveSession:
         self._join_prev()
         with self._lock:
             self._interval = max(0.0, float(interval))
+            self._save_recognized = bool(save_recognized)
             self._recog = {}
             self._written = 0
             self._frames = 0
@@ -140,6 +154,7 @@ class LiveSession:
             self._readout_confs_all = {}
             self._flow_prev_readouts = {}
             self._error = None
+            self._last_saved_frame = None
             self._debug.clear()
             self._debug_seq = 0
             self._t0 = time.monotonic()
@@ -169,6 +184,7 @@ class LiveSession:
         try:
             collector = Collector(self._engine, self._profile)
             collector.on_frame = self._save_frame   # persist a frame only when a record was written
+            collector.save_recognized_frames = self._save_recognized   # ...or on every recognised grab (panel toggle)
             # Collector.run owns the trigger loop + flushes via close() on the way out. Pass the
             # session's SHARED runner so a concurrent test feed sees the same on_readout edge state.
             collector.run(self._interval, on_tick=self._on_tick, should_stop=self._stop.is_set,
@@ -181,17 +197,20 @@ class LiveSession:
 
     def _save_frame(self, frame) -> None:
         """Save one frame into the game's live/ image bucket — the same bucket the read-only
-        tuning loop writes to. Only called on a tick that WROTE a record, so the bucket fills
-        with frames that produced data, not every recognised grab. Best-effort: an encode/disk
-        hiccup must never disturb collection."""
+        tuning loop writes to. Called on a tick that WROTE a record (bucket fills with frames that
+        produced data), or on every recognised grab when the "capture recognised windows" toggle
+        is on. Best-effort: an encode/disk hiccup must never disturb collection."""
         try:
             import cv2
 
             from ..web import captures_store
             ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
             if ok:
-                captures_store.save(self._engine.settings.captures_dir, self._profile.name,
-                                    buf.tobytes(), sub=captures_store.LIVE)
+                name = captures_store.save(self._engine.settings.captures_dir, self._profile.name,
+                                           buf.tobytes(), sub=captures_store.LIVE)
+                # remember the file this tick wrote so _on_tick can name it in the debug log
+                # (capture-recognised mode only). Same worker thread as _on_tick -> no lock needed.
+                self._last_saved_frame = name
         except Exception:  # pragma: no cover - defensive
             pass
 
@@ -246,6 +265,11 @@ class LiveSession:
                 if self._dbg_prev_readouts.get(rid, object()) != val:
                     changed_ro.append(r)
                 self._dbg_prev_readouts[rid] = val
+            # Filename this tick saved (capture-recognised mode saves every recognised grab, so a
+            # recorded tick on a matched window has one). Consume + clear so it can't leak onto a
+            # later tick that didn't save.
+            saved = self._last_saved_frame
+            self._last_saved_frame = None
             if reads or result.new or changed_ro:
                 self._debug_seq += 1
                 self._debug.append({
@@ -259,6 +283,8 @@ class LiveSession:
                     "kept": result.kept,
                     "reads": reads,
                     "readout_reads": changed_ro,
+                    # image file this grab was saved to (capture-recognised mode only; None else)
+                    "saved": saved if self._save_recognized else None,
                     # written keys/values this tick (added or updated) — the "pushed to dataset" side
                     "changed": [{k: v for k, v in c.items() if not str(k).startswith("_")}
                                 for c in (result.changed or [])],
@@ -337,9 +363,13 @@ class LiveSession:
     def _aggregate_ring(cls, values: list, mode: str):
         """Collapse a key's ring of recent values to the ONE value the register exposes, per
         ``RegisterDef.aggregate``. ``""``/``"latest"`` (or an unknown mode) -> the ring TAIL
-        unchanged. A numeric fold (min/max/avg/sum/median) coerces each member to ``float`` and
-        skips non-numeric ones; with no numeric members (or an empty ring) it falls back to the
+        unchanged. A numeric fold (min/max/avg/sum/median/stable) coerces each member to ``float``
+        and skips non-numeric ones; with no numeric members (or an empty ring) it falls back to the
         tail too. So a non-numeric register never breaks — it just keeps showing its latest.
+
+        ``stable`` = the NEWEST ring value that agrees with the consensus: skip values deviating more
+        than ``_STABLE_K * MAD`` from the ring's median (walking newest->oldest), so a lone confident
+        misread (a ``400`` spike among ``4.00`` reads) is rejected in favour of the latest good read.
 
         A fold that PRODUCES a float (avg/median always; min/max/sum when the result isn't whole)
         is rounded to the ring's own decimal precision PLUS ONE (no decimals in the inputs -> one),
@@ -369,6 +399,10 @@ class LiveSession:
                 r = max(nums)
             elif mode == "sum":
                 r = sum(nums)
+            elif mode == "stable":
+                center = statistics.median(nums)
+                thr = _STABLE_K * statistics.median([abs(x - center) for x in nums])
+                r = next((v for v in reversed(nums) if abs(v - center) <= thr), tail)
             else:
                 return tail
         except statistics.StatisticsError:
@@ -575,6 +609,8 @@ class LiveSession:
     def register_records(self, reg_id: str, aggregate: str | None = None) -> list[dict]:
         """Current held map for one register as table rows (newest last_seen first). ``value`` is
         the ring tail (latest); ``values`` is the full ring (oldest->newest) the membank stacks;
+        ``writes`` is the total sample count -> the circular write cursor ``(writes-1) % cap`` the
+        membank uses to place the ring in stable physical slots and arrow the last-written one;
         ``agg`` is the aggregated value (fold over the ring) or None when no aggregate is set;
         ``depth`` is how many recent values the key currently holds.
 
@@ -586,6 +622,7 @@ class LiveSession:
             m = self._registers.get(reg_id) or {}
             rows = [{"key": rid, "value": e["values"][-1], "conf": e["conf"],
                      "values": list(e["values"]),   # full ring, oldest -> newest (membank stack)
+                     "writes": e["writes"],   # total writes -> circular cursor (which slot was last written)
                      "agg": self._aggregate_ring(e["values"], mode) if mode not in ("", "latest") else None,
                      "depth": len(e["values"]),
                      "first_seen": e["first_seen"], "last_seen": e["last_seen"]}
