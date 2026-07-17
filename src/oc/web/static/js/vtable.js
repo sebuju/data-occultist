@@ -153,6 +153,11 @@ export class VTable {
         this.rowsInput.title = "rows shown at once (blank = fit)";
         this.rowsInput.placeholder = "fit";
         this.rowsInput.hidden = true;   // hidden by default — fits the container; shown only on demand
+        // hover-revealed autosize: fit every column to its data, then spread any slack equally
+        this.fitBtn = document.createElement("button");
+        this.fitBtn.className = "vt-fit";
+        this.fitBtn.title = "auto-size all columns to fit (fill width if room)";
+        this.fitBtn.textContent = "⇔";
         // hover-revealed reset: clears this table's column widths/order/sort back to defaults
         this.resetBtn = document.createElement("button");
         this.resetBtn.className = "vt-reset";
@@ -165,7 +170,7 @@ export class VTable {
         // precap don't, so theirs shows lines only).
         this.meta = document.createElement("span");
         this.meta.className = "vt-meta muted";
-        bar.append(this.search, this.clearBtn, this.rowsInput, this.resetBtn, this.count, this.meta);
+        bar.append(this.search, this.clearBtn, this.rowsInput, this.fitBtn, this.resetBtn, this.count, this.meta);
 
         this.head = document.createElement("div");
         this.head.className = "vt-head";
@@ -204,6 +209,7 @@ export class VTable {
         this.search.addEventListener("input", () => this._onSearch());
         this.clearBtn.addEventListener("click", () => { this.search.value = ""; this._onSearch(); this.search.focus(); });
         this.rowsInput.addEventListener("input", () => { const n = parseInt(this.rowsInput.value, 10); this.pinned = n > 0 ? n : null; this._applyHeight(); });
+        this.fitBtn.addEventListener("click", () => this._autofitAll());
         this.resetBtn.addEventListener("click", () => this._reset());
         // keep the (overflow-clipped) header aligned with the body's horizontal scroll, then redraw
         this.scroll.addEventListener("scroll", () => { this._syncHead(); this._schedule(); });
@@ -499,6 +505,23 @@ export class VTable {
     _autofit(i) {
         const name = this.columns[i];
         this.widths[name] = this._measureCol(name);
+        this._applyWidths();
+        if (this.id) _store.save(this.id, { ...(_store.load(this.id)), widths: this.widths });
+    }
+
+    // Auto-size EVERY column to fit its data — the grip-dblclick measurement (_measureCol),
+    // applied to all columns. If the fitted widths leave slack in the viewport, fatten them
+    // equally so the table fills its width (no ragged right gutter); if they overflow, leave
+    // them at fit width and let the body scroll sideways (matches single-column dblclick).
+    _autofitAll() {
+        if (this.columns.length <= 1) return;   // a lone column already fills the table
+        const GUTTER = 9;                        // must match _applyWidths so slack fill != overflow
+        const fit = this.columns.map((c) => this._measureCol(c));
+        const sum = fit.reduce((s, w) => s + w, 0);
+        const avail = Math.max(0, (this.scroll.clientWidth || 0) - GUTTER);
+        // floor the per-column add so the total never exceeds avail (which would re-trigger overflow)
+        const add = avail > sum ? Math.floor((avail - sum) / this.columns.length) : 0;
+        this.columns.forEach((c, i) => { this.widths[c] = fit[i] + add; });
         this._applyWidths();
         if (this.id) _store.save(this.id, { ...(_store.load(this.id)), widths: this.widths });
     }

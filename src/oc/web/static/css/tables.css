@@ -137,6 +137,12 @@
     border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 0.12s, color 0.12s; }
 .vt-host:hover .vt-reset { opacity: 0.55; }
 .vt-reset:hover { opacity: 1; color: var(--text); background: var(--line); }
+/* hover-revealed autosize: fit all columns to data, fill width if room */
+.vt-fit { flex: none; width: 22px; height: 22px; min-height: 0; padding: 0; line-height: 1;
+    font-size: 14px; border: 1px solid var(--line); background: transparent; color: var(--muted);
+    border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 0.12s, color 0.12s; }
+.vt-host:hover .vt-fit { opacity: 0.55; }
+.vt-fit:hover { opacity: 1; color: var(--text); background: var(--line); }
 .vt-count { flex: none; white-space: nowrap; }
 .vt-meta { flex: none; white-space: nowrap; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 
