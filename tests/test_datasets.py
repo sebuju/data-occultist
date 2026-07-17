@@ -83,6 +83,16 @@ def test_batch_mode_per_detection():
     assert p.batch_per_detection("nope") is False
 
 
+def test_reopen_grace_for():
+    # unset -> 0 (collector falls back to the global confirm_frames)
+    assert GameProfile(name="g", datasets=[DatasetDef(id="d")]).reopen_grace_for("d") == 0
+    # set -> the per-dataset override wins
+    p = GameProfile(name="g", datasets=[DatasetDef(id="d", batch_mode="detection", reopen_grace=6)])
+    assert p.reopen_grace_for("d") == 6
+    # unknown dataset -> 0
+    assert p.reopen_grace_for("nope") == 0
+
+
 def test_store_no_dedup_keeps_every_read(tmp_path):
     from oc.store import DatasetStore, KeyMap, KeySpec
     s = DatasetStore(tmp_path, "g", "d", key=KeyMap(KeySpec(), {}, dedup=False))

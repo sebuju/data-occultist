@@ -225,6 +225,11 @@ export class GraphModel {
     // time the feeding window is freshly detected — transient per-event screens like relic offerings).
     datasetBatchMode(id) { const d = this.datasetDef(id); return (d && d.batch_mode) || "run"; }
     setDatasetBatchMode(id, m) { this.ensureDatasetDef(id).batch_mode = m === "detection" ? "detection" : "run"; }
+    // Detection re-open grace (batch_mode: detection only): OCR read-opportunities the window may go
+    // unread before the next read counts as a fresh detection (new batch). 0 = inherit the global
+    // confirm_frames. Widen so a brief OCR dropout on a still-visible screen isn't a false re-open.
+    datasetReopenGrace(id) { const d = this.datasetDef(id); return (d && d.reopen_grace) || 0; }
+    setDatasetReopenGrace(id, n) { this.ensureDatasetDef(id).reopen_grace = Math.max(0, +n || 0); }
     // Whether a run removes keys to mirror the game emptying out: "accumulate" (add/update only)
     // or "mirror" (a key gone from its visible scroll slice is removed — needs the window's scrollbar).
     datasetSyncMode(id) { const d = this.datasetDef(id); return (d && d.sync_mode) || "accumulate"; }

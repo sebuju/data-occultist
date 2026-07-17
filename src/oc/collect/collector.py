@@ -488,7 +488,9 @@ class Collector:
         # offering's rows re-confirm and land in it rather than being suppressed as
         # already-seen from the previous offering.
         if self._explicit_sink is None and self._profile.batch_per_detection(dataset):
-            grace = max(1, self._tuning.confirm_frames)
+            # Per-dataset re-open grace wins over the global confirm_frames (a wider gap so a brief
+            # OCR dropout on a still-visible screen isn't misread as close+reopen); 0 -> global.
+            grace = self._profile.reopen_grace_for(dataset) or max(1, self._tuning.confirm_frames)
             last = self._last_seen_tick.get(dataset)
             if last is None or (self._tick_no - last) > grace:
                 self._pending_batch.add(dataset)

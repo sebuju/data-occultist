@@ -936,6 +936,11 @@ function wireNode(div, n) {
         });
         div.querySelector(".dsbatch")?.addEventListener("change", (e) => {
             model.setDatasetBatchMode(n.ref, e.target.value);
+            rebuildNode(n.id);   // toggles the detection-only "re-open gap" row
+            autosave(null);
+        });
+        div.querySelector(".dsreopen")?.addEventListener("change", (e) => {
+            model.setDatasetReopenGrace(n.ref, e.target.value);
             autosave(null);
         });
         div.querySelector(".dssync")?.addEventListener("change", (e) => {

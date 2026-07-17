@@ -1065,6 +1065,11 @@ export function nodeParts(n) {
                 aggregateSelect(model.datasetAggregate(ds), { cls: "dsagg",
                     title: "how this dataset's many observations under one key collapse to the value it serves. latest/first keep one observation whole; sum/mean/max/min fold PER FIELD, so they can show a row no single observation ever was — drill a row to see the observations behind it." })),
             kv("batch", h("select", { class: "dsbatch", title: "how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like a timed offer / pop-up)" }, batchOpts)),
+            // detection-only: how many read-opportunities the window may go unread before the next
+            // read counts as a fresh detection (new batch). 0 = inherit the global confirm_frames.
+            bm === "detection" ? kv("re-open gap", h("input", { class: "dsreopen", type: "number", min: "0",
+                value: model.datasetReopenGrace(ds),
+                title: "OCR read-opportunities the window may drop out for before a re-read starts a NEW batch. 0 = use the global confirm_frames. Widen it so a brief OCR dropout on a still-visible screen (an animation/glow) isn't misread as the screen closing and reopening." })) : null,
             kv("sync", h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
             concatEditor && gspan(concatEditor)),
         foot: h("button", { class: "dsclear danger" }, "clear data"),

@@ -389,7 +389,10 @@ class TriggerRunner:
         we fire when it differs from the last batch this trigger fired on for that dataset. A watch
         may be the dataset itself OR a subset that reads it (batches live on the leaf dataset, so a
         subset watch fires on its underlying dataset's batch); only a non-empty ``changed_records``
-        fires (a clear/removal announces [] and must not re-sweep)."""
+        fires (a clear/removal announces [] and must not re-sweep). It fires the target with
+        ``items=None`` — repricing the producer's whole SOURCE, not ``changed_records`` — because a
+        batch's rows confirm across several ticks, so the flush that trips the batch carries only a
+        subset of them (see the fire site)."""
         if not dataset:
             return []
         fired: list[str] = []
@@ -424,7 +427,6 @@ class TriggerRunner:
         # be the dataset itself OR a subset that (transitively) reads it — batches live on the leaf
         # dataset, so a subset watch fires on ITS underlying dataset's batch, no value/output gate.
         if batch is not None and changed_records:
-            nb_items = None
             for t in self._profile.triggers:
                 if not t.enabled or t.kind != "on_new_batch":
                     continue
@@ -433,13 +435,24 @@ class TriggerRunner:
                 if not justifying:
                     continue
                 key = (t.id, dataset)
-                if self._new_batch_last.get(key) == batch:
-                    continue                       # same batch already handled -> coalesce
+                first = self._new_batch_last.get(key) != batch
                 self._new_batch_last[key] = batch   # stamp before firing so a throttle can't re-fire
-                if nb_items is None:
-                    nb_items = self._items_for(changed_records)
-                why = f"{dataset} batch #{batch} ({len(changed_records)} rows, {len(nb_items)} to price)"
-                if not self._route_fire(t, why, items=nb_items):
+                # A batch's rows CONFIRM over several OCR ticks, arriving as SEPARATE same-batch
+                # flushes. With a settle window we RE-ARM on each such flush so the single fire lands
+                # once the screen goes QUIET (the whole offering has confirmed) — a short settle_ms
+                # then fires ~that long after the LAST row, not a long fixed wait after the first.
+                # With no settle window we fire once, on the first flush (skip the rest).
+                settling = bool(getattr(t, "settle_ms", 0) or 0)
+                if not first and not settling:
+                    continue                       # one fire per batch, settle off -> coalesce
+                # Fire with items=None (NOT the changed rows): the trip flush carries only the rows
+                # confirmed SO FAR, so passing them would price only 1-2 of a relic's 4 rewards.
+                # items=None instead reprices the producer's own SOURCE (the user-scoped current-batch
+                # view, e.g. the 4 offered rewards), so the sweep prices the whole screen — the same
+                # "price the source" semantic interval/lifecycle fires use. (on_change keeps its
+                # price-only-changed items.)
+                why = f"{dataset} batch #{batch} ({len(changed_records)} rows, reprice source)"
+                if not self._route_fire(t, why, items=None):
                     continue   # throttled / deferred into a settle window — no watch-hop animation yet
                 for w in justifying:
                     node = f"sub:{w}" if self._profile.subset_def(w) else f"ds:{w}"

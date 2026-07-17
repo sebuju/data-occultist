@@ -100,7 +100,29 @@ def test_on_new_batch_fires_per_batch_even_with_identical_values():
     assert tr.on_change("relics_offered", same, batch=1) == ["batchwatch"]
     assert tr.on_change("relics_offered", same, batch=1) == []          # same batch -> coalesced
     assert tr.on_change("relics_offered", same, batch=2) == ["batchwatch"]  # identical values, new batch
-    assert calls == [("relic", ["Soma Prime"]), ("relic", ["Soma Prime"])]
+    # fires with items=None -> reprices the producer's SOURCE (the whole batch), not the partial
+    # changed rows the trip flush happened to carry (see on_change's on_new_batch fire site).
+    assert calls == [("relic", None), ("relic", None)]
+
+
+def test_on_new_batch_settle_rearms_across_same_batch_flushes():
+    # a relic offering's rows confirm over several ticks -> several same-batch flushes. With a
+    # settle window each RE-ARMS it (offering still landing), so the single sweep fires once the
+    # screen goes quiet, repricing the SOURCE (items=None) — not on the first partial flush.
+    p = _new_batch_profile()
+    p.triggers[0].settle_ms = 800
+    clock = [0.0]
+    calls = []
+    tr = TriggerRunner(p, "data", fire=lambda pn, items: calls.append((pn.id, items)),
+                       clock=lambda: clock[0], timer_factory=_FakeTimer)
+    assert tr.on_change("relics_offered", [{"name": "A"}], batch=1) == []   # first row of the batch
+    clock[0] = 0.9
+    assert tr.on_change("relics_offered", [{"name": "B"}], batch=1) == []   # same batch -> re-arm
+    clock[0] = 1.8
+    assert tr.on_change("relics_offered", [{"name": "C"}], batch=1) == []   # re-arm again
+    assert calls == []                              # still settling — no partial sweep
+    tr._settle_flush("batchwatch")                  # screen quiet
+    assert calls == [("relic", None)]               # ONE sweep, reprices the whole source
 
 
 def test_on_new_batch_needs_a_batch_and_nonempty_records():
@@ -140,7 +162,7 @@ def test_on_new_batch_fires_for_a_subset_watch_on_its_leaf_dataset():
     same = [{"name": "Soma Prime"}]
     assert tr.on_change("relics_offered", same, batch=1) == ["batchwatch"]
     assert tr.on_change("relics_offered", same, batch=2) == ["batchwatch"]   # identical, new batch
-    assert calls == [("relic", ["Soma Prime"]), ("relic", ["Soma Prime"])]
+    assert calls == [("relic", None), ("relic", None)]   # items=None -> reprice source
 
 
 def test_on_new_batch_rides_the_change_bus(tmp_path):

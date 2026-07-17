@@ -728,6 +728,13 @@ class DatasetDef(BaseModel):
     #                 gap. For transient per-event screens (e.g. relic offerings) where each
     #                 appearance is a distinct set, not an update of the last one.
     batch_mode: str = "run"
+    # Detection re-open grace (``batch_mode: detection`` only): how many OCR read-opportunities the
+    # feeding window may go unread before the NEXT read counts as a fresh detection (new batch). 0
+    # inherits the global ``tuning.confirm_frames`` (today's behaviour). Widen it so a brief OCR
+    # dropout on a still-visible screen — an animation/glow forcing a settle-"moving" skip or a
+    # classify miss — isn't misread as the screen closing and reopening (which would spuriously
+    # re-batch and re-fire on_new_batch). Independent of the row-confirm threshold.
+    reopen_grace: int = 0
     # Whether a run ever REMOVES keys to track the game emptying out:
     #   "accumulate" (default) — keys only ever add/update; a run never removes.
     #   "mirror" — keep the dataset == live game state. As the user scrolls, a key whose
@@ -1729,6 +1736,13 @@ class GameProfile(BaseModel):
         scroll slice are removed), else ``"accumulate"`` (add/update only)."""
         d = self.dataset_def(dataset_id)
         return "mirror" if (d and d.sync_mode == "mirror") else "accumulate"
+
+    def reopen_grace_for(self, dataset_id: str) -> int:
+        """Per-dataset detection re-open grace (``DatasetDef.reopen_grace``), or 0 when unset —
+        the collector then falls back to the global ``tuning.confirm_frames``. Only meaningful
+        for a ``batch_mode: detection`` dataset (see :meth:`batch_per_detection`)."""
+        d = self.dataset_def(dataset_id)
+        return int(d.reopen_grace) if d and d.reopen_grace else 0
 
     @staticmethod
     def _item_default_spec(it: ItemDef, w: WindowDef | None) -> KeySpec:
