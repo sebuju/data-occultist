@@ -23,7 +23,7 @@ const K_SPACE = 60;       // max px-equivalent bonus faceToward gives a fully-op
 const K_OPEN = 0.75;      // blend weight of the fan centre toward the emptiest span (0 = pure pierce-
                           // mean, 1 = pure open-gap) — the open gap dominates: a member row's own
                           // pierce-mean reliably points AT that row, so a weak blend barely escapes it.
-const NEAR_PROBE = 150;   // px reach from the face (EITHER direction) within which a node counts as
+const NEAR_PROBE = 90;    // px reach from the face (EITHER direction) within which a node counts as
                           // crowding this gap-search — a member row parked right at the boundary
                           // squeezes the gate exactly like a nearby exterior node would. Bounds BOTH
                           // sides: unbounded outward reach let one distant, unrelated node (anything
