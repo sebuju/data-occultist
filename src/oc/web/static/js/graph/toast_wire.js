@@ -12,7 +12,7 @@ import { drawEdges } from "./routing.js";
 import { persist } from "./persist.js";
 import { beginDrag } from "./dragresize.js";
 import { onGlobal } from "../inputbus.js";
-import { render, autosave, rebuildNode, wireArmedRemove, NUDGE } from "./main.js";
+import { render, autosave, rebuildNode, wireArmedRemove, NUDGE, armConfirm } from "./main.js";
 
 function wireToast(div, n) {
     const x = n.ref;
@@ -37,7 +37,7 @@ function wireToast(div, n) {
     div.querySelectorAll(".tn-bk-align").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "align", e.target.value); autosave(null); }));
     div.querySelectorAll(".tn-bk-max").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "max_lines", e.target.value); autosave(null); }));
     $(".tn-bk-add")?.addEventListener("click", () => { model.addToastText(x.id); rebuildNode(n.id); autosave(null); });
-    div.querySelectorAll(".tn-bk-del").forEach((b) => b.addEventListener("click", () => { model.removeToastText(x.id, +b.dataset.i); rebuildNode(n.id); autosave(null); }));
+    div.querySelectorAll(".tn-bk-del").forEach((b) => armConfirm(b, () => { model.removeToastText(x.id, +b.dataset.i); rebuildNode(n.id); autosave(null); }, { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".tn-bk-up").forEach((b) => b.addEventListener("click", () => { if (model.moveToastText(x.id, +b.dataset.i, -1)) { rebuildNode(n.id); autosave(null); } }));
     div.querySelectorAll(".tn-bk-dn").forEach((b) => b.addEventListener("click", () => { if (model.moveToastText(x.id, +b.dataset.i, 1)) { rebuildNode(n.id); autosave(null); } }));
     // generated image editors — one wiring pass per image section (scoped by data-i), plus "+ image"
@@ -532,12 +532,12 @@ function wireToastImage(sec, x, n) {
         }));
         anchGrid(".tn-anch-corner", "corner"); anchGrid(".tn-anch-target", "target");
         // delete the selected element (the inspector's one trash button) -> shift selection + rebuild
-        sec.querySelector(".tn-il-del")?.addEventListener("click", () => {
+        armConfirm(sec.querySelector(".tn-il-del"), () => {
             const j = model.toastImageSel(x.id, idx); if (j == null) return;
             model.removeToastImageText(x.id, idx, j);
             model.setToastImageSel(x.id, idx, texts().length ? Math.max(0, Math.min(texts().length - 1, j)) : null);
             rebuildNode(n.id); autosave(null);
-        });
+        }, { silent: true, resetOnOutside: true });
         // reconcile the EXISTING inspector DOM to element j (or off = null) — reuse elements, never
         // rebuild from scratch on a selection change (rule 1). Captures the wired helpers above.
         syncInspector = (j) => {
@@ -605,7 +605,7 @@ function wireToastImage(sec, x, n) {
     q(".tn-img-place")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "placement", e.target.value); autosave(null); });
     // unit toggle (px / % of image) — convert stored coords so the on-screen design is preserved
     q(".tn-img-unit")?.addEventListener("change", (e) => { model.convertToastImageUnit(x.id, idx, e.target.value); rebuildNode(n.id); autosave(null); });
-    q(".tn-img-del")?.addEventListener("click", () => { model.removeToastImage(x.id, idx); rebuildNode(n.id); autosave(null); });
+    armConfirm(q(".tn-img-del"), () => { model.removeToastImage(x.id, idx); rebuildNode(n.id); autosave(null); }, { silent: true, resetOnOutside: true });
     // scalar props (size + gradient colours/angle) — persist + repreview on input
     const scalar = (s, key) => q(s)?.addEventListener("input", (e) => { model.setToastImageProp(x.id, idx, key, e.target.value); autosave(null); refreshPreview(); });
     scalar(".tn-img-w", "width"); scalar(".tn-img-h2", "height"); scalar(".tn-img-angle", "angle");

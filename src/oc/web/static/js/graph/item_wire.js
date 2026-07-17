@@ -18,7 +18,7 @@ import {
 } from "./imaging.js";
 import {
     render, autosave, rebuildNode, nodeEdit,
-    onValueEdit, rulesEdit, wireFieldRules, inheritGroupFrom,
+    onValueEdit, rulesEdit, wireFieldRules, inheritGroupFrom, armConfirm,
 } from "./main.js";
 
 function syncCellSize(winId, itemId) {
@@ -130,8 +130,8 @@ function wireItemControls(div, n) {
         if (j < 0 || j >= k.fields.length) return;
         [k.fields[i], k.fields[j]] = [k.fields[j], k.fields[i]];
     })));
-    div.querySelectorAll(".kdel").forEach((b) => b.addEventListener("click", () =>
-        keyEdit((k) => { if (k.fields.length > 1) k.fields.splice(+b.dataset.i, 1); })));
+    div.querySelectorAll(".kdel").forEach((b) => armConfirm(b, () =>
+        keyEdit((k) => { if (k.fields.length > 1) k.fields.splice(+b.dataset.i, 1); }), { silent: true, resetOnOutside: true }));
     div.querySelector(".kadd")?.addEventListener("change", (e) => {
         if (e.target.value) keyEdit((k) => { k.fields.push(e.target.value); });
     });

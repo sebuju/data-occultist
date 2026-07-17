@@ -613,10 +613,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     .wi-row, .wp-row, .wd-row, .ti-sum, .ti-row, .if-sum, .key-row, .pr-fields,
     .enr-sum, .enr-meter, .src-matches, .src-fields, .sv-inputs, .pr-srcs, .frule-btns
   ) { grid-column: 1 / -1; }
-/* OCR preprocess "Text appearance" colours reuse the colour-detector rows (.color-row /
-   .color-list / .aset-swatch, rule 7). Its remove button arms exactly like a rule row's / the
-   selection delete (armConfirm + [data-armed="1"]) — the same yellow-fill on the BUTTON. */
-.color-row .pp-coldel[data-armed="1"] { background: var(--warn); color: var(--on-accent); visibility: visible !important; }
+/* Every trash button (trashBtn -> .btn-trash) arms via armConfirm: the first click sets
+   [data-armed="1"] and turns it yellow, a second click fires (rule 2 — no confirm()). ONE rule
+   for all of them (rule 7) — detect/preprocess colours, rule rows, subset/producer/toast/item
+   rows, atlas cutouts, etc. — instead of a per-class copy each time a list grows a remove button. */
+.btn-trash[data-armed="1"] { background: var(--warn); color: var(--on-accent); visibility: visible !important; }
 
 /* Readout colour-pick modal: a blown-up cutout of the readout box, click a pixel to sample. */
 .pp-pick-modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center;
@@ -688,10 +689,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .frule-head .frule-n:hover .rulemv { opacity: 1; pointer-events: auto; }
 .frule-head .rule-op { color: var(--nt, var(--accent)); }
 .frule-head select, .frule-head .rule-val, .frule-head .rule-arg { flex: 1 1 0; min-width: 4ch; width: auto; }
+.frule-head select { max-width: 12ch; text-overflow: ellipsis; }
 .frule-head .rule-arrow { flex: 0 0 auto; }
 .frule-head .rule-fuzzy { flex: 0 0 6ch; }
-.frule-head .rule-del { flex: 0 0 auto; padding: 0; }
-.frule-head .rule-del[data-armed="1"] { background: var(--warn); color: var(--on-accent); visibility: visible !important; }
+.frule-head .rule-del { flex: 0 0 auto; padding: 0; margin-left: auto; }
 /* always occupies one line so a row's height never changes as the trace fills in */
 .frule-trace { font-size: var(--fs-xs); font-family: var(--mono, monospace); padding-left: 2px;
     min-height: 1.25em; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1007,7 +1008,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .img-foot { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 .img-foot button { flex: 0 0 auto; min-width: 0; }
 .img-foot .imgbtn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
-.img-foot .imgall { margin-left: auto; }   /* preview-all always sits at the right */
+.img-foot .imgtestone { margin-left: auto; }   /* test buttons justified to the right */
 .img-pages { display: inline-flex; align-items: center; gap: 4px; }
 .img-pages[hidden] { display: none; }
 /* draw-layer toggles under the canvas: one .flab checkbox per row */
@@ -1083,9 +1084,17 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mb-v-latest { font-size: var(--fs-sm); font-weight: 600; }   /* latest (ring tail) */
 .mb-v-old { font-size: 9px; font-weight: 400; color: var(--dim); }   /* retained history */
+/* the exposed value under a <latest> fold (cursor slot): tint it nt like the agg line so the ring
+   tail reads as "this is what the register exposes", not just another dim history sample */
+.mb-v-old.mb-v-live { color: var(--nt); font-weight: 600; }
 /* aggregate fold summary: sits below the raw ring, set off with a hairline + accent tint */
 .mb-v-agg { font-size: 9px; font-weight: 600; color: var(--nt); opacity: .85;
     margin-top: 1px; padding-top: 1px; border-top: 1px solid var(--line); letter-spacing: .02em; }
+/* last-written ring slot: a small arrow in the left gutter (stretch the line full-width so the
+   value stays centred; the arrow sits absolute -> no reflow when it moves between slots) */
+.mb-v-cur { position: relative; align-self: stretch; }
+.mb-v-cur::before { content: "\2192"; position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+    font-size: 9px; line-height: 1; color: var(--nt); pointer-events: none; }
 .mb-meta { display: flex; align-items: center; justify-content: space-between; gap: 4px;
     visibility: hidden; }   /* seen + conf only on hover (visibility keeps the slot -> no reflow) */
 .mb-cell:hover .mb-meta { visibility: visible; }

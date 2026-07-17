@@ -18,7 +18,7 @@ import { _optGroups, _colOpts, aggregateSelect, satToggleBtn } from "./node_part
 import { vtables, vtableFor, expandSubsetRow, refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 import {
     render, autosave, rebuildNode, nodeEdit, setNodeBusy,
-    onValueEdit, wireArmedRemove, _bootDetails,
+    onValueEdit, wireArmedRemove, _bootDetails, armConfirm,
 } from "./main.js";
 
 // ---- subset node: join one or more datasets, then filter/derive/sort ----------
@@ -594,19 +594,19 @@ function wireSubset(div, s) {
     div.querySelector(".sv-pivot-attrs")?.addEventListener("change", (e) => recompute(() => model.setSubsetPivotAttributes(s.id, e.target.value)));
 
     // filters
-    div.querySelectorAll(".sf-del").forEach((b) => b.addEventListener("click", () => restructure(() => model.removeFilter(s.id, +b.dataset.i))));
+    div.querySelectorAll(".sf-del").forEach((b) => armConfirm(b, () => restructure(() => model.removeFilter(s.id, +b.dataset.i)), { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".sf-field").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.filters[+el.dataset.i].field = e.target.value; })));
     div.querySelectorAll(".sf-op").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.filters[+el.dataset.i].op = e.target.value; })));
     div.querySelectorAll(".sf-val").forEach((el) => onValueEdit(el, (e) => recompute(() => { s.filters[+el.dataset.i].value = e.target.value; })));
 
     // derived columns — editing a name changes the available column set, so restructure
-    div.querySelectorAll(".sd-del").forEach((b) => b.addEventListener("click", () => restructure(() => model.removeDerived(s.id, +b.dataset.i))));
+    div.querySelectorAll(".sd-del").forEach((b) => armConfirm(b, () => restructure(() => model.removeDerived(s.id, +b.dataset.i)), { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".sd-name").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.derived[+el.dataset.i].name = e.target.value.trim(); })));
     div.querySelectorAll(".sd-tpl").forEach((el) => onValueEdit(el, (e) => recompute(() => { s.derived[+el.dataset.i].template = e.target.value; })));
 
     // sort — every mutation restructures (removal shifts indices; field/dir rebuild so the
     // picked option re-renders wrapped in < > like every other select)
-    div.querySelectorAll(".ss-del").forEach((b) => b.addEventListener("click", () => restructure(() => model.removeSort(s.id, +b.dataset.i))));
+    div.querySelectorAll(".ss-del").forEach((b) => armConfirm(b, () => restructure(() => model.removeSort(s.id, +b.dataset.i)), { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".ss-field").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.sort[+el.dataset.i].field = e.target.value; })));
     div.querySelectorAll(".ss-dir").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.sort[+el.dataset.i].desc = e.target.value === "desc"; })));
 

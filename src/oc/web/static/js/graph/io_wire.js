@@ -23,7 +23,7 @@ import { makeArmed } from "./armbtn.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 import {
     render, autosave, rebuildNode, rebuildNodeEdges, refreshLive, wireArmedRemove,
-    withBusy, setNodeBusy, showSatellite,
+    withBusy, setNodeBusy, showSatellite, armConfirm,
 } from "./main.js";
 
 // ---- producer node: fetches external data into its output dataset -----------
@@ -79,10 +79,10 @@ function wireProducer(div, n) {
         rowEl.querySelectorAll(".pr-map-k, .pr-map-v").forEach((el) => el.addEventListener("change", () => {
             model.setProducerMap(id, rowEl.dataset.kind, collectMap(rowEl.dataset.kind)); rebuild();
         }));
-        rowEl.querySelector(".pr-map-del")?.addEventListener("click", () => {
+        armConfirm(rowEl.querySelector(".pr-map-del"), () => {
             const kind = rowEl.dataset.kind; rowEl.remove();
             model.setProducerMap(id, kind, collectMap(kind)); rebuild();
-        });
+        }, { silent: true, resetOnOutside: true });
     };
     div.querySelectorAll(".pr-map-row").forEach(wireMapRow);
     const addMapRow = (kind) => {
@@ -114,10 +114,10 @@ function wireProducer(div, n) {
     div.querySelector(".pr-root")?.addEventListener("change", (e) => { model.setHttpRoot(id, e.target.value); save(); });
     // list-mode explode paths — adding/removing the first level flips list mode, so rebuild the body
     div.querySelector(".pr-exp-add")?.addEventListener("click", () => { model.addHttpExplode(id); rebuild(); });
-    div.querySelectorAll(".pr-exp-del").forEach((b) => b.addEventListener("click", () => { model.removeHttpExplode(id, +b.closest(".pr-exp-row").dataset.i); rebuild(); }));
+    div.querySelectorAll(".pr-exp-del").forEach((b) => armConfirm(b, () => { model.removeHttpExplode(id, +b.closest(".pr-exp-row").dataset.i); rebuild(); }, { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".pr-exp-v").forEach((el) => el.addEventListener("change", () => { model.setHttpExplode(id, +el.closest(".pr-exp-row").dataset.i, el.value.trim()); save(); }));
     div.querySelector(".pr-f-add")?.addEventListener("click", () => { model.addHttpField(id); rebuild(); });
-    div.querySelectorAll(".pr-f-del").forEach((b) => b.addEventListener("click", () => { model.removeHttpField(id, +b.dataset.i); structural(); }));
+    div.querySelectorAll(".pr-f-del").forEach((b) => armConfirm(b, () => { model.removeHttpField(id, +b.dataset.i); structural(); }, { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".pr-f-out").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { out_field: el.value.trim() }); structural(); }));
     div.querySelectorAll(".pr-f-path").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { path: el.value }); save(); }));
     div.querySelectorAll(".pr-f-tmpl").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { template: el.value }); save(); }));
@@ -131,7 +131,7 @@ function wireProducer(div, n) {
     // array reduction — the one place the shared filterList() primitive's two callers diverge.
     const fltI = (el) => (el.dataset.i === undefined ? null : +el.dataset.i);
     div.querySelectorAll(".pr-ff-add").forEach((b) => b.addEventListener("click", () => { model.addHttpFilter(id, fltI(b)); rebuild(); }));
-    div.querySelectorAll(".pr-ff-del").forEach((b) => b.addEventListener("click", () => { model.removeHttpFilter(id, fltI(b), +b.dataset.fi); rebuild(); }));
+    div.querySelectorAll(".pr-ff-del").forEach((b) => armConfirm(b, () => { model.removeHttpFilter(id, fltI(b), +b.dataset.fi); rebuild(); }, { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".pr-ffilt").forEach((row) => {
         const i = fltI(row), fi = +row.dataset.fi;
         const opSel = row.querySelector(".pr-ff-op"), valIn = row.querySelector(".pr-ff-val");
@@ -426,7 +426,7 @@ function wireSource(div, n) {
     // line filters (match clauses). add/remove change the parse output, so they refresh the preview
     // too — not just the inline edits below (the bug was removals leaving the preview stale).
     $(".src-addm")?.addEventListener("click", () => { model.addSourceMatch(s.id); rebuildNode(n.id); autosave(null); schedulePreview(); });
-    div.querySelectorAll(".src-rmm").forEach((b) => b.addEventListener("click", () => { model.removeSourceMatch(s.id, +b.dataset.i); rebuildNode(n.id); autosave(null); schedulePreview(); }));
+    div.querySelectorAll(".src-rmm").forEach((b) => armConfirm(b, () => { model.removeSourceMatch(s.id, +b.dataset.i); rebuildNode(n.id); autosave(null); schedulePreview(); }, { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".mset").forEach((inp) => inp.addEventListener("change", (e) => {
         model.setSourceMatch(s.id, +e.target.dataset.i, e.target.dataset.k,
             e.target.type === "checkbox" ? e.target.checked : e.target.value);
@@ -435,7 +435,7 @@ function wireSource(div, n) {
 
     // extraction fields. add/remove change which columns the parse emits -> refresh the preview too.
     $(".src-addf")?.addEventListener("click", () => { model.addSourceField(s.id); rebuildNode(n.id); autosave(null); schedulePreview(); });
-    div.querySelectorAll(".src-rmf").forEach((b) => b.addEventListener("click", () => { model.removeSourceField(s.id, +b.dataset.i); rebuildNode(n.id); autosave(null); schedulePreview(); }));
+    div.querySelectorAll(".src-rmf").forEach((b) => armConfirm(b, () => { model.removeSourceField(s.id, +b.dataset.i); rebuildNode(n.id); autosave(null); schedulePreview(); }, { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".fset2").forEach((inp) => inp.addEventListener("change", (e) => {
         const k = e.target.dataset.k;
         model.setSourceFieldProp(s.id, +e.target.dataset.i, k,
