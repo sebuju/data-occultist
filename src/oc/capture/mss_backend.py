@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
 
 import cv2
 import mss
@@ -11,6 +12,7 @@ import numpy as np
 from ..interfaces import CaptureBackend
 from ..registry import register_capture
 from ..types import Frame, PixelBox, WindowInfo
+from .regions import strip_spans
 
 
 @register_capture("mss")
@@ -36,7 +38,7 @@ class MssCaptureBackend(CaptureBackend):
             except Exception:   # noqa: BLE001 - a dead handle failing to close is fine
                 pass
 
-    def grab(self, box: PixelBox) -> Frame:
+    def _grab_bgr(self, box: PixelBox) -> np.ndarray:
         region = {"left": box.x, "top": box.y, "width": box.w, "height": box.h}
         try:
             shot = self._sct().grab(region)
@@ -47,8 +49,23 @@ class MssCaptureBackend(CaptureBackend):
             shot = self._sct().grab(region)
         # mss returns BGRA; drop alpha, keep BGR for OpenCV. cvtColor over a strided
         # [:, :, :3].copy() — ~9x cheaper at 4K (SIMD vs strided copy).
-        img = cv2.cvtColor(np.asarray(shot), cv2.COLOR_BGRA2BGR)
-        return Frame(image=img, client=box)
+        return cv2.cvtColor(np.asarray(shot), cv2.COLOR_BGRA2BGR)
+
+    def grab(self, box: PixelBox) -> Frame:
+        return Frame(image=self._grab_bgr(box), client=box)
 
     def grab_window(self, window: WindowInfo) -> Frame:
         return self.grab(window.client)
+
+    def grab_window_regions(self, window: WindowInfo, boxes: Sequence[PixelBox]) -> Frame:
+        # A grab's cost is dominated by a fixed per-call ~6-7ms (DWM sync), not area —
+        # so grab a few full-width strips covering the boxes, never one grab per box
+        # (see capture/regions.py for the measurements).
+        c = window.client
+        spans = strip_spans(boxes, c.h)
+        if spans is None:
+            return self.grab_window(window)
+        canvas = np.zeros((c.h, c.w, 3), np.uint8)
+        for y0, y1 in spans:
+            canvas[y0:y1] = self._grab_bgr(PixelBox(c.x, c.y + y0, c.w, y1 - y0))
+        return Frame(image=canvas, client=c)

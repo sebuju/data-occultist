@@ -63,6 +63,15 @@ class CaptureBackend(ABC):
     def grab_window(self, window: WindowInfo) -> Frame:
         """Capture a window's client area."""
 
+    def grab_window_regions(self, window: WindowInfo, boxes: Sequence[PixelBox]) -> Frame:
+        """Capture only the given client-relative pixel ``boxes`` of a window's client
+        area, returned as a full-client-size :class:`Frame` whose pixels OUTSIDE the
+        requested regions are undefined (black) — so every fraction->pixel consumer
+        works unchanged on the result. A grab's fixed cost dwarfs its per-area cost,
+        so a backend that can partial-grab (mss strips) makes a fast poll several
+        times cheaper. Default: a plain full grab (always correct)."""
+        return self.grab_window(window)
+
 
 class OcrEngine(ABC):
     """Turn an image region into text."""

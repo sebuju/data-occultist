@@ -46,17 +46,18 @@ class AdaptiveCapture(CaptureBackend):
         except Exception:   # noqa: BLE001 - a probe hiccup must never break a grab
             return False
 
-    def grab_window(self, window: WindowInfo) -> Frame:
-        # last_path: which branch served the most recent grab — "fg" (foreground backend),
-        # "bg" (not foreground), "fg_black" (foreground grab came back black -> surface
-        # fallback), "fg_err" (foreground grab raised -> surface fallback). Read by the
-        # collector's stats so the capture path is visible per tick.
+    def _serve(self, window: WindowInfo, grab_fg, fg_path: str = "fg") -> Frame:
+        # last_path: which branch served the most recent grab — "fg" (foreground backend,
+        # full), "fg_part" (foreground partial/strips grab), "bg" (not foreground),
+        # "fg_black" (foreground grab came back black -> surface fallback), "fg_err"
+        # (foreground grab raised -> surface fallback). Read by the collector's stats so
+        # the capture path is visible per tick.
         if self._is_foreground(window):
             try:
-                f = self._fg.grab_window(window)
+                f = grab_fg()
                 # Exclusive-fullscreen returns black to a desktop BitBlt -> use the surface grab.
                 if f.image is not None and f.image.size and int(f.image.max()) > 8:
-                    self.last_path = "fg"
+                    self.last_path = fg_path
                     return f
                 self.last_path = "fg_black"
             except Exception:   # noqa: BLE001 - fall through to the background grab
@@ -64,6 +65,15 @@ class AdaptiveCapture(CaptureBackend):
         else:
             self.last_path = "bg"
         return self._bg.grab_window(window)
+
+    def grab_window(self, window: WindowInfo) -> Frame:
+        return self._serve(window, lambda: self._fg.grab_window(window))
+
+    def grab_window_regions(self, window: WindowInfo, boxes) -> Frame:
+        # Background surface capture (printwindow) renders the whole window regardless,
+        # so partial pays off only on the foreground path; the fallback stays a full grab.
+        return self._serve(window, lambda: self._fg.grab_window_regions(window, boxes),
+                           fg_path="fg_part")
 
     def grab(self, box: PixelBox) -> Frame:
         # A bare screen rectangle carries no window handle to test; the foreground
