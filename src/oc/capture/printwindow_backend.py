@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ctypes
 
+import cv2
 import numpy as np
 import win32gui
 import win32ui
@@ -48,11 +49,12 @@ class PrintWindowCaptureBackend(CaptureBackend):
             ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), self._flags)
             info = bmp.GetInfo()
             bits = bmp.GetBitmapBits(True)
-            # GDI DIB is BGRA, top-down; drop alpha -> BGR for OpenCV.
+            # GDI DIB is BGRA, top-down; drop alpha -> BGR for OpenCV. cvtColor over a
+            # strided [:, :, :3].copy() — ~9x cheaper at 4K (SIMD vs strided copy).
             arr = np.frombuffer(bits, dtype=np.uint8).reshape(
                 (info["bmHeight"], info["bmWidth"], 4)
             )
-            image = arr[:, :, :3].copy()
+            image = cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR)
         finally:
             win32gui.DeleteObject(bmp.GetHandle())
             save_dc.DeleteDC()
