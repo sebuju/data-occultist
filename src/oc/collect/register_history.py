@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections import deque
 
-_CAP = 50
+_CAP = 200
 # (game, register_id) -> deque of newest-first push records
 _history: dict[tuple[str, str], deque] = {}
 

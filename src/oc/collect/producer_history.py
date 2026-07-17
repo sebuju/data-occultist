@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections import deque
 
-_CAP = 50
+_CAP = 200
 # (game, producer_id) -> deque of newest-first sweep records
 _history: dict[tuple[str, str], deque] = {}
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections import deque
 
-_CAP = 50
+_CAP = 200
 # (game, window_id, readout_id) -> deque of newest-first read records
 _history: dict[tuple[str, str, str], deque] = {}
 
