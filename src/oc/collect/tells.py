@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import cv2
 import numpy as np
 
 from ..profile.models import Tell, TellKind
@@ -79,20 +80,37 @@ def _color_mask(crop: np.ndarray, hex_colors: str | Sequence[str] | None, tolera
     return None if dist is None else dist < tolerance
 
 
+def _largest_region_frac(mask: np.ndarray | None, denom: int) -> float:
+    """Fraction (over ``denom`` pixels) covered by the LARGEST 8-connected near-colour region.
+    A real target is one CONTIGUOUS uniform area (a ring, an icon, a frame) -> high; scattered
+    speckle (compression noise, a few stray matching pixels) is many tiny regions -> low, even
+    when its total pixel count matches. Light on CPU: one ``connectedComponentsWithStats`` pass
+    over the small crop mask (a single linear scan), no per-pixel Python."""
+    if mask is None or denom <= 0 or not mask.any():
+        return 0.0
+    _n, _labels, stats, _c = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    # stats[0] is the background (label 0); the biggest FOREGROUND component is the target blob.
+    return float(stats[1:, cv2.CC_STAT_AREA].max()) / denom if len(stats) > 1 else 0.0
+
+
 def color_score(crop: np.ndarray, hex_colors: str | Sequence[str] | None, tolerance: int) -> float:
+    """Share of the crop covered by the largest CONTIGUOUS near-colour region (not the raw
+    fraction of near pixels — that counted scattered speckle the same as a solid area)."""
     near = _color_mask(crop, hex_colors, tolerance)
-    return float(near.mean()) if near is not None else 0.0
+    return _largest_region_frac(near, near.size) if near is not None else 0.0
 
 
 def border_score(crop: np.ndarray, hex_colors: str | Sequence[str] | None, tolerance: int, width: float) -> float:
-    """Colour presence on the box's PERIMETER band only (a rarity frame, a selection
-    outline), not its fill. ``width`` is the band thickness as a fraction of the box's
-    shorter side; the score is the share of near-colour pixels within that ring."""
+    """Colour presence on the box's PERIMETER band only (a rarity frame, a selection outline),
+    not its fill. ``width`` is the band thickness as a fraction of the box's shorter side; the
+    score is the largest CONTIGUOUS near-colour arc within that ring, as a share of the ring."""
     near = _color_mask(crop, hex_colors, tolerance)
     if near is None:
         return 0.0
     ring = _perimeter_ring(near.shape, width)
-    return float(near.mean()) if ring is None else float(near[ring].mean())
+    if ring is None:                                       # band swallowed the box -> whole-fill tell
+        return _largest_region_frac(near, near.size)
+    return _largest_region_frac(near & ring, int(ring.sum()))
 
 
 def color_distance(crop: np.ndarray, hex_colors: str | Sequence[str] | None, width: float = 0.0) -> float | None:
