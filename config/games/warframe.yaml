@@ -4817,14 +4817,14 @@ triggers:
     ability_register:
     - key: ability_1_cd
       when: lt
-      value: 2.0
+      value: 3.0
       value2: 3.0
   register_logic: or
   targets:
   - bob
   - clear_1
   enabled: true
-  throttle_ms: 1500.0
+  throttle_ms: 2000.0
   ready_field: ''
 - id: ab_trigger_2
   kind: on_register
@@ -4839,14 +4839,14 @@ triggers:
     ability_register:
     - key: ability_2_cd
       when: lt
-      value: 2.0
+      value: 3.0
       value2: 3.0
   register_logic: or
   targets:
   - bob
   - clear_2
   enabled: true
-  throttle_ms: 1500.0
+  throttle_ms: 2000.0
   ready_field: ''
 - id: ab_trigger_3
   kind: on_register
@@ -4861,14 +4861,14 @@ triggers:
     ability_register:
     - key: ability_3_cd
       when: lt
-      value: 2.0
+      value: 3.0
       value2: 3.0
   register_logic: or
   targets:
   - bob
   - clear_3
   enabled: true
-  throttle_ms: 1500.0
+  throttle_ms: 2000.0
   ready_field: ''
 - id: ab_trigger_4
   kind: on_register
@@ -4883,14 +4883,14 @@ triggers:
     ability_register:
     - key: ability_4_cd
       when: lt
-      value: 2.0
+      value: 3.0
       value2: 3.0
   register_logic: or
   targets:
   - bob
   - clear_4
   enabled: true
-  throttle_ms: 1500.0
+  throttle_ms: 2000.0
   ready_field: ''
 toasts:
 - id: toast_2
@@ -5329,7 +5329,7 @@ registers:
   title: ''
   enabled: true
   capacity: 3
-  aggregate: ''
+  aggregate: stable
   ignore_empty: true
   persist: ''
 dictionaries:
@@ -6299,7 +6299,7 @@ layout:
       softH: true
     ro:arsenal_warframe:slot_1_drain:
       x: -1580.0
-      y: 840.0
+      y: 880.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -7477,7 +7477,7 @@ layout:
     rohist:live_game_window:ability_2_cd:
       widths:
         when: 154
-        raw: 43
+        raw: 36
         always→extract: 43
         always→floor: 43
         empty→drop: 36
@@ -7487,7 +7487,9 @@ layout:
         below→drop: 43
         above→drop: 43
         value: 43
-      sorts: []
+      sorts:
+      - col: when
+        dir: -1
     rohist:live_game_window:ability_3_cd:
       widths:
         when: 154
@@ -7501,6 +7503,9 @@ layout:
         no_digit→drop: 43
         below→drop: 43
         above→drop: 43
+      sorts:
+      - col: when
+        dir: -1
     rohist:live_game_window:ability_4_cd:
       sorts: []
       widths:
@@ -7554,6 +7559,9 @@ layout:
         value: 46
         ring: 46
         overwritten: 46
+      sorts:
+      - col: when
+        dir: -1
     hist:ab_trigger_1:
       widths:
         when: 65
