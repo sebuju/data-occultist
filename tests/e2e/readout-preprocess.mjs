@@ -149,7 +149,10 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
     }, base);
     ok(uniq > 8, `preview canvas drew the cutout (${uniq} distinct colours, >8 = real frame not placeholder)`);
 
-    // 8) colour collisions: identical colours (or within tolerance) flag BOTH hex inputs red.
+    // 8) colour collisions: a colour is flagged red only when it is FULLY REDUNDANT — its whole
+    //    tolerance sphere is already covered by the other colours, so deleting it changes no mask
+    //    pixel. A near-but-not-identical colour reaches `tolerance` beyond the keeper and keeps
+    //    pixels it misses, so it is NOT redundant and stays un-flagged.
     const collide = await page.evaluate(async ({ winId, detId }) => {
         const { model, rebuildNode } = window.__t;
         const d = model.detect(winId, detId);
@@ -166,13 +169,13 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
         d.colors = ["#ffffff", "#000000"]; d.tolerance = 10; rebuildNode(`det:${winId}:${detId}`);
         const distinct = marked();
         d.colors = ["#ffffff", "#f8f8f8"]; d.tolerance = 60; rebuildNode(`det:${winId}:${detId}`);
-        const within = marked();
-        return { same, sameRed, distinct, within };
+        const near = marked();
+        return { same, sameRed, distinct, near };
     }, { winId: setup.winId, detId });
     ok(!collide.same[0] && collide.same[1], `identical colours flag only the LATER one (${JSON.stringify(collide.same)})`);
     ok(!collide.sameRed[0] && collide.sameRed[1], `the flagged (later) input shows the danger-red fill (${JSON.stringify(collide.sameRed)})`);
     ok(collide.distinct.length === 2 && !collide.distinct.some(Boolean), `far-apart colours at tol 10 flag none (${JSON.stringify(collide.distinct)})`);
-    ok(!collide.within[0] && collide.within[1], `near colour flags only the later one (${JSON.stringify(collide.within)})`);
+    ok(collide.near.length === 2 && !collide.near.some(Boolean), `near-but-not-contained colour (reaches past the keeper) flags none (${JSON.stringify(collide.near)})`);
 
     // 9) changing TOLERANCE repaints the cutout preview (via the real .aset[data-k=tol] handler).
     const tolRepaint = await page.evaluate(async ({ winId, detId }) => {

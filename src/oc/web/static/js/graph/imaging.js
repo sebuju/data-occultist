@@ -1,7 +1,7 @@
 // Window image / region drawing, item cutouts, OCR read pipeline (preview + detect + grid).
 // Extracted from main.js verbatim.
 import * as api from "../api.js";
-import { h, frag, TRASH, subhead, kv } from "../dom.js";
+import { h, frag, TRASH, trashBtn, subhead, kv } from "../dom.js";
 import { onOutside } from "../inputbus.js";
 import { openCaptureModal } from "./panels/precap.js";
 import { timed, log } from "../log.js";
@@ -21,11 +21,11 @@ import { drawEdges } from "./routing.js";
 import { quantizeWidthOnlyHeight } from "./node_resize.js";
 import { renderLiveWindow, liveDetCount, liveRecog, liveCollecting } from "./panels/livewin.js";
 import {
-    render, autosave, nodeEdit, rebuildNode, rebuildReadoutConsumers, setNodeBusy, withBusy,
+    render, autosave, nodeEdit, rebuildNode, setNodeBusy, withBusy,
     registerOverlay, unregisterOverlay, overlaySelected, selectedNodeId, setSelectedNodeId,
     placeNewNode, refreshLive, syncCellSize, itemChanged,
     addFieldToItemGroup, addTellToItemGroup, inheritGroupFrom, showSatellite,
-    refreshItemTemplateRefs,
+    refreshItemTemplateRefs, armConfirm,
 } from "./main.js";
 import { panZoomTo } from "./camera.js";
 import { wireTools, toolKind } from "./drawtool.js";
@@ -368,7 +368,7 @@ function rectEditSyncInputs(st, force) {
 
 // The image surface lives INSIDE the window node's `.win-img` host — one per window node,
 // built once and always present. Draw tools sit above the canvas; the page nav, image
-// selector, recapture and "preview all" sit BELOW it. There is no clear/close button.
+// selector and recapture sit BELOW it. There is no clear/close button.
 // `nodeEl` is the window node element when known by the caller (wireNode passes it): the surface
 // is built during buildNode(), BEFORE render() registers the node in nodeEls, so a nodeEls lookup
 // would miss it and the node would render with an empty .win-img (no canvas, no capture buttons).
@@ -400,9 +400,8 @@ async function openImage(winId, nodeEl = null) {
             h("button", { class: "imgbtn", title: "choose which stashed images this window uses" },
                 h("span", { class: "imgbtn-lbl" }, "images")),
             h("button", { class: "imgcap", title: "capture the live window as a new image for this window" }, "capture"),
-            h("button", { class: "imgtest", title: "run ALL this window's images through the collect pipeline one at a time (feeds readouts/registers + writes records), like live — click again to stop" }, "test all"),
-            h("button", { class: "imgtestone", title: "run the image currently shown through the collect pipeline (feeds readouts/registers + writes records), like live" }, "test this"),
-            h("button", { class: "imgall", title: "preview data read from ALL of this window's images" }, "preview all")),
+            h("button", { class: "imgtestone", title: "run the image currently shown through the collect pipeline (feeds readouts/registers + writes records), like live" }, "feed"),
+            h("button", { class: "imgtest", title: "run ALL this window's images through the collect pipeline one at a time (feeds readouts/registers + writes records), like live — click again to stop" }, "feed all")),
         imgLayers());
     const canvas = host.querySelector("canvas");
     const { kindOf, canCreate } = wireTools(host);   // one shared tool group; no draw until a tool is armed
@@ -422,8 +421,7 @@ async function openImage(winId, nodeEl = null) {
             // park the new node right BESIDE its window (srcId) before render() so ensurePositions
             // leaves it alone — no autoplacement into a far column.
             if (newNode) await placeNewNode(newNode, k, `win:${winId}`);
-            render(); refreshImageBoxes(winId); autosave(winId);   // re-OCR only this window
-            if (k === "readout") rebuildReadoutConsumers();   // toast/watch dropdowns
+            render(); refreshImageBoxes(winId); autosave(winId);   // re-OCR only this window; render()'s _refKey gate rebuilds readout consumers (toast/watch dropdowns)
             if (newDetect) rebuildNode(`win:${winId}`);   // add the new detector to the window's detects section
             if (newNode) inheritGroupFrom(newNode, `win:${winId}`);   // box drawn on a grouped window → join its group
             if (newDetect) prefillDetectText(winId, newDetect);
@@ -445,7 +443,6 @@ async function openImage(winId, nodeEl = null) {
     persist.layout();
     host.querySelector(".imgbtn").addEventListener("click", () => openCaptureModal(winId));   // pick image(s)
     host.querySelector(".imgcap").addEventListener("click", () => loadImage(winId, true));   // recapture re-reads
-    host.querySelector(".imgall").addEventListener("click", (e) => previewAll(winId, e.currentTarget));
     host.querySelector(".imgtest").addEventListener("click", (e) => testRun(winId, e.currentTarget));
     host.querySelector(".imgtestone").addEventListener("click", (e) => testOne(winId, e.currentTarget));
     if (testRuns.has(winId)) {   // a rebuild mid-run: reflect the running state on the fresh button
@@ -612,7 +609,8 @@ let _mpRaf = 0;
 const _isHex6 = (c) => /^#[0-9a-fA-F]{6}$/.test(c || "");
 
 // getBox() -> {x,y,w,h} in window fractions (readout .box / detector .search); getCfg() ->
-// { colors:[hex], tolerance, border?, width? } (empty colours -> show the plain cutout). The
+// { colors:[hex], tolerance, border?, width?, mask?, minFrac? } (empty colours -> plain cutout;
+// mask -> readout all-near-pixels mode + minFrac denoise, else detector largest-blob mode). The
 // canvas is NOT stored — a rebuild replaces the DOM canvas while `getBox`/`getCfg` (closures over
 // the stable model object) stay valid, so a cached canvas ref would paint a detached element and
 // leave the live one blank (the boot / image-change blank). _mpRender re-queries it by node id.
@@ -684,7 +682,8 @@ function _mpRender(nodeId) {
     ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
     const cfg = getCfg?.() || {};
     const cols = (cfg.colors || []).filter(_isHex6).map(_mpHexToRgb);
-    if (cols.length) _mpPaint(ctx, dx, dy, dw, dh, cols, cfg.tolerance ?? 0, cfg.border ? (cfg.width ?? 0.1) : 0);
+    if (cols.length) _mpPaint(ctx, dx, dy, dw, dh, cols, cfg.tolerance ?? 0,
+        cfg.border ? (cfg.width ?? 0.1) : 0, !!cfg.mask, cfg.minFrac || 0);
 }
 
 function _mpPlaceholder(ctx, cw, ch, hasBox) {
@@ -698,19 +697,27 @@ function _mpHexToRgb(hex) {
     return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
 }
 
-// Emphasise ONLY the winning region — the largest 8-connected near-colour blob, i.e. exactly what
-// the detector now scores (collect/tells.py color_score/border_score). A semitransparent pink is
-// blended over just that blob so the cutout shows through; scattered speckle and everything else
-// are left as the plain cutout. Uses the SAME test the detector's mask uses: BGR distance `< tol`
-// to the nearest colour (strict, matching _color_mask). `borderFrac` > 0 restricts to the
-// perimeter band (border kind). CPU is free here — this is the editor preview, not the live path.
-const _MP_A = 0.5, _MP_HR = 255, _MP_HG = 45, _MP_HB = 150;   // highlight colour (pink) + alpha
-function _mpPaint(ctx, dx, dy, dw, dh, cols, tol, borderFrac) {
+// Show, over the blown-up cutout, exactly which pixels the current colour setup keeps — and it
+// must match whichever BACKEND consumes this box, because the point of the preview is to SEE WHAT
+// HAPPENS (rule 7, one renderer, two truthful modes):
+//   * detector (default): the largest 8-connected near-colour blob, matching collect/tells.py
+//     color_score/border_score (`_largest_region_frac`), comparator BGR distance `< tol`.
+//   * readout OCR (`maskAll`): EVERY near-colour pixel, matching collect/preprocess.py
+//     `_color_mask` (comparator `<= tol`); when `minFrac > 0` it also mirrors that module's
+//     `_denoise` — drop components smaller than `minFrac` of the largest — dimming the killed
+//     ones and labelling each blob's area as a % of the largest so the threshold is tunable.
+// A semitransparent pink is blended over kept pixels so the cutout shows through. `borderFrac` > 0
+// restricts to the perimeter band (border detector). This is the editor preview, not the live path
+// — the two masks are reimplemented (JS here vs numpy there) and must stay in sync by construction.
+const _MP_A = 0.5, _MP_HR = 255, _MP_HG = 45, _MP_HB = 150;   // kept-pixel highlight (pink) + alpha
+const _MP_KA = 0.55, _MP_KR = 70, _MP_KG = 70, _MP_KB = 78;   // denoise-killed dim (grey) + alpha
+function _mpPaint(ctx, dx, dy, dw, dh, cols, tol, borderFrac, maskAll = false, minFrac = 0) {
     const id = ctx.getImageData(dx, dy, dw, dh);
     const px = id.data;
     const n = dw * dh;
     const band = borderFrac > 0 ? borderFrac * Math.min(dw, dh) : 0;
-    // 1) near-colour mask (restricted to the border band for a border detector)
+    // 1) near-colour mask (restricted to the border band for a border detector). The comparator
+    //    matches the backend for this mode: readout mask is `<= tol` (preprocess), detector `< tol`.
     const near = new Uint8Array(n);
     for (let y = 0; y < dh; y++) {
         for (let x = 0; x < dw; x++) {
@@ -718,20 +725,22 @@ function _mpPaint(ctx, dx, dy, dw, dh, cols, tol, borderFrac) {
             const p = y * dw + x, i = p * 4, r = px[i], g = px[i + 1], b = px[i + 2];
             for (const c of cols) {
                 const dr = r - c.r, dg = g - c.g, db = b - c.b;
-                if (Math.sqrt(dr * dr + dg * dg + db * db) < tol) { near[p] = 1; break; }
+                const d = Math.sqrt(dr * dr + dg * dg + db * db);
+                if (maskAll ? d <= tol : d < tol) { near[p] = 1; break; }
             }
         }
     }
-    // 2) largest 8-connected component (stack flood-fill; keep the biggest component's pixels)
+    // 2) enumerate 8-connected components (stack flood-fill), tracking pixels + area + centroid.
     const seen = new Uint8Array(n), stack = [];
-    let best = null, bestSize = 0;
+    const comps = [];
+    let maxSize = 0;
     for (let s = 0; s < n; s++) {
         if (!near[s] || seen[s]) continue;
         stack.length = 0; stack.push(s); seen[s] = 1;
-        const comp = [];
+        const pixels = []; let sx = 0, sy = 0;
         while (stack.length) {
-            const p = stack.pop(); comp.push(p);
-            const x = p % dw, y = (p / dw) | 0;
+            const p = stack.pop(); pixels.push(p);
+            const x = p % dw, y = (p / dw) | 0; sx += x; sy += y;
             for (let oy = -1; oy <= 1; oy++) {
                 for (let ox = -1; ox <= 1; ox++) {
                     if (!ox && !oy) continue;
@@ -742,18 +751,48 @@ function _mpPaint(ctx, dx, dy, dw, dh, cols, tol, borderFrac) {
                 }
             }
         }
-        if (comp.length > bestSize) { bestSize = comp.length; best = comp; }
+        const size = pixels.length;
+        comps.push({ pixels, size, cx: sx / size, cy: sy / size });
+        if (size > maxSize) maxSize = size;
     }
-    // 3) paint only the winning blob
-    if (best) {
-        for (const p of best) {
-            const i = p * 4;
-            px[i] = (px[i] * (1 - _MP_A) + _MP_HR * _MP_A) | 0;
-            px[i + 1] = (px[i + 1] * (1 - _MP_A) + _MP_HG * _MP_A) | 0;
-            px[i + 2] = (px[i + 2] * (1 - _MP_A) + _MP_HB * _MP_A) | 0;
-        }
+    const blend = (p, a, R, G, B) => {
+        const i = p * 4;
+        px[i] = (px[i] * (1 - a) + R * a) | 0;
+        px[i + 1] = (px[i + 1] * (1 - a) + G * a) | 0;
+        px[i + 2] = (px[i + 2] * (1 - a) + B * a) | 0;
+    };
+    // 3a) detector: paint only the largest blob (its score is that region alone).
+    if (!maskAll) {
+        let best = null;
+        for (const c of comps) if (!best || c.size > best.size) best = c;
+        if (best) for (const p of best.pixels) blend(p, _MP_A, _MP_HR, _MP_HG, _MP_HB);
+        ctx.putImageData(id, dx, dy);
+        return;
+    }
+    // 3b) readout: paint every near pixel; when denoising, dim the components the live mask drops.
+    const threshold = minFrac > 0 && maxSize ? maxSize * minFrac : 0;
+    for (const c of comps) {
+        const killed = threshold > 0 && c.size < threshold;
+        if (killed) for (const p of c.pixels) blend(p, _MP_KA, _MP_KR, _MP_KG, _MP_KB);
+        else for (const p of c.pixels) blend(p, _MP_A, _MP_HR, _MP_HG, _MP_HB);
     }
     ctx.putImageData(id, dx, dy);
+    // 4) label each blob's area as a % of the largest, so the user reads where to set the threshold.
+    if (minFrac > 0 && maxSize) {
+        ctx.save();
+        ctx.font = "10px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.85)";
+        for (const c of comps) {
+            if (c.size < 3) continue;                     // skip single-pixel noise (~0%, just clutter)
+            const pct = Math.round((c.size / maxSize) * 100);
+            const killed = c.size < threshold;
+            const lx = dx + c.cx, ly = dy + c.cy, txt = `${pct}%`;
+            ctx.strokeText(txt, lx, ly);
+            ctx.fillStyle = killed ? "#9aa0aa" : "#ffd0e6";
+            ctx.fillText(txt, lx, ly);
+        }
+        ctx.restore();
+    }
 }
 
 // A picked colour is just another edit to the node that armed the eyedropper, so it JOINS that
@@ -1082,7 +1121,7 @@ export function refreshGlyphPending(nodeEl = null) {
             title: "the glyph this box covers — click to select its box, then drag/resize or WASD-nudge it", dataset: { i } }),
         h("input", { class: "gp-char", maxlength: "1", size: "1", value: p.char || "", placeholder: "?",
             title: "which character this box is; the box is on the image — click the image to select it", dataset: { i } }),
-        h("button", { class: "gp-rm danger", dataset: { i }, title: "discard this suggestion" }, TRASH())));
+        trashBtn({ cls: "gp-rm", dataset: { i }, title: "discard this suggestion" })));
     host.replaceChildren(
         h("div", { class: "glyph-head" },
             h("span", { class: "flab" }, `auto — adjust boxes + labels, then save all [${glyphPending.length}]`),
@@ -1103,7 +1142,7 @@ export function refreshGlyphPending(nodeEl = null) {
             selectGlyphProp(+cell.dataset.i);
         }));
     host.querySelectorAll(".gp-rm").forEach((btn) =>
-        btn.addEventListener("click", (e) => discardGlyphProp(node, +e.currentTarget.dataset.i)));
+        armConfirm(btn, () => discardGlyphProp(node, +btn.dataset.i), { silent: true, resetOnOutside: true }));
     host.querySelector(".gp-confirm").addEventListener("click", () => commitGlyphProposals(node));
     host.querySelector(".gp-discard").addEventListener("click", () => { glyphPending = []; refreshGlyphPending(node); drawCutRect(); });
     markGlyphPropSelected(propIndexFromId(imageCanvases.get("atlas")?.overlay.activeId));   // keep highlight across rebuilds
@@ -1131,7 +1170,7 @@ export function refreshAtlasList(focusLast = false, nodeEl = null) {
             h("input", { class: kind === "symbol" ? "glyph-char wide" : "glyph-char", maxlength: kind === "symbol" ? 40 : 1,
                 size: kind === "symbol" ? 10 : 1, value: c.label || "", placeholder: kind === "symbol" ? "label" : "?",
                 title: kind === "glyph" ? "which character this glyph is" : "the school/category this icon stands for", dataset: { i } }),
-            h("button", { class: "glyph-rm danger", dataset: { i }, title: "remove cutout" }, TRASH()));
+            trashBtn({ cls: "glyph-rm", dataset: { i }, title: "remove cutout" }));
     });
     host.replaceChildren(...[
         cutouts.length ? subhead("cutout atlas") : null,   // subheading only when non-empty (rule 7 — shared primitive)
@@ -1150,9 +1189,9 @@ export function refreshAtlasList(focusLast = false, nodeEl = null) {
         model.setCutoutKind(i, cur === "glyph" ? "symbol" : "glyph");
         refreshAtlasList(); autosave(null);
     }));
-    host.querySelectorAll(".glyph-rm").forEach((btn) => btn.addEventListener("click", () => {
+    host.querySelectorAll(".glyph-rm").forEach((btn) => armConfirm(btn, () => {
         model.removeCutout(+btn.dataset.i); refreshAtlasList(); autosave(null);
-    }));
+    }, { silent: true, resetOnOutside: true }));
     if (focusLast && cutouts.length) host.querySelector(`.glyph-char[data-i="${cutouts.length - 1}"]`)?.focus();
 }
 
@@ -1670,57 +1709,6 @@ async function doPreview(winId, live, { superseded } = {}) {
     }
 }
 
-// Commit what the preview node currently reads into the window's dataset store — re-reads
-// server-side (never trusts the rendered table) against the SAME image the preview shows
-// (the window's bound capture), as one revertable batch. Refreshes the dataset node after.
-async function commitPreviewNode(winId, btn) {
-    if (btn) { btn.disabled = true; btn.classList.add("reading"); }
-    const done = timed(`commit ${winId}`);
-    try {
-        const cap = await curCapOf(winId);   // commit the page currently on screen
-        const r = await api.previewCommit(previewProfileFor(winId), model.profile.name, cap);
-        const lc = r.low_conf ? `, ${r.low_conf} low-conf` : "";
-        done(`· ${r.written} → ${r.dataset} (${r.skipped} skipped${lc} of ${r.cells})`);
-        setStatus(`committed ${r.written} to ${r.dataset} · ${r.skipped} skipped${lc} of ${r.cells}`);
-        await refreshLive();   // record counts / new dataset edges — may render a brand-new dataset node
-        if (nodeEls.has(`ds:${r.dataset}`)) { refreshDataNode(r.dataset); loadBatchesNode(r.dataset); }
-    } catch (e) {
-        done(String(e.message || e), "err");
-        setStatus(String(e.message || e));
-    } finally {
-        if (btn) { btn.disabled = false; btn.classList.remove("reading"); }
-    }
-}
-
-// Preview data read from EVERY bound image at once: OCR each page in turn, concatenate the
-// cells, and render the combined table in the preview node. The default preview reads only
-// the page on screen; this is the explicit "all pages" view — one-shot, page state untouched.
-async function previewAll(winId, btn) {
-    const list = await capListOf(winId);
-    if (!list.length) { setStatus("no images bound to this window"); return; }
-    showSatellite(`prev:${winId}`);   // the preview node is opt-in — reveal it so the read has somewhere to render
-    const host = prevHost(winId);
-    if (btn) { btn.disabled = true; btn.classList.add("reading"); }
-    if (host) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, `reading ${list.length} image${list.length === 1 ? "" : "s"}…`));
-    const done = timed(`OCR preview-all ${winId}`);
-    try {
-        const game = model.profile.name, cells = [];
-        let img = 0, srvMs = 0;
-        for (const cap of list) {
-            const res = await api.preview(previewProfileFor(winId), game, cap);
-            srvMs += res.ms || 0;   // sum each page's real compute, not wall-since-issue
-            for (const c of res.cells || []) { c._img = img; cells.push(c); }   // tag rows by source image so the table can rule between images
-            img++;
-        }
-        if (host) host.replaceChildren(previewTable(cells));
-        done(`· ${list.length} images · ${cells.length} cells`, "ok", srvMs);
-    } catch (e) {
-        done(String(e.message || e), "err");
-        if (host) host.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, String(e.message || e)));
-    } finally {
-        if (btn) { btn.disabled = false; btn.classList.remove("reading"); }
-    }
-}
 
 // One image through the collect pipeline, like a live tick: /api/preview with feed=1 (readouts +
 // registers + consensus/history + readout->register data blob + on_readout watch lines) then
@@ -1763,7 +1751,7 @@ async function testRun(winId, btn) {
     } finally {
         testRuns.delete(winId);
         unregisterWorker(`wintest:${winId}`);
-        if (btn) { btn.classList.remove("reading"); btn.textContent = "test all"; }
+        if (btn) { btn.classList.remove("reading"); btn.textContent = "feed all"; }
     }
 }
 
@@ -1807,9 +1795,9 @@ function previewCell(v) {
     return h("td", { class: cls, title: v.raw || "" }, String(v.value ?? "∅"));
 }
 
-// Render rows, inserting a separator <tr> whenever the source image (`_img`, set by
-// previewAll) changes — never before the first group. Rows without `_img` (the normal
-// single-image preview) all share one group, so no separators appear.
+// Render rows, inserting a separator <tr> whenever the source image (`_img`) changes — never
+// before the first group. Rows without `_img` (the normal single-image preview) all share one
+// group, so no separators appear.
 function sepRows(cells, cols, rowFn) {
     let prev;
     // each entry is [separator-or-null, row]; h() flattens the nested arrays and skips the nulls.
@@ -2085,17 +2073,24 @@ export async function refreshCollisions() {
 // reads (scheduleItemRead, above) are a SEPARATE pending set that rides the SAME clock without
 // implying a window-wide preview/detect of their own (e.g. merely opening an item's cutout view).
 const READ_DEBOUNCE_MS = 700;
+// Page-step grace: cycling next/prev must do ZERO costly work per click — the read AND the
+// live feed (feed=1 + commit) both ride this clock so they collapse into ONE pass on the page
+// you land on. Longer than the edit-read debounce so a burst of clicks waits it out entirely.
+const PAGE_FEED_MS = 1000;
 let _readTimer = null;
+let _readDelay = 0;               // longest delay any pending arm asked for this settle (max wins)
 const _readWins = new Set();      // winIds queued for preview+detect this settle
 const _readTrace = new Set();     // subset of _readWins that ALSO needs a rule-trace refresh
 const _readReadouts = new Set();  // subset of _readWins that ALSO needs a readout-values refetch
+const _readFeed = new Set();      // winIds to run the collect feed (feed=1 + commit) once this settle fires
 const _readItems = new Map();     // "winId:itemId" -> {winId,itemId} queued for a cutout re-read
 
 let _readAll = false;
 
-function armReadTimer() {
+function armReadTimer(delay = READ_DEBOUNCE_MS) {
+    _readDelay = Math.max(_readDelay, delay);   // a page-step (1000) coalescing with an edit (700) waits the longer one
     clearTimeout(_readTimer);
-    _readTimer = setTimeout(fireWindowRead, READ_DEBOUNCE_MS);
+    _readTimer = setTimeout(fireWindowRead, _readDelay);
 }
 
 // Window-level: preview + detect, scoped to `winId` (or every open window when null). Pass
@@ -2107,13 +2102,16 @@ function armReadTimer() {
 // pass is what calls setNodeBusy -> `inert` -> blurs the input being typed in, so a node with an
 // uncommitted config edit asks for its rule trace alone: you see rule output update as you type,
 // and nothing locks. The full pass runs once, on commit, via the deferred autosave.
-function scheduleWindowRead(winId = null, { trace = false, readouts = false, preview = true } = {}) {
+// `feed: true` also runs the collect feed (feed=1 + commit — a live tick) for that window this
+// settle, coalesced with the read; `delay` overrides the debounce (page-step passes PAGE_FEED_MS).
+function scheduleWindowRead(winId = null, { trace = false, readouts = false, preview = true, feed = false, delay = READ_DEBOUNCE_MS } = {}) {
     if (winId) {
         if (preview) _readWins.add(winId);
         if (trace) _readTrace.add(winId);
         if (readouts) _readReadouts.add(winId);
+        if (feed) _readFeed.add(winId);
     } else _readAll = true;
-    armReadTimer();
+    armReadTimer(delay);
 }
 
 // Fire the queued reads NOW instead of waiting out the settle clock. The debounce exists to
@@ -2121,7 +2119,7 @@ function scheduleWindowRead(winId = null, { trace = false, readouts = false, pre
 // of the burst, so waiting another 700ms just reads as lag. Returns a promise of the work it
 // started, so a commit can hold its node's loader up for exactly as long as the work runs.
 export function flushWindowRead() {
-    const queued = _readAll || _readWins.size || _readTrace.size || _readReadouts.size || _readItems.size;
+    const queued = _readAll || _readWins.size || _readTrace.size || _readReadouts.size || _readFeed.size || _readItems.size;
     if (!queued) return Promise.resolve();
     clearTimeout(_readTimer);
     return fireWindowRead();   // sets _readTimer = null and drains every pending set
@@ -2131,10 +2129,11 @@ export function flushWindowRead() {
 // ignores it; `flushWindowRead` awaits it.
 function fireWindowRead() {
     const work = [];
-    _readTimer = null;
+    _readTimer = null; _readDelay = 0;
     const all = _readAll; _readAll = false;
     const traceWins = [..._readTrace]; _readTrace.clear();
     const roWins = [..._readReadouts]; _readReadouts.clear();
+    const feedWins = [..._readFeed]; _readFeed.clear();
     const items = [..._readItems.values()]; _readItems.clear();
     // preview: every window with an open preview satellite (or a bare image canvas), scoped
     // unless this is a global settle — mirrors the old refreshOpenPreviews exactly.
@@ -2157,6 +2156,14 @@ function fireWindowRead() {
     _readWins.clear();
     for (const id of traceWins) work.push(fetchWindowTrace(id));
     for (const id of roWins) work.push(refreshReadoutValues(id));
+    // feed: a live tick (feed=1 + commit) for each page-stepped window — runs ONCE on the settled
+    // page. Re-check liveCollecting() here, not at schedule time: it may have flipped on during the
+    // grace, and the collector already feeds every tick (a client feed would just contend for OCR).
+    const game = model.profile.name;
+    for (const id of feedWins) {
+        if (liveCollecting()) continue;
+        curCapOf(id).then((c) => c && feedImage(game, previewProfileFor(id), c)).catch(() => {});
+    }
     for (const { winId, itemId } of items) work.push(runItemRead(winId, itemId));
     // cross-window verdict tracks the same edits (coalesced) — skip during boot: it's an
     // O(windows^2) OCR cross-check with no server cache, not needed for first paint (only
@@ -2280,7 +2287,19 @@ async function loadImage(winId, recapture, { deferRead = false } = {}) {
         // collecting: the frame's been added + shown, but the server collector owns OCR — a
         // client read here just contends with it. Skip the read (capture path only).
         if (recapture && liveCollecting()) return;
-        if (deferRead) { scheduleWindowRead(winId, { trace: true, readouts: true }); return; }
+        // page-step (next/prev): EVERYTHING costly — the live feed (feed=1 + commit) AND the
+        // preview/detect/trace/readout read — rides the settle clock, so cycling through images does
+        // NO OCR or commit per click; it all fires once, PAGE_FEED_MS after the last click, on the
+        // page you land on. Skip the feed during boot / while the collector owns OCR (it feeds anyway).
+        if (deferRead) {
+            scheduleWindowRead(winId, { trace: true, readouts: true,
+                feed: !boot.phase && !liveCollecting(), delay: PAGE_FEED_MS });
+            return;
+        }
+        // recapture / first open: a single deliberate load — reproduce a live tick immediately (feed=1
+        // + commit) like the test button, so readout history/consensus advance and the records commit.
+        if (!boot.phase && !liveCollecting())
+            curCapOf(winId).then((c) => c && feedImage(game, previewProfileFor(winId), c)).catch(() => {});
         if (prevHost(winId)) refreshPreview(winId, false);
         else refreshGridPreview(winId);
         // the image changed → the field nodes' rule traces are stale, re-read them — but not
@@ -2539,7 +2558,7 @@ export {
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
     scheduleItemRead, runItemRead, refreshItemReadout,
     prevHost, previewProfileFor, refreshRuleTrace, setReadBusy, refreshPreview,
-    commitPreviewNode, tellChip, subLabel, previewCell, previewTable, prefillDetectText,
+    tellChip, subLabel, previewCell, previewTable, prefillDetectText,
     refreshDetect, setDetectStatus, scheduleWindowRead,
     loadImage, refreshImageBoxes, itemLocatorBox, staticGridOrigins, buildGridGuides,
     staticFieldPreview, refreshGridPreview, cellKept, setGridFromPreview, selectRegionNode,

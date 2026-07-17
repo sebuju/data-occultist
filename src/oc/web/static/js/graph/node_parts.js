@@ -83,14 +83,18 @@ export function slideToggle({ on, title, cls = "", label = "", hidden = false })
 export const vtShowRemoved = new Map();
 
 export const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds"], ["symbol", "symbol"]];
-export const EXTRACTS = ["whole", "number", "number_before", "number_after", "text", "text_before", "text_after", "alphanum", "alphanum_before", "alphanum_after"];
+export const EXTRACTS = [
+    ["whole", "whole"], ["number", "number"], ["number_before", "number bef"], ["number_after", "number aft"],
+    ["text", "text"], ["text_before", "text bef"], ["text_after", "text aft"],
+    ["alphanum", "alnum"], ["alphanum_before", "alnum bef"], ["alphanum_after", "alnum aft"],
+];
 export const NEEDS_SEP = new Set(["number_before", "number_after", "text_before", "text_after", "alphanum_before", "alphanum_after"]);
 // how the game dictionary participates in a ``dictionary`` rule (FieldRule.dict_mode)
 export const DICT_MODES = [
     ["off", "off"],
     ["correct", "correct"],
     ["drop", "drop"],
-    ["correct_drop", "correct + drop"],
+    ["correct_drop", "corr+drop"],
 ];
 
 // The rule pipeline (FieldRule). The raw read flows top-to-bottom through a field's rules;
@@ -103,17 +107,17 @@ export const DICT_MODES = [
 export const RULE_WHEN = [
     ["always", "always", false, "any"],
     ["empty", "is empty", false, "any"],
-    ["no_digit", "has no digit", false, "tn"],
-    ["all_digit", "is all digits", false, "tn"],
-    ["has_digit", "has a digit", false, "tn"],
-    ["no_letter", "has no letter", false, "tn"],
-    ["all_letter", "is all letters", false, "tn"],
-    ["has_letter", "has a letter", false, "tn"],
-    ["below", "if below", true, "nc"],
-    ["above", "if above", true, "nc"],
-    ["equal", "if equal", true, "any"],
-    ["not_equal", "if not equal", true, "any"],
-    ["contains", "if contains", true, "t"],
+    ["no_digit", "no digit", false, "tn"],
+    ["all_digit", "all digits", false, "tn"],
+    ["has_digit", "has digit", false, "tn"],
+    ["no_letter", "no letter", false, "tn"],
+    ["all_letter", "all letter", false, "tn"],
+    ["has_letter", "has letter", false, "tn"],
+    ["below", "below", true, "nc"],
+    ["above", "above", true, "nc"],
+    ["equal", "equal", true, "any"],
+    ["not_equal", "not equal", true, "any"],
+    ["contains", "contains", true, "t"],
 ];
 // action (`then`): [value, label, typeCode]
 export const RULE_THEN = [
@@ -121,10 +125,11 @@ export const RULE_THEN = [
     ["drop", "drop", "any"],
     ["lowercase", "lowercase", "t"],
     ["uppercase", "uppercase", "t"],
-    ["fold", "fold accents", "t"],
+    ["fold", "fold", "t"],
     ["round", "round", "n"],
     ["floor", "floor", "n"],
     ["ceil", "ceil", "n"],
+    ["decimal", "decimal", "n"],
     ["extract", "extract", "tn"],
     ["dictionary", "dictionary", "t"],
 ];
@@ -205,28 +210,67 @@ const PP_TIP = {
     add: "add a colour row",
     tol: "how far a pixel's colour may sit from a taught colour and still be kept (BGR distance, 0-200). Too low = anti-aliased glyph edges drop out and thin strokes (a decimal point) vanish; too high = background bleeds in. Start ~60 and widen until the glyphs are solid without the background leaking.",
     scale: "enlarge the crop before OCR (INTER_CUBIC). Small HUD numbers are often too few pixels for the recogniser to resolve a thin decimal point — 2-3x gives it enough to read '4.00' instead of '400'. 1 = no upscale.",
+    denoise: "kill isolated speckle: drop any near-colour blob smaller than this % of the LARGEST blob in the crop (relative, so it scales with resolution and font). Use when the mask leaves stray specks around the glyphs. The preview labels each blob's %, so set this just below the smallest part you must keep — a decimal point is tiny, so keep it low (a few %). 0 = off.",
 };
 
 const _hex6 = (c) => /^#[0-9a-fA-F]{6}$/.test(c || "");
 const _hexRgb = (hex) => { const h = hex.replace("#", ""); return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) }; };
 
-// Flag colliding colour inputs red (rule 7 — ONE collision test for the detector + readout colour
-// lists). Two colours collide when they are the same OR within `tolerance` (BGR distance) of each
-// other — a single `<= tolerance` test covers both (identical => distance 0). Each hex input is
-// tagged by its colour index via `dataset.i`; the caller passes the input list + live colours +
-// tolerance, and re-calls this whenever any colour or the tolerance changes.
+// Unit directions spread evenly over the sphere (Fibonacci lattice) — used to sample a colour's
+// tolerance sphere when testing whether it is fully swallowed by the union of the other colours.
+const _SPHERE_DIRS = (() => {
+    const N = 96, gold = Math.PI * (3 - Math.sqrt(5)), dirs = [];
+    for (let i = 0; i < N; i++) {
+        const y = 1 - (2 * i + 1) / N;                 // -1..1
+        const r = Math.sqrt(Math.max(0, 1 - y * y));
+        const th = gold * i;
+        dirs.push([Math.cos(th) * r, y, Math.sin(th) * r]);
+    }
+    return dirs;
+})();
+
+// True when colour `c`'s WHOLE tolerance sphere lies inside the union of the `coverers` spheres
+// (all radius `tol`) — i.e. every pixel `c` would keep is already kept by some coverer, so deleting
+// `c` changes no mask pixel. Tested by sampling `c`'s centre + surface: covered iff every sample sits
+// within `tol` of some coverer. A hair of slack (EPS) absorbs float error so an identical coverer,
+// whose sphere touches `c`'s surface exactly, still counts as full containment.
+function _fullyCovered(c, coverers, tol) {
+    if (!coverers.length) return false;
+    const t2 = tol * tol, lim = t2 * (1 + 1e-6) + 1e-6;
+    const within = (px, py, pz) => coverers.some((a) => {
+        const dr = px - a.r, dg = py - a.g, db = pz - a.b;
+        return dr * dr + dg * dg + db * db <= lim;
+    });
+    if (!within(c.r, c.g, c.b)) return false;          // centre
+    for (const [ux, uy, uz] of _SPHERE_DIRS)
+        if (!within(c.r + ux * tol, c.g + uy * tol, c.b + uz * tol)) return false;
+    return true;
+}
+
+// Flag REDUNDANT colour inputs red (rule 7 — ONE test for the detector + readout colour lists). A
+// colour is redundant only when deleting it would change NOTHING: every pixel it keeps is already
+// kept by the other colours. Each colour keeps pixels within `tolerance` (BGR distance) of it — a
+// match sphere of radius `tolerance` (preprocess.py `mask |= dist <= tolerance`). All list colours
+// share one tolerance (equal radii), so a colour is redundant iff its whole sphere lies inside the
+// UNION of the others' spheres. Crucially this accounts for the colour's OWN reach: a near-but-not-
+// identical colour extends `tolerance` past the others and keeps pixels they miss, so it is NOT
+// redundant and must not be flagged (a mere centre-inside-another test wrongly flagged these). One
+// other colour can fully contain this one only when they're identical (equal radii); the meaningful
+// case is a chain of shades where an interior one is blanketed by the union of the rest.
+//
+// Greedy keeper pass in list order: keep the first of any mutually-redundant group; flag a colour
+// only when it is fully covered by the colours KEPT before it — so every flagged colour is provably
+// covered by colours that REMAIN, and removing it is genuinely a no-op. Each hex input is tagged by
+// its colour index via `dataset.i`; re-called on any colour/tolerance change.
 export function markColorCollisions(inputs, colors, tolerance) {
     const rgb = (colors || []).map((c) => (_hex6(c) ? _hexRgb(c) : null));
     const bad = new Set();
-    // flag only the LATER ("next") colour of a colliding pair — the first occurrence is the keeper,
-    // each subsequent colour within tolerance of an EARLIER one is the redundant/conflicting one.
-    for (let b = 0; b < rgb.length; b++) {
-        if (!rgb[b]) continue;
-        for (let a = 0; a < b; a++) {
-            if (!rgb[a]) continue;
-            const dr = rgb[a].r - rgb[b].r, dg = rgb[a].g - rgb[b].g, db = rgb[a].b - rgb[b].b;
-            if (Math.sqrt(dr * dr + dg * dg + db * db) <= tolerance) { bad.add(b); break; }
-        }
+    const kept = [];
+    for (let i = 0; i < rgb.length; i++) {
+        const c = rgb[i];
+        if (!c) continue;                              // invalid hex: not a keeper, not a collision
+        if (_fullyCovered(c, kept, tolerance)) bad.add(i);
+        else kept.push(c);
     }
     inputs.forEach((inp) => inp.classList.toggle("color-collide", bad.has(+inp.dataset.i)));
 }
@@ -268,7 +312,10 @@ export function preprocessControls(holder) {
                 { pickCls: "pp-pick", pickTitle: PP_TIP.pick, addCls: "pp-coloradd", addTitle: PP_TIP.add }),
             h("div", { class: "color-list" }, ...colorRows),
             kv("tolerance", h("input", { type: "number", class: "pptol", min: "0", step: "1", value: pp.tolerance ?? 60, title: PP_TIP.tol }),
-                { title: PP_TIP.tol })),
+                { title: PP_TIP.tol }),
+            kv("denoise %", h("input", { type: "number", class: "ppdenoise", min: "0", max: "100", step: "1",
+                value: Math.round((pp.min_frac ?? 0) * 100), title: PP_TIP.denoise }),
+                { title: PP_TIP.denoise })),
         kv("upscale", h("input", { type: "number", class: "ppscale", step: "0.5", min: "1", max: "4", value: pp.scale ?? 1, title: PP_TIP.scale }),
             { title: PP_TIP.scale }));
 }
@@ -423,7 +470,7 @@ function ruleThenOperands(r, then, d) {
     if (then === "extract")
         return [
             h("select", { class: "rule-strategy", dataset: d, title: "which piece to pull out of the value" },
-                EXTRACTS.filter((v) => v !== "whole").map((v) => h("option", { value: v, selected: (r.strategy || "number") === v }, (r.strategy || "number") === v ? `<${v}>` : v))),
+                EXTRACTS.filter(([v]) => v !== "whole").map(([v, t]) => h("option", { value: v, selected: (r.strategy || "number") === v }, (r.strategy || "number") === v ? `<${t}>` : t))),
             NEEDS_SEP.has(r.strategy || "number") && h("input", { class: "rule-sep", dataset: d, value: r.sep || "/", placeholder: "sep", title: "split token (e.g. / or Rank)" }),
         ];
     if (then === "dictionary") {
@@ -886,7 +933,6 @@ export function nodeParts(n) {
             title: h("span", { class: "gi-id" }, `${n.ref.id} preview`),
             body: h("div", { class: "nodehost scrollhost prev-host" },
                 h("p", { class: "muted", style: "padding:8px" }, "open the window image or edit it to preview what it reads")),
-            foot: h("button", { class: "prevcommit", title: "write these reads into the window's dataset (one revertable batch)" }, "push to dataset"),
         };
     }
     if (n.type === "vttable") {

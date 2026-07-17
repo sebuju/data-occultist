@@ -1,8 +1,8 @@
 // Window node wiring: rename/live/static-grid/preprocess/item-priority controls, the game
 // node's window-priority list, the detects section (mode + per-detector polarity), and the
 // readout + scrollbar node bodies (incl. scroll-cutout capture/drag-reorder). Split out of
-// main.js; render/rebuildNode/autosave/nodeEdit/onValueEdit/rulesEdit/wireFieldRules/
-// rebuildReadoutConsumers stay in main and are imported back.
+// main.js; render/rebuildNode/autosave/nodeEdit/onValueEdit/rulesEdit/wireFieldRules stay in
+// main and are imported back.
 import * as api from "../api.js";
 import * as nodeTxn from "./node_txn.js";
 import { model, openImages, imageCanvases, clearGrid, setStatus } from "./state.js";
@@ -18,7 +18,7 @@ import { panZoomTo } from "./camera.js";
 import { renderLiveWindow, syncWpDots, liveCollecting } from "./panels/livewin.js";
 import {
     render, rebuildNode, autosave, nodeEdit, onValueEdit, rulesEdit, wireFieldRules,
-    rebuildReadoutConsumers, armConfirm,
+    armConfirm,
 } from "./main.js";
 
 // Switch a detector between kinds by toggling the discriminating fields (the model infers
@@ -53,6 +53,12 @@ function wirePreprocess(div, holder, { nodeId, winId, edit, pick }) {
     });
     div.querySelector(".ppscale")?.addEventListener("change", (e) => {
         edit(() => { model._ppOf(holder).scale = +e.target.value || 1; });
+    });
+    div.querySelector(".ppdenoise")?.addEventListener("change", (e) => {
+        // UI is a percent (0-100); stored as a fraction of the largest blob's area.
+        const pct = Math.min(100, Math.max(0, Math.trunc(+e.target.value) || 0));
+        edit(() => { model._ppOf(holder).min_frac = pct / 100; });
+        refreshMatchPreviews(winId);   // changes which blobs survive in the cutout preview
     });
     div.querySelector(".pp-pick")?.addEventListener("click", () => pick());   // ⊙ sample-from-image
     div.querySelector(".pp-coloradd")?.addEventListener("click", () => {      // ＋ add an empty row
@@ -212,7 +218,7 @@ export function wireReadout(div, n) {
         renameNode(e.target, vid,
             () => model.renameReadout(winId, vid, e.target.value.trim()),
             () => movePos(`ro:${winId}:${vid}`, `ro:${winId}:${n.ref.id}`),
-            () => { render(); rebuildReadoutConsumers(); autosave(winId); });   // repoint toast chips + watch dropdown
+            () => { render(); autosave(winId); });   // render()'s _refKey gate repoints toast chips + watch dropdown
     });
     // inline read-config, edited straight on the FieldDef (like a region). Only the
     // capture/confidence knobs live here; value processing is the rule pipeline (wired below).
@@ -245,7 +251,9 @@ export function wireReadout(div, n) {
     // cutout preview: this readout's box, matched pixels painted when its preprocess masks a colour.
     mountMatchPreview(n.id, winId, div.querySelector(".mp-canvas"), () => n.ref.box, () => {
         const p = fld?.preprocess;
-        return p?.mode === "color" ? { colors: p.colors, tolerance: p.tolerance } : {};
+        // mask:true -> preview paints EVERY near-colour pixel (readout OCR keeps them all), not
+        // the detector's largest-blob; minFrac mirrors the live denoise (drop small components).
+        return p?.mode === "color" ? { colors: p.colors, tolerance: p.tolerance, mask: true, minFrac: p.min_frac || 0 } : {};
     });
     // paint the read-history satellite from the last heartbeat snapshot (no-op when it's hidden),
     // so a just-opened satellite shows immediately instead of waiting for the next beat.
@@ -267,9 +275,9 @@ export function wireScrollbar(div, n) {
     div.querySelectorAll(".sbcut[data-k='rows']").forEach((inp) => inp.addEventListener("change", (e) => {
         model.setScrollSampleRows(winId, +e.target.dataset.i, e.target.value); relearn();
     }));
-    div.querySelectorAll(".sbcut-rm").forEach((b) => b.addEventListener("click", () => {
+    div.querySelectorAll(".sbcut-rm").forEach((b) => armConfirm(b, () => {
         model.removeScrollSample(winId, +b.dataset.i); relearn();
-    }));
+    }, { silent: true, resetOnOutside: true }));
     div.querySelector(".sb-capture")?.addEventListener("click", () =>
         captureScrollCutout(n).catch((err) => setStatus(String(err.message || err), "err")));
     wireCutoutDrag(div, n);

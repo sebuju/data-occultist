@@ -19,7 +19,29 @@ def _hex_to_bgr(h: str) -> tuple[int, int, int]:
     return (b, g, r)
 
 
-def _color_mask(image: np.ndarray, colors: list[str], tolerance: int) -> np.ndarray:
+def _denoise(mask: np.ndarray, min_frac: float) -> np.ndarray:
+    """Drop 8-connected near-colour components smaller than ``min_frac`` of the largest.
+
+    Kills isolated speckle the colour mask lets through (stray near-colour pixels that corrupt
+    OCR) while keeping every real glyph. Relative to the LARGEST component, so it auto-scales
+    with resolution and font size — a fixed pixel count would need per-resolution retuning. NOT
+    "keep the largest blob": each digit is its own component and the decimal point is a tiny one,
+    so the threshold is a small fraction the user tunes against the previewed per-blob areas.
+    """
+    if min_frac <= 0 or not mask.any():
+        return mask
+    n, labels, stats, _c = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    if n <= 1:
+        return mask
+    areas = stats[1:, cv2.CC_STAT_AREA]        # skip label 0 (background)
+    threshold = areas.max() * min_frac
+    small = np.flatnonzero(areas < threshold) + 1   # +1: back to real label ids
+    if small.size:
+        mask = mask & ~np.isin(labels, small)
+    return mask
+
+
+def _color_mask(image: np.ndarray, colors: list[str], tolerance: int, min_frac: float = 0.0) -> np.ndarray:
     """Black glyphs on white where pixels are within tolerance of any taught colour."""
     # int32, NOT int16: a per-channel diff is up to 255, and 255**2 = 65025 overflows int16
     # (max 32767) -> negative sum -> NaN distance, silently corrupting the mask for exactly the
@@ -33,6 +55,7 @@ def _color_mask(image: np.ndarray, colors: list[str], tolerance: int) -> np.ndar
         bgr = np.array(_hex_to_bgr(hexc), dtype=np.int32)
         dist = np.sqrt(((img - bgr) ** 2).sum(axis=2))
         mask |= dist <= tolerance
+    mask = _denoise(mask, min_frac)
     out = np.full(image.shape, 255, dtype=np.uint8)
     out[mask] = 0
     return out
@@ -42,7 +65,7 @@ def apply(image: np.ndarray, pp: Preprocess) -> np.ndarray:
     if pp is None or pp.mode is PreprocessMode.none:
         result = image
     elif pp.mode is PreprocessMode.color and pp.colors:
-        result = _color_mask(image, pp.colors, pp.tolerance)
+        result = _color_mask(image, pp.colors, pp.tolerance, pp.min_frac)
     elif pp.mode is PreprocessMode.threshold:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
