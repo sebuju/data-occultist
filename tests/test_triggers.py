@@ -13,7 +13,7 @@ from oc.collect import trigger_history
 from oc.collect.triggers import TriggerRunner, read_subset_sigs
 from oc.enrich.http_producer import gather_source_names
 from oc.profile.models import GameProfile, JoinSource, ProducerDef, SoundDef, SubsetDef, TriggerDef
-from oc.store import DatasetStore, KeySpec
+from oc.store import DatasetStore, KeySpec, fire_events
 from oc.store.keys import KeyMap
 
 
@@ -238,6 +238,26 @@ def test_throttle_suppresses_within_window_and_records(tmp_path):
     assert tr.on_change("relic_rewards", [{"name": "C"}]) == ["relicwatch"]   # window elapsed -> fires
     hist = trigger_history.recent("g", "relicwatch")
     assert [h["throttled"] for h in hist] == [False, True, False]        # newest first: fire, throttled, fire
+
+
+def test_emit_fire_publishes_instant_cue_but_not_on_throttle(tmp_path):
+    # A real fire pushes ONE instant fire-cue (the browser plays the sound off this, not the
+    # slow polled snapshot); a throttle-suppressed fire pushes nothing.
+    trigger_history.clear("g")
+    p = _profile()
+    p.triggers[1].throttle_ms = 5000   # relicwatch: 5s between fires
+    fires = []
+    off = fire_events.subscribe(lambda game, tid: fires.append((game, tid)))
+    try:
+        clock = [0.0]
+        tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: clock[0])
+        assert tr.on_change("relic_rewards", [{"name": "A"}]) == ["relicwatch"]
+        assert fires == [("g", "relicwatch")]        # real fire -> one instant cue
+        clock[0] = 1.0
+        assert tr.on_change("relic_rewards", [{"name": "B"}]) == []   # inside 5s window -> suppressed
+        assert fires == [("g", "relicwatch")]        # suppressed fire -> NO extra cue
+    finally:
+        off()
 
 
 def test_history_records_why_and_targets(tmp_path):

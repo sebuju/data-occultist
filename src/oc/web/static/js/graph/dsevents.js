@@ -28,6 +28,7 @@ const subs = new Set();
 const flowSubs = new Set();
 const logSubs = new Set();
 const activitySubs = new Set();
+const fireSubs = new Set();
 
 // Subscribe to every dataset change. `fn(dataset, n)` — the dataset id and the coalesced row
 // count for this event. Returns an unsubscribe.
@@ -58,6 +59,15 @@ export function subscribeActivity(fn) {
     return () => activitySubs.delete(fn);
 }
 
+// Subscribe to instant trigger-FIRE cues, multiplexed on this SAME stream. `fn(ev)` gets the
+// parsed cue {trigger}. Un-backfilled (see events.py) — only LIVE fires arrive, so a subscriber
+// plays a sound without any replay-dedup guard; a fire lost in a rare reconnect gap is dropped
+// (better than a late/double play for a live cue). Returns unsubscribe.
+export function subscribeFire(fn) {
+    fireSubs.add(fn);
+    return () => fireSubs.delete(fn);
+}
+
 // Point the bus at a game (opening or repointing the stream). Idempotent: a no-op when the
 // stream is already open for the same game.
 export function setGame(g) {
@@ -79,6 +89,7 @@ function open() {
         stream.addEventListener("flow", onFlow);   // flow hops ride the SAME socket (one connection)
         stream.addEventListener("log", onLog);     // activity-log lines too — one socket for the page
         stream.addEventListener("activity", onActivity);   // worker/device status — one socket too
+        stream.addEventListener("fire", onFire);   // instant trigger-fire sound cues — same socket
         stream.addEventListener("open", markOk);   // stream up -> we can reach the backend
         // A clean server-side window close (or transient drop) surfaces as `error`. Recreate the
         // source OURSELVES (not native auto-reconnect) so the URL picks up the fresh ?after=lastSeq
@@ -128,6 +139,12 @@ function onLog(e) {
     if (ev.seq && ev.seq <= lastSeq) return;   // dedup across reconnects / backfill overlap
     if (ev.seq) lastSeq = ev.seq;
     for (const fn of logSubs) { try { fn(ev); } catch { /* one bad subscriber must not stall the rest */ } }
+}
+
+function onFire(e) {
+    let d;
+    try { d = JSON.parse(e.data); } catch { return; }
+    for (const fn of fireSubs) { try { fn(d); } catch { /* one bad subscriber must not stall the rest */ } }
 }
 
 function onActivity(e) {

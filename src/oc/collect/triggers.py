@@ -47,6 +47,7 @@ from pathlib import Path
 from ..enrich.price_runner import start_sweep, sweep_status
 from ..eventlog import publish as logev
 from ..eventlog import slog
+from ..store.fire_events import publish_fire
 from ..store.flow_events import publish_flow
 
 
@@ -196,6 +197,11 @@ class TriggerRunner:
         slog(f"trigger {t.id} fired ({why})", game=self._profile.name)
         self._fire_targets(t, items=items)
         record_fire(self._data_dir, self._profile.name, t.id)
+        # Instant live cue for the browser: sounds are client-played, and the polled activity
+        # snapshot (disk sidecar + ~1s SSE pump) is too slow. Push the fire the moment it happens
+        # so the sound tracks the trigger, not the poll. A fire with no sound target still
+        # publishes (client no-ops) -- the server stays game-dumb about target kinds.
+        publish_fire(self._profile.name, t.id)
         record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),
                     throttled=False, ts=ts, node=node, value=value)
         self._last_fire_any[t.id] = self._clock()

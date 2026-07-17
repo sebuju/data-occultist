@@ -19,6 +19,7 @@ import { refreshRegister } from "../register_node.js";
 import { liveCollecting } from "./livewin.js";
 import { panZoomTo } from "../camera.js";
 import { playCue } from "../sound.js";
+import * as dsevents from "../dsevents.js";
 import { svg } from "../../dom.js";
 
 // ---- activity panel (live sweeps + precapture) ----------------------------
@@ -72,6 +73,12 @@ function buildActivity() {
     // panel rows; the node progress is independent. Reconciles in place (textContent only when
     // changed; countdown via the shared ago.js ticker), so an always-on beat costs nothing (rule 1).
     hub.subscribe((s) => updateTriggerNodes(s));
+    // Sound plays off the INSTANT fire push (dsevents `fire` channel), NOT the polled activity
+    // snapshot — the snapshot lags a fire by a disk sidecar + the ~0.8-2.5s SSE pump, which made
+    // a cue trail its trigger by seconds. This is the single funnel for every fire source
+    // (interval / on_change / on_register / manual), all of which route through _emit_fire and so
+    // publish_fire (rule 7). Subscribed once here, panel open or not.
+    dsevents.subscribeFire((ev) => playFire(ev.trigger));
     mountActivity(winAdapter);
 }
 
@@ -247,27 +254,17 @@ function activityJobs(data, elapsed = 0) {
     return jobs;
 }
 
-// last_fired we've already observed per trigger — drives the one-shot sound on a real fire.
-// Seeded on first sight (no replay of a pre-existing fire on page load / panel open).
-const triggerFireSeen = new Map();
-
-// Play a fired trigger's SOUND NODES once per fresh fire. A sound is a node the trigger names in
-// its `targets` (browser-played, unlike a server-fired toast/producer), so a fire plays every sound
-// target. The heartbeat is the SINGLE funnel for every fire source (interval / on_change / manual),
-// so playback lives here, not on each fire button (rule 7). A `last_fired` that differs from what we
-// last saw = a new fire.
-function detectFires(data) {
-    for (const t of (data.triggers || [])) {
-        const ts = t.last_fired || null;
-        if (!ts) continue;
-        const prev = triggerFireSeen.get(t.id);
-        triggerFireSeen.set(t.id, ts);
-        if (prev === undefined || prev === ts) continue;   // prev===undefined => first sight, don't replay
-        const tr = model.trigger(t.id);
-        for (const pid of tr?.targets || []) {
-            const sn = model.soundNode(pid);
-            if (sn) playCue(sn);
-        }
+// Play a fired trigger's SOUND NODES, driven by the instant `fire` push (dsevents), keyed by the
+// trigger id in the cue. A sound is a node the trigger names in its `targets` (browser-played,
+// unlike a server-fired toast/producer), so a fire plays every sound target; a trigger with no
+// sound target no-ops. The push is un-backfilled (only live fires arrive), so no replay guard is
+// needed — unlike the old polled `last_fired` path, this fires the moment the trigger does.
+function playFire(tid) {
+    if (!tid) return;
+    const tr = model.trigger(tid);
+    for (const pid of tr?.targets || []) {
+        const sn = model.soundNode(pid);
+        if (sn) playCue(sn);
     }
 }
 
@@ -276,7 +273,7 @@ function detectFires(data) {
 // ticks). Timed kinds show a live "idle (next in: …)"; an on_readout crosses shows the saved
 // value it compares against; every other kind shows plain idle / firing now.
 function updateTriggerNodes(data) {
-    detectFires(data);
+    // (sound playback moved off this polled beat to the instant `fire` push — see playFire)
     // readout read-history satellites ride the same beat (readout_history, keyed "<win>:<ro>");
     // TOP-LEVEL (not under `live`) so a test feed updates them with the collector stopped too.
     // paint each OPEN one (no-op / no host when hidden). VTable reconciles in place (rule 1).

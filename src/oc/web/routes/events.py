@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request
 
 from ...eventlog import recent as log_recent, subscribe as subscribe_log
 from ...store.changes import subscribe
+from ...store.fire_events import subscribe as subscribe_fire
 from ...store.flow_events import subscribe as subscribe_flow
 from .. import gpu_watch
 from ..deps import get_settings
@@ -85,6 +86,10 @@ async def events(game: str, request: Request, after: int = 0):
         def on_log(ev: dict) -> None:
             if ev.get("game") in (None, game):
                 push(("log", ev))
+        def on_fire(g: str, trigger_id: str) -> None:
+            # a live, un-backfilled cue -> the browser plays this trigger's sound nodes at once
+            if g == game:
+                push(("fire", {"trigger": trigger_id}))
 
         # Activity is a POLLED aggregate (no event bus), so a per-connection task recomputes it and
         # pushes on change (+ an adaptive keepalive to refresh the countdown). This replaces the old
@@ -109,7 +114,8 @@ async def events(game: str, request: Request, after: int = 0):
                 await asyncio.sleep(_ACT_FAST_S if (changed or _act_busy(snap)) else _ACT_IDLE_S)
 
         task = asyncio.ensure_future(pump_activity())
-        offs = [subscribe(on_change), subscribe_flow(on_flow), subscribe_log(on_log)]
+        offs = [subscribe(on_change), subscribe_flow(on_flow), subscribe_log(on_log),
+                subscribe_fire(on_fire)]
         return lambda: (gpu_watch.client_disconnected(), task.cancel(), [off() for off in offs])
 
     async def fmt(first, queue: asyncio.Queue) -> str:
@@ -118,6 +124,8 @@ async def events(game: str, request: Request, after: int = 0):
             return f"event: flow\ndata: {json.dumps(payload)}\n\n"
         if tag == "log":
             return f"event: log\ndata: {json.dumps(payload)}\n\n"
+        if tag == "fire":
+            return f"event: fire\ndata: {json.dumps(payload)}\n\n"
         if tag == "activity":
             return f"event: activity\ndata: {json.dumps(payload, default=str)}\n\n"
         # dataset: coalesce a ~1s burst, but DON'T swallow flow/log items sharing the queue —
