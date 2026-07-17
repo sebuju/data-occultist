@@ -12,7 +12,7 @@ import { hierRoute } from "./hierRoute.js";
 import { deCollide } from "./decollide.js";
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot } from "./state.js";
 import { selectedNodeId, wire, startWire, CAN_DISABLE, nodeTypeOf } from "./main.js";
-import { setEdges, requestRedraw } from "./edgecanvas.js";
+import { setEdges, invalidateEdges } from "./edgecanvas.js";
 import { typeColor, grayscale, cssVar } from "./colors.js";
 
 // Port exit directions (L/R/T/B) -> unit vector, used to stub a line out of a port the
@@ -522,9 +522,9 @@ function startMorphC(rec, toPts) {
         const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;   // easeInOutQuad
         rec.pts = from.map((p, i) => [p[0] + (to[i][0] - p[0]) * e, p[1] + (to[i][1] - p[1]) * e]);
         rec.straight = true;   // straight through the (dense) morph points — rounding wobbles, matches straightD
-        requestRedraw();
+        invalidateEdges();     // pts mutated in place (no setEdges) — bust the blit cache too
         if (t < 1) rec._raf = requestAnimationFrame(tick);
-        else { rec._raf = null; setRoutedC(rec, toPts); requestRedraw(); }
+        else { rec._raf = null; setRoutedC(rec, toPts); invalidateEdges(); }
     };
     rec._raf = requestAnimationFrame(tick);
 }
