@@ -60,7 +60,6 @@ import { workers, unregisterWorker } from "./workers.js";
 import {
     closeImage, openImage, openAtlasImage, refreshDetect, nodeIdOf,
     closeItemImage, openItemImage,
-    commitPreviewNode,
     scheduleWindowRead, flushWindowRead,
     refreshImageBoxes, selectRegionNode, refreshRuleTrace,
     RECT_TYPES, toggleRectEditor, openDetectColorPick,
@@ -537,18 +536,6 @@ export function rebuildNodeEdges(id, { raf = false } = {}) {
     if (raf) requestAnimationFrame(drawEdges); else drawEdges();
 }
 
-// Toast nodes (their readout token chips), on_readout trigger nodes (their watch-var dropdown),
-// and register nodes (their "+ readout" add-select) all list model.readouts(), built ONCE per
-// node body. A readout added/removed/renamed elsewhere leaves those bodies stale — render()
-// reconciles, it never rebuilds a body. Sweep them from ONE helper so every readout mutation
-// site stays in lock-step (rule 7). rebuildNode is a no-op for a node not currently in the DOM,
-// so this is safe to call unconditionally.
-export function rebuildReadoutConsumers() {
-    for (const t of model.profile.toasts || []) rebuildNode(`toast:${t.id}`);
-    for (const t of model.profile.triggers || []) rebuildNode(`trigger:${t.id}`);
-    for (const id of model.registers()) rebuildNode(`register:${id}`);
-}
-
 // A node with a manually-pinned height keeps that height across a rebuild, so revealing
 // extra inputs (a conditional row appearing) overflows its box. Grow the pinned height to
 // enclose the content — grow-only (never shrinks a deliberately-tall node) — and persist it
@@ -604,30 +591,52 @@ function render() {
     groups.renderGroups();
     syncMultiSelect();
     renderNodeViews();
-    // When the set of dataset/subset ids changes (add/rename/remove, or a producer/source
-    // discovering one at runtime), the sibling nodes that list every id in a <select> — trigger
-    // watch/dataset-action, producer source picker, subset join-source — are built ONCE and go
-    // stale (this reconcile reuses bodies, never rebuilds them). Rebuild them on a set change.
-    // Also fold in each subset's OWN source-id list: a source add/remove (e.g. via undo/redo)
-    // changes what that subset's sources list shows without changing the id SET, so key on it
-    // too or the gate below never reopens for that edit and the sources list goes stale.
-    const dsKey = [...model.datasets(), " ",
-        ...(model.profile.subsets || []).map((s) => `${s.id}<${model.subsetInputs(s).join(",")}`)].join("");
-    if (dsKey !== _lastDsSetKey) { _lastDsSetKey = dsKey; rebuildDatasetConsumers(); }
-    // A toast's token chips list the FIELDS/COLUMNS of its wired sources — those change without the
-    // dataset/subset id SET changing (add a field to a window, a derived column to a subset), so the
-    // dsKey gate above misses them. Toasts are few; rebuild their bodies every render so the chips
-    // (and the add-source select) always reflect the current columns. rebuildNode no-ops when the
-    // node isn't in the DOM, and message edits never call render(), so this can't eat a caret.
-    for (const t of model.profile.toasts || []) rebuildNode(`toast:${t.id}`);
-    // Same problem, one level up: a DATASET's own "sources" chip list names whichever window/
-    // producer/file-source/register feeds it BY ID — renaming ANY of those feeders changes that
-    // id but not the dataset id SET, so the dsKey gate above misses it too (the dataset node's id
-    // never changed, so the top loop just repositions it — never rebuilds its body). Datasets are
-    // few; rebuild every one's body every render, same trade-off as the toast fix above.
-    for (const d of model.datasets()) rebuildNode(`ds:${d}`);
+    // This reconcile reuses existing node DOM (to keep focus/values), so it NEVER rebuilds a body.
+    // But a body's chips/labels/<select>s list OTHER nodes' ids and columns — renaming a dataset/
+    // register/readout, adding a field, wiring a source all change what a SIBLING body should show
+    // without changing that sibling's own id. One comprehensive signature (_refKey) folds the whole
+    // referenceable namespace AND the column/ref content that changes without an id-set change; when
+    // it flips, rebuild every consumer body through ONE sweep (rule 7 — replaces the old per-mutation
+    // dataset/toast/dataset-node/readout sweeps that each covered only a slice and missed actions).
+    const rk = _refKey();
+    if (rk !== _lastRefKey) { _lastRefKey = rk; rebuildRefConsumers(); }
 }
-let _lastDsSetKey = null;
+let _lastRefKey = null;
+// The signature the render-tail rebuild gates on. Built ONLY from ids, ref lists, and the field/
+// column sets a body can display — NEVER from knob VALUES — so typing into a threshold/interval/
+// message never flips it (the gate stays shut mid-edit). Flips only on rename/add/remove/wire.
+function _refKey() {
+    const P = model.profile;
+    return JSON.stringify([
+        model.datasets(),
+        (P.subsets || []).map((s) => [s.id, model.subsetInputs(s), model.subsetColumns(s.id)]),
+        (P.registers || []).map((r) => [r.id, r.sources, r.persist]),
+        model.readouts().map((v) => v.id),
+        (P.producers || []).map((p) => [p.id, p.dataset, p.sources, model.producerColumns(p)]),
+        (P.actions || []).map((x) => [x.id, x.sources, x.dest, Object.keys(x.slots || {})]),
+        (P.toasts || []).map((x) => [x.id, x.sources]),
+        (P.sounds || []).map((x) => x.id),
+        (P.file_sources || []).map((s) => [s.id, s.dataset, (s.fields || []).map((f) => f.id)]),
+        (P.triggers || []).map((t) => [t.id, t.targets, t.watch, t.readout_watch, t.register_watch,
+            Object.keys(t.register_conds || {})]),
+        (P.dictionaries || []).map((d) => [d.id, (d.feeds || []).map((f) => f.dataset)]),
+        (P.windows || []).map((w) => [w.id, w.dataset, (w.fields || []).map((f) => f.id),
+            (w.readouts || []).map((v) => v.id)]),
+        P.window_priority || [],
+    ]);
+}
+// Rebuild every config node body that lists another node's id/column — the ONE consumer sweep.
+// Skips live-canvas node types (they self-refresh) AND the node holding the caret, so render()'s
+// "existing nodes keep focus/values" contract holds even if a keystroke handler flips the gate.
+function rebuildRefConsumers() {
+    const focused = document.activeElement;
+    for (const n of model.nodes()) {
+        if (_SKIP_RESTORE_REBUILD.has(n.type)) continue;
+        const el = nodeEls.get(n.id);
+        if (el && focused && el.contains(focused)) continue;   // never yank the input being edited
+        rebuildNode(n.id);
+    }
+}
 
 // history.restore() (undo/redo) swaps the ENTIRE model, then calls render() — but render() is a
 // reconcile that deliberately KEEPS existing node DOM (so a live keystroke's caret survives a
@@ -653,13 +662,6 @@ export function rebuildAllNodeBodies() {
     }
 }
 
-// Rebuild every node whose body lists the dataset/subset id set in a dropdown — the delete/add/
-// rename-safe twin of rebuildReadoutConsumers (rule 7). rebuildNode no-ops for an absent node.
-function rebuildDatasetConsumers() {
-    for (const t of model.profile.triggers || []) rebuildNode(`trigger:${t.id}`);
-    for (const p of model.profile.producers || []) rebuildNode(`producer:${p.id}`);
-    for (const s of model.profile.subsets || []) rebuildNode(`sub:${s.id}`);
-}
 
 // Item nodes always show their frozen cutout canvas; open any that aren't yet.
 function openMissingItemCanvases() {
@@ -860,9 +862,6 @@ function wireNode(div, n) {
         // owns opening every window's image during boot — skip the eager call here so it isn't
         // done twice (openImage is idempotent, but skipping avoids the redundant no-op path).
         if (!boot.phase) openImage(n.ref.id, div);
-    } else if (n.type === "preview") {
-        // auto-reads on image change + any window edit; the one button commits the read to the dataset
-        div.querySelector(".prevcommit")?.addEventListener("click", (e) => commitPreviewNode(n.ref.id, e.currentTarget));
     } else if (n.type === "dataset") {
         // sources chips: add via the "+ source" select, remove via each chip's trash. Both paths
         // call the SAME model setters the drag-a-window/producer/file-source-onto-this-dataset
@@ -1085,10 +1084,10 @@ function wireNode(div, n) {
         });
         // ⊙ sample a colour from a zoomed cutout of the detector's box (same modal as a readout)
         div.querySelector(".detcolorpick")?.addEventListener("click", () => openDetectColorPick(owner, n.ref.id));
-        div.querySelectorAll(".coldel").forEach((b) => b.addEventListener("click", () => {
+        div.querySelectorAll(".coldel").forEach((b) => armConfirm(b, () => {
             const i = +b.dataset.i;
             nodeEdit(n.id, "read", () => { n.ref.colors?.splice(i, 1); rebuildNode(n.id); }, saveDet);
-        }));
+        }, { silent: true, resetOnOutside: true }));
         // colour list: hex inputs that collide (same colour, or within tolerance of another) go red.
         const remarkCollide = () => markColorCollisions(div.querySelectorAll('.aset[data-k="color"]'), n.ref.colors || [], n.ref.tolerance ?? 32);
         div.querySelectorAll(".aset").forEach((inp) => onValueEdit(inp, (e, live) => {

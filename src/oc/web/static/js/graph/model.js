@@ -234,123 +234,135 @@ export class GraphModel {
     // or "mirror" (a key gone from its visible scroll slice is removed — needs the window's scrollbar).
     datasetSyncMode(id) { const d = this.datasetDef(id); return (d && d.sync_mode) || "accumulate"; }
     setDatasetSyncMode(id, m) { this.ensureDatasetDef(id).sync_mode = m === "mirror" ? "mirror" : "accumulate"; }
-    // SINGLE SOURCE OF TRUTH for every place a dataset id is stored, as live get/set accessors.
-    // `decl: true` sites DECLARE a dataset's existence (a node literally IS this dataset);
-    // ref sites merely point at one (a consumer). EVERYTHING that lists or renames datasets
-    // derives from this one list — `datasets()`, `renameDataset()`, collision checks — so a
-    // dataset can never desync into a duplicate. Adding a new node type that touches datasets
-    // means adding ONE loop here; rename/listing then work automatically, no audit needed.
-    _datasetSites() {
-        const sites = [];
-        for (const w of this.profile.windows)
-            if (this._windowHasDataset(w))   // an empty window declares no dataset
-                sites.push({ decl: true, get: () => this.datasetOf(w), set: (v) => { w.dataset = v; } });
-        for (const d of this.profile.datasets || [])
-            sites.push({ decl: true, get: () => d.id, set: (v) => { d.id = v; } });
-        for (const pn of this.profile.producers || []) {
-            sites.push({ decl: true, get: () => pn.dataset, set: (v) => { pn.dataset = v; } });
-            (pn.sources || []).forEach((_, i) =>                            // priced-item sources are REFs
-                sites.push({ decl: false, get: () => pn.sources[i], set: (v) => { pn.sources[i] = v; } }));
-        }
-        for (const s of this.profile.file_sources || [])                  // a source DECLARES its output dataset
-            sites.push({ decl: true, get: () => s.dataset, set: (v) => { s.dataset = v; } });
-        for (const s of this.profile.subsets || [])                       // each subset source is a REF
-            (s.sources || []).forEach((_, i) =>
-                sites.push({ decl: false, get: () => s.sources[i].dataset, set: (v) => { s.sources[i].dataset = v; } }));
-        for (const t of this.profile.triggers || [])                      // on_change watch is a dataset REF
-            (t.watch || []).forEach((_, i) =>
-                sites.push({ decl: false, get: () => t.watch[i], set: (v) => { t.watch[i] = v; } }));
-        for (const x of this.profile.actions || []) {                     // action node dataset REFs
-            (x.sources || []).forEach((ref, i) => {                       // only the "dataset:" sources are dataset refs
-                const c = ref.indexOf(":"), kind = c < 0 ? "" : ref.slice(0, c);
-                if (kind === "dataset")
-                    sites.push({ decl: false, get: () => x.sources[i].slice(x.sources[i].indexOf(":") + 1), set: (v) => { x.sources[i] = `dataset:${v}`; } });
-            });
-            sites.push({ decl: false, get: () => x.dest || "", set: (v) => { x.dest = v; } });   // clone/move dest
-        }
-        for (const d of this.profile.dictionaries || [])                  // a dictionary feed is a dataset REF
-            (d.feeds || []).forEach((_, i) =>
-                sites.push({ decl: false, get: () => d.feeds[i].dataset, set: (v) => { d.feeds[i].dataset = v; } }));
-        for (const x of this.profile.toasts || [])                        // a toast's dataset/subset {{token}} feeders are REFs
-            (x.sources || []).forEach((ref, i) => {
-                const c = ref.indexOf(":"), kind = c < 0 ? "" : ref.slice(0, c);
-                if (kind === "dataset" || kind === "subset")
-                    sites.push({ decl: false, get: () => x.sources[i].slice(x.sources[i].indexOf(":") + 1), set: (v) => { x.sources[i] = `${kind}:${v}`; } });
-            });
-        for (const r of this.profile.registers || [])                     // a register's persist target is a dataset REF
-            sites.push({ decl: false, get: () => r.persist || "", set: (v) => { r.persist = v; } });
-        return sites;
+    // SINGLE SOURCE OF TRUTH for every place ANY graph id is stored, as live get/set (or dict
+    // re-key/drop) sites tagged with the entity KIND(s) that may occupy them. Every rename
+    // (`_repoint`) and delete (`_unwire`) derives from this ONE registry, and `_declIds` lists
+    // declared ids (backs `datasets()`), so an id can never desync into an orphan or duplicate.
+    //   - `decl:true` sites DECLARE an entity (a node literally IS this id); ref sites point at one.
+    //   - `kinds` gates matching by entity kind instead of by prefix string, so a shared dataset/
+    //     subset ref lists both, and a trigger target lists every node kind — no prefix filtering.
+    //   - a prefixed-ref list ("dataset:x"/"register:y" in ONE array) is decoded ONCE below, so a
+    //     NEW prefix — or a whole new sources[] holder — is covered by rename+delete for free (rule 7).
+    // Adding a node type that references ids = adding ONE line here; nothing else needs an audit.
+    _refModel() {
+        const sites = [], lists = [];
+        const scalar = (kinds, decl, get, set) => sites.push({ kinds, decl, get, set });
+
+        // def rows: each entity's own id declares its kind
+        const defs = [
+            ["dataset", this.profile.datasets], ["subset", this.profile.subsets],
+            ["producer", this.profile.producers], ["action", this.profile.actions],
+            ["toast", this.profile.toasts], ["sound", this.profile.sounds],
+            ["filesource", this.profile.file_sources], ["trigger", this.profile.triggers],
+            ["register", this.profile.registers], ["dictionary", this.profile.dictionaries],
+            ["window", this.profile.windows],
+        ];
+        for (const [kind, arr] of defs)
+            for (const o of arr || []) scalar([kind], true, () => o.id, (v) => { o.id = v; });
+
+        // dataset FEEDER decls: another node asserts "I output this dataset"
+        for (const w of this.profile.windows || [])
+            if (this._windowHasDataset(w)) scalar(["dataset"], true, () => this.datasetOf(w), (v) => { w.dataset = v; });
+        for (const p of this.profile.producers || []) scalar(["dataset"], true, () => p.dataset, (v) => { p.dataset = v; });
+        for (const s of this.profile.file_sources || []) scalar(["dataset"], true, () => s.dataset, (v) => { s.dataset = v; });
+
+        // scalar bare-id refs
+        for (const r of this.profile.registers || []) scalar(["dataset"], false, () => r.persist || "", (v) => { r.persist = v; });
+        for (const x of this.profile.actions || []) scalar(["dataset"], false, () => x.dest || "", (v) => { x.dest = v; });   // clone/move dest
+        for (const r of this._dictRules()) scalar(["dictionary"], false, () => r.dict_id || "", (v) => { r.dict_id = v; });
+
+        // bare-id LIST refs (registered once => enumerated AND pruned on delete)
+        const bareList = (kinds, owners, pick, empty = (e) => !e) => {
+            for (const o of owners || []) {
+                const a = pick(o); if (!a) continue;
+                a.forEach((_, i) => scalar(kinds, false, () => a[i], (v) => { a[i] = v; }));
+                lists.push({ arr: () => pick(o), empty });
+            }
+        };
+        bareList(["dataset"], this.profile.producers, (p) => p.sources);                                   // priced-item sources
+        bareList(["dataset", "subset"], this.profile.triggers, (t) => t.watch);                            // on_change watch
+        bareList(["producer", "action", "toast", "sound", "filesource"], this.profile.triggers, (t) => t.targets);
+        bareList(["register"], this.profile.triggers, (t) => t.register_watch);
+        bareList(["readout"], this.profile.triggers, (t) => t.readout_watch);
+        bareList(["window"], [this.profile], () => this.profile.window_priority);                          // recognition order
+
+        // object-field LIST refs (id lives in entry.dataset)
+        const fieldList = (kinds, owners, pick) => {
+            for (const o of owners || []) {
+                const a = pick(o); if (!a) continue;
+                a.forEach((e) => scalar(kinds, false, () => e.dataset, (v) => { e.dataset = v; }));
+                lists.push({ arr: () => pick(o), empty: (e) => !e.dataset });
+            }
+        };
+        fieldList(["dataset", "subset"], this.profile.subsets, (s) => s.sources);
+        fieldList(["dataset"], this.profile.dictionaries, (d) => d.feeds);
+
+        // prefixed-ref LISTS ("kind:id" in one array) — decode the kind ONCE, no per-kind filtering
+        const prefixedList = (owners, pick) => {
+            for (const o of owners || []) {
+                const a = pick(o); if (!a) continue;
+                a.forEach((ref, i) => {
+                    const c = ref.indexOf(":"), kind = c < 0 ? "" : ref.slice(0, c);
+                    if (!kind) return;
+                    scalar([kind], false, () => a[i].slice(a[i].indexOf(":") + 1), (v) => { a[i] = `${kind}:${v}`; });
+                });
+                lists.push({ arr: () => pick(o), empty: (r) => !r.slice(r.indexOf(":") + 1) });
+            }
+        };
+        prefixedList(this.profile.actions, (x) => x.sources);      // dataset: | register:
+        prefixedList(this.profile.toasts, (x) => x.sources);       // dataset: | subset: | readout:
+        prefixedList(this.profile.registers, (x) => x.sources);    // readout:
+
+        // dict-key sites (register slots) — re-key on rename, drop on delete
+        const dictSite = (kinds, owner, key) => sites.push({
+            kinds, decl: false, dict: true,
+            hasKey: (id) => owner[key] && Object.prototype.hasOwnProperty.call(owner[key], id),
+            rekey: (o, n) => { const mp = owner[key] || (owner[key] = {}); if (o in mp) { mp[n] = mp[o]; delete mp[o]; } },
+            drop: (id) => { if (owner[key]) delete owner[key][id]; },
+        });
+        for (const x of this.profile.actions || []) dictSite(["register"], x, "slots");
+        for (const t of this.profile.triggers || []) dictSite(["register"], t, "register_conds");
+
+        return { sites, lists };
     }
 
-    // Repoint every reference site (consumers, not declarations) from oldId -> newId. Shared by
+    // Repoint every ref of `kind` (and, when {decl:true}, its declaration too) from oldId -> newId.
+    _repoint(kind, oldId, newId, { decl = false } = {}) {
+        if (!oldId || !newId || oldId === newId) return;
+        for (const st of this._refModel().sites) {
+            if (!st.kinds.includes(kind)) continue;
+            if (st.dict) { if (st.hasKey(oldId)) st.rekey(oldId, newId); }
+            else if ((decl || !st.decl) && st.get() === oldId) st.set(newId);
+        }
+    }
+    // Delete-twin: blank every ref/feeder of `kind` holding `id`, drop dict keys, then compact the
+    // lists that a blank emptied (a "kind:" tail, a falsy id, an entry with no .dataset).
+    _unwire(kind, id) {
+        const { sites, lists } = this._refModel();
+        for (const st of sites) {
+            if (!st.kinds.includes(kind)) continue;
+            if (st.dict) st.drop(id);
+            else if (st.get() === id) st.set("");   // decl: unwire feeder; ref: emptied then pruned below
+        }
+        for (const l of lists) { const a = l.arr(); if (a) { const keep = a.filter((e) => !l.empty(e)); a.length = 0; a.push(...keep); } }
+    }
+    // Declared ids of one kind (declaration sites only) — the SSOT `datasets()` reads.
+    _declIds(kind) {
+        const out = new Set();
+        for (const st of this._refModel().sites)
+            if (st.decl && st.kinds.includes(kind)) { const v = st.get(); if (v) out.add(v); }
+        return out;
+    }
+
     // Cross-document rename notification. A graph id can be referenced OUTSIDE the profile — the
     // Pretty doc embeds ids inside {{token}} strings (dataset:/subset: heads, node: paths). Those
-    // live in a separate lazily-loaded model, so structured repointing (_datasetSites/_repointTargets)
-    // can't reach them. Every rename* emits {kind, old, new, win?} here; ONE subscriber (main.js)
-    // funnels them to the Pretty repoint endpoint. Wired via a hook so model.js stays UI-free.
+    // live in a separate lazily-loaded model, so the structured registry (_refModel) can't reach
+    // them. Every rename* emits {kind, old, new, win?} here; ONE subscriber (main.js) funnels them
+    // to the Pretty repoint endpoint. Wired via a hook so model.js stays UI-free.
     setRenameHook(fn) { this._renameHook = fn; }
     _emitRename(kind, oldId, newId, win) {
         if (this._renameHook && oldId && newId && oldId !== newId)
             try { this._renameHook({ kind, old: oldId, new: newId, win }); } catch { /* never fail a rename */ }
-    }
-
-    // dataset AND subset renames: a subset.datasets entry can name either, and the ref site is
-    // the same either way, so one helper keeps both rename paths complete.
-    _repointRefs(oldId, newId) {
-        for (const st of this._datasetSites()) if (!st.decl && st.get() === oldId) st.set(newId);
-    }
-
-    // SSOT for every site that REFERENCES a producer / file-source id — a trigger's `targets`
-    // list is the only one. Mirrors _datasetSites: rename repoints through it, delete clears
-    // through it, so a producer/source can never leave a dangling trigger wire on either path.
-    _targetSites() {
-        const sites = [];
-        for (const t of this.profile.triggers || [])
-            (t.targets || []).forEach((_, i) =>
-                sites.push({ get: () => t.targets[i], set: (v) => { t.targets[i] = v; } }));
-        return sites;
-    }
-    _repointTargets(oldId, newId) {
-        for (const st of this._targetSites()) if (st.get() === oldId) st.set(newId);
-    }
-    // delete-twin of _repointTargets: blank every target holding `id`, then prune the empties.
-    _dropTarget(id) {
-        this._repointTargets(id, "");
-        for (const t of this.profile.triggers || []) t.targets = (t.targets || []).filter(Boolean);
-    }
-
-    // SSOT for every site that REFERENCES a register id — an action's "register:" sources (and the
-    // `slots` dict keyed by register id). Mirrors _datasetSites so a register rename repoints action
-    // wiring on the rename path (rule 5) instead of orphaning the source/edge.
-    _registerSites() {
-        const sites = [];
-        for (const x of this.profile.actions || []) {
-            (x.sources || []).forEach((ref, i) => {
-                const c = ref.indexOf(":"), kind = c < 0 ? "" : ref.slice(0, c);
-                if (kind === "register")
-                    sites.push({ get: () => x.sources[i].slice(x.sources[i].indexOf(":") + 1),
-                        set: (v) => { x.sources[i] = `register:${v}`; } });
-            });
-            // the slots dict is keyed by register id — re-key on rename
-            sites.push({ slotOwner: x });
-        }
-        // an on_register trigger references registers by bare id in register_watch + as the keys of
-        // register_conds — repoint both on rename so the watch/edge doesn't orphan (rule 5).
-        for (const t of this.profile.triggers || []) {
-            (t.register_watch || []).forEach((_, i) =>
-                sites.push({ get: () => t.register_watch[i], set: (v) => { t.register_watch[i] = v; } }));
-            t.register_conds = t.register_conds || {};
-            sites.push({ slotOwner: { slots: t.register_conds } });   // dict keyed by register id — re-keyed on rename
-        }
-        return sites;
-    }
-    _repointRegisters(oldId, newId) {
-        for (const st of this._registerSites()) {
-            if (st.slotOwner) {
-                const s = st.slotOwner.slots;
-                if (s && Object.prototype.hasOwnProperty.call(s, oldId)) { s[newId] = s[oldId]; delete s[oldId]; }
-            } else if (st.get() === oldId) st.set(newId);
-        }
     }
 
     // Rename a dataset: repoint EVERY site (declarations + references) holding the old id, so
@@ -358,7 +370,7 @@ export class GraphModel {
     renameDataset(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.datasets().includes(newId)) return false;   // collision incl. disk/price/window
-        for (const st of this._datasetSites()) if (st.get() === oldId) st.set(newId);
+        this._repoint("dataset", oldId, newId, { decl: true });   // move def + feeder decls + every ref
         if (!this.datasetDef(newId)) this.ensureDatasetDef(newId);   // a def must exist for the new name
         if (this._extraDatasets) this._extraDatasets = this._extraDatasets.filter((x) => x !== oldId);   // drop stale disk entry
         this._emitRename("dataset", oldId, newId);
@@ -731,8 +743,7 @@ export class GraphModel {
     }
 
     datasets() {
-        const set = new Set();
-        for (const st of this._datasetSites()) if (st.decl) { const v = st.get(); if (v) set.add(v); }   // declaration sites only
+        const set = this._declIds("dataset");   // every declared dataset id (window/producer/source feeders + defs)
         (this._extraDatasets || []).forEach((d) => set.add(d));   // names found on disk
         return [...set];
     }
@@ -761,12 +772,11 @@ export class GraphModel {
     _blankCatalogue() {
         return { url: "", items_path: "data", name_path: "", key_path: "", fuzzy: 0.9, ttl_days: 7, suffix_hints: [] };
     }
-    removeProducer(id) { this.profile.producers = (this.profile.producers || []).filter((p) => p.id !== id); this._dropTarget(id); }
+    removeProducer(id) { this.profile.producers = (this.profile.producers || []).filter((p) => p.id !== id); this._unwire("producer", id); }
     renameProducer(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.producerNode(newId)) return false;
-        this.producerNode(oldId).id = newId;
-        this._repointTargets(oldId, newId);   // a trigger may target this producer — carry its wire
+        this._repoint("producer", oldId, newId, { decl: true });   // def id + any trigger target
         this._emitRename("producer", oldId, newId);
         return true;
     }
@@ -993,12 +1003,11 @@ export class GraphModel {
         this.profile.actions.push({ id, action: "", sources: [], slots: {}, dest: "", enabled: true });
         return id;
     }
-    removeAction(id) { this.profile.actions = (this.profile.actions || []).filter((x) => x.id !== id); this._dropTarget(id); }
+    removeAction(id) { this.profile.actions = (this.profile.actions || []).filter((x) => x.id !== id); this._unwire("action", id); }
     renameAction(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.actionNode(newId)) return false;
-        this.actionNode(oldId).id = newId;
-        this._repointTargets(oldId, newId);   // an action id can be a trigger target — carry its wire
+        this._repoint("action", oldId, newId, { decl: true });   // def id + any trigger target
         return true;
     }
     setActionKind(id, v) { const x = this.actionNode(id); if (x && GraphModel.ACTION_KINDS.includes(v)) x.action = v; }
@@ -1057,24 +1066,16 @@ export class GraphModel {
         this.profile.registers.push({ id, sources: [], title: "", enabled: true, persist: "", capacity: 1, aggregate: "", ignore_empty: false });
         return id;
     }
+    // unwire action "register:" sources + slot targeting AND on_register trigger watch + key
+    // conditions (else a dangling ref/edge) — all through the one registry.
     removeRegister(id) {
         this.profile.registers = (this.profile.registers || []).filter((x) => x.id !== id);
-        // unwire any action "register:<id>" source + its slot targeting (else a dangling ref/edge)
-        for (const x of this.profile.actions || []) {
-            x.sources = (x.sources || []).filter((ref) => ref !== `register:${id}`);
-            if (x.slots) delete x.slots[id];
-        }
-        // unwire any on_register trigger watching it + its key conditions (else a dangling watch/edge)
-        for (const t of this.profile.triggers || []) {
-            t.register_watch = (t.register_watch || []).filter((r) => r !== id);
-            if (t.register_conds) delete t.register_conds[id];
-        }
+        this._unwire("register", id);
     }
     renameRegister(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.registerNode(newId)) return false;
-        this.registerNode(oldId).id = newId;
-        this._repointRegisters(oldId, newId);   // carry action "register:" sources + slot keys (rule 5)
+        this._repoint("register", oldId, newId, { decl: true });   // def id + action sources/slots + trigger watch/conds
         this._emitRename("register", oldId, newId);
         return true;
     }
@@ -1126,7 +1127,7 @@ export class GraphModel {
             duration: "short", icon: "", attribution: "", muted: false, enabled: true, sources: [] });
         return id;
     }
-    removeToast(id) { this.profile.toasts = (this.profile.toasts || []).filter((x) => x.id !== id); this._dropTarget(id); }
+    removeToast(id) { this.profile.toasts = (this.profile.toasts || []).filter((x) => x.id !== id); this._unwire("toast", id); }
     // A toast's wired {{token}} feeders are prefixed refs — "readout:<id>" | "dataset:<id>" |
     // "subset:<id>", one per connected node. `toastSources` parses them to {kind, id, ref}; the UI
     // builds token chips + edges from this, and ONLY these sources drive the suggestion chips.
@@ -1292,8 +1293,7 @@ export class GraphModel {
     renameToast(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.toastNode(newId)) return false;
-        this.toastNode(oldId).id = newId;
-        this._repointTargets(oldId, newId);   // a toast id can be a trigger target — carry its wire
+        this._repoint("toast", oldId, newId, { decl: true });   // def id + any trigger target
         return true;
     }
     static TOAST_DURATIONS = ["short", "long"];
@@ -1315,12 +1315,11 @@ export class GraphModel {
         this.profile.sounds.push({ id, file: "", volume: 1, enabled: true });
         return id;
     }
-    removeSound(id) { this.profile.sounds = (this.profile.sounds || []).filter((x) => x.id !== id); this._dropTarget(id); }
+    removeSound(id) { this.profile.sounds = (this.profile.sounds || []).filter((x) => x.id !== id); this._unwire("sound", id); }
     renameSound(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.soundNode(newId)) return false;
-        this.soundNode(oldId).id = newId;
-        this._repointTargets(oldId, newId);   // a sound id can be a trigger target — carry its wire
+        this._repoint("sound", oldId, newId, { decl: true });   // def id + any trigger target
         return true;
     }
     setSoundFile(id, v) { const x = this.soundNode(id); if (x) { x.file = v || ""; if (x.file) x.synth = null; } }
@@ -1347,12 +1346,11 @@ export class GraphModel {
             dataset, watch: "manual", throttle_s: 1, tail: true, tail_lines: 200, match: [], fields: [], enabled: true });
         return id;
     }
-    removeFileSource(id) { this.profile.file_sources = (this.profile.file_sources || []).filter((s) => s.id !== id); this._dropTarget(id); }
+    removeFileSource(id) { this.profile.file_sources = (this.profile.file_sources || []).filter((s) => s.id !== id); this._unwire("filesource", id); }
     renameFileSource(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.fileSource(newId)) return false;
-        this.fileSource(oldId).id = newId;
-        this._repointTargets(oldId, newId);   // a source id can be a trigger target — carry its wire
+        this._repoint("filesource", oldId, newId, { decl: true });   // def id + any trigger target
         return true;
     }
     setSourceDataset(id, ds) { const s = this.fileSource(id); if (s && ds) { s.dataset = ds; this.ensureDatasetDef(ds); } }
@@ -1451,14 +1449,13 @@ export class GraphModel {
     }
     removeDictionary(id) {
         this.profile.dictionaries = (this.profile.dictionaries || []).filter((d) => d.id !== id);
-        for (const r of this._dictRules()) if (r.dict_id === id) r.dict_id = "";   // pinned rule -> pooled
+        this._unwire("dictionary", id);   // pinned rules -> pooled (dict_id blanked)
     }
     renameDictionary(oldId, newId) {
         newId = (newId || "").trim();
         const d = this.dictionary(oldId);
         if (!d || !newId || newId === oldId || this.dictionary(newId)) return false;
-        d.id = newId;
-        for (const r of this._dictRules()) if (r.dict_id === oldId) r.dict_id = newId;   // keep pins pointing at it
+        this._repoint("dictionary", oldId, newId, { decl: true });   // def id + every pinned rule
         return true;
     }
     setDictionaryTerms(id, terms) { const d = this.dictionary(id); if (d) d.terms = terms; }
@@ -1533,17 +1530,7 @@ export class GraphModel {
     // dataset and subset deletion: a subset id lives in the very same ref sites a dataset does, so
     // one sweep keeps every connected party (window/producer/source/subset/trigger) consistent.
     _unwireDataset(id) {
-        for (const st of this._datasetSites()) if (st.get() === id) st.set("");   // decl: unwire feeder; ref: emptied
-        for (const pn of this.profile.producers || []) pn.sources = (pn.sources || []).filter(Boolean);
-        for (const s of this.profile.subsets || []) s.sources = (s.sources || []).filter((src) => src.dataset);
-        for (const t of this.profile.triggers || [])
-            t.watch = (t.watch || []).filter(Boolean);
-        // _datasetSites() blanked the id-part of any action "dataset:" source pointing here -> "dataset:"; drop those
-        for (const x of this.profile.actions || [])
-            x.sources = (x.sources || []).filter((ref) => ref.slice(ref.indexOf(":") + 1));
-        // _datasetSites() blanked the id-part of any toast source pointing here -> "dataset:"/"subset:"; drop those
-        for (const x of this.profile.toasts || [])
-            x.sources = (x.sources || []).filter((ref) => ref.slice(ref.indexOf(":") + 1));
+        this._unwire("dataset", id);   // blank every feeder/ref holding this dataset id, then prune the emptied lists
         if (this._extraDatasets) this._extraDatasets = this._extraDatasets.filter((x) => x !== id);
     }
 
@@ -1592,13 +1579,12 @@ export class GraphModel {
     // must clear those refs or they dangle to a node that no longer exists.
     removeSubset(id) {
         this.profile.subsets = (this.profile.subsets || []).filter((s) => s.id !== id);
-        this._unwireDataset(id);
+        this._unwire("subset", id);   // subset ids live in the shared dataset/subset ref sites
     }
     renameSubset(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.subsetDef(newId)) return false;
-        this.subsetDef(oldId).id = newId;
-        this._repointRefs(oldId, newId);   // a subset can feed another subset — repoint those inputs too
+        this._repoint("subset", oldId, newId, { decl: true });   // def id + every subset ref (a subset can feed another)
         this._emitRename("subset", oldId, newId);
         return true;
     }
@@ -1756,9 +1742,7 @@ export class GraphModel {
     }
     removeWindow(id) {
         this.profile.windows = this.profile.windows.filter((w) => w.id !== id);
-        // prune the priority entry too — renameWindow repoints it, so delete must drop it (else a
-        // stale id lingers in window_priority and resurfaces if the id is ever reused)
-        this.profile.window_priority = (this.profile.window_priority || []).filter((x) => x !== id);
+        this._unwire("window", id);   // drop its window_priority entry (else a stale id resurfaces on reuse)
     }
     window(id) { return this.profile.windows.find((w) => w.id === id); }
     // The single "follow the lines" resolver: which window's detect/OCR an edit can change.
@@ -1803,9 +1787,7 @@ export class GraphModel {
     renameWindow(oldId, newId) {
         const w = this.window(oldId);
         if (!w || !newId || this.profile.windows.some((x) => x.id === newId)) return false;
-        w.id = newId;
-        // repoint any priority entry so the order survives a rename
-        this.profile.window_priority = (this.profile.window_priority || []).map((id) => id === oldId ? newId : id);
+        this._repoint("window", oldId, newId, { decl: true });   // def id + its window_priority entry
         this._emitRename("window", oldId, newId);
         return true;
     }
@@ -1916,24 +1898,9 @@ export class GraphModel {
         if (!newId || newId === vid || this.readouts().some((v) => v.id === newId)) return false;
         const v = this.readout(winId, vid);
         if (!v) return false;
-        v.id = newId;
-        const esc = vid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        // repoint both grammars: prefixed {{readout:vid}} and legacy bare {{vid}} (older toast text)
-        const rePref = new RegExp("\\{\\{\\s*readout:\\s*" + esc + "\\s*(\\|[^}]*)?\\}\\}", "g");
-        const reBare = new RegExp("\\{\\{\\s*" + esc + "\\s*\\}\\}", "g");
-        for (const t of this.profile.toasts || []) {
-            t.sources = (t.sources || []).map((r) => (r === `readout:${vid}` ? `readout:${newId}` : r));
-            for (const st of this._toastTokenSites(t)) {
-                const s = st.get();
-                if (typeof s === "string" && s.includes("{{"))
-                    st.set(s.replace(rePref, (_m, agg) => `{{readout:${newId}${agg || ""}}}`).replace(reBare, `{{readout:${newId}}}`));
-            }
-        }
-        for (const t of this.profile.triggers || [])
-            t.readout_watch = (t.readout_watch || []).map((x) => (x === vid ? newId : x));
-        // registers hold this readout by its "readout:<id>" source ref — carry it across the rename
-        for (const x of this.profile.registers || [])
-            x.sources = (x.sources || []).map((r) => (r === `readout:${vid}` ? `readout:${newId}` : r));
+        v.id = newId;   // the readout id lives on the window (not a top-level def) — move it directly
+        this._repoint("readout", vid, newId);   // toast/register "readout:" sources + trigger readout_watch
+        this._rewriteReadoutTokens(vid, newId);   // {{readout:vid}} / legacy {{vid}} tokens in toast text
         return true;
     }
     removeReadout(winId, vid) {
@@ -1943,23 +1910,24 @@ export class GraphModel {
         w.readouts = (w.readouts || []).filter((x) => x.id !== vid);
         // drop the linked field if nothing else uses it
         if (v && v.field && !this._fieldUsed(w, v.field)) w.fields = (w.fields || []).filter((f) => f.id !== v.field);
-        // clear any trigger watch pointing at this readout (no dangling wire) — SSOT list
-        for (const t of this.profile.triggers || []) t.readout_watch = (t.readout_watch || []).filter((x) => x !== vid);
-        // strip its now-dead tokens from toast text + drop the wired source (the readout is gone) —
-        // the delete-twin of renameReadout's repoint, so a removed readout never leaves a live token
+        this._unwire("readout", vid);   // toast/register "readout:" sources + trigger readout_watch
+        this._rewriteReadoutTokens(vid, null);   // strip its now-dead tokens from toast text
+    }
+    // Rewrite (newId set) or strip (newId null) a readout's {{readout:id}} / legacy {{id}} tokens
+    // across every toast text surface — the token-string twin of the structured _repoint/_unwire
+    // above (tokens are substring edits, not whole-value id slots, so they live outside the registry).
+    _rewriteReadoutTokens(vid, newId) {
         const esc = vid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const rePref = new RegExp("\\{\\{\\s*readout:\\s*" + esc + "\\s*(\\|[^}]*)?\\}\\}", "g");
         const reBare = new RegExp("\\{\\{\\s*" + esc + "\\s*\\}\\}", "g");
-        for (const t of this.profile.toasts || []) {
-            t.sources = (t.sources || []).filter((r) => r !== `readout:${vid}`);
+        for (const t of this.profile.toasts || [])
             for (const st of this._toastTokenSites(t)) {
                 const s = st.get();
-                if (typeof s === "string" && s.includes("{{")) st.set(s.replace(rePref, "").replace(reBare, ""));
+                if (typeof s !== "string" || !s.includes("{{")) continue;
+                st.set(newId
+                    ? s.replace(rePref, (_m, agg) => `{{readout:${newId}${agg || ""}}}`).replace(reBare, `{{readout:${newId}}}`)
+                    : s.replace(rePref, "").replace(reBare, ""));
             }
-        }
-        // drop the wired source from any register holding this readout (the readout is gone)
-        for (const x of this.profile.registers || [])
-            x.sources = (x.sources || []).filter((r) => r !== `readout:${vid}`);
     }
     // Every readout across all windows, for trigger-watch listing: {id, win}.
     readouts() {
@@ -2142,7 +2110,7 @@ export class GraphModel {
     // lazily defaulted so an old profile without the block gets one on first edit.
     _ppOf(holder) {
         if (!holder) return null;
-        holder.preprocess = holder.preprocess || { mode: "none", colors: [], tolerance: 60, scale: 1.0 };
+        holder.preprocess = holder.preprocess || { mode: "none", colors: [], tolerance: 60, scale: 1.0, min_frac: 0 };
         return holder.preprocess;
     }
     // Resolve a readout's linked FieldDef by readout id (the per-readout preprocess holder).

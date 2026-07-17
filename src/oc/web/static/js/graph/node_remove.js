@@ -1,13 +1,12 @@
 // Node removal: the denylist of unremovable node types, and the ONE place that deletes any node
 // (per-type kill/after plan) — including purging a dropped dataset's on-disk files. Split out of
-// main.js; render/autosave/rebuildNode/rebuildReadoutConsumers/refreshLive/live stay in main and
-// are imported back.
+// main.js; render/autosave/rebuildNode/refreshLive/live stay in main and are imported back.
 import * as api from "../api.js";
 import { model, nodeEls, clearGrid, setStatus } from "./state.js";
 import { closeImage, closeItemImage, refreshImageBoxes, nodeIdOf } from "./imaging.js";
 import { forgetNodeState } from "./node_lifecycle.js";
 import { itemChanged } from "./item_wire.js";
-import { render, autosave, rebuildNode, rebuildReadoutConsumers, refreshLive, live } from "./main.js";
+import { render, autosave, rebuildNode, refreshLive, live } from "./main.js";
 
 export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource", "action"]);
 // Denylist, NOT allowlist: every node type is removable EXCEPT these. Inverted on purpose so a new
@@ -41,7 +40,7 @@ export function removeNode(n) {
         window:     { kill: () => { closeImage(n.ref.id); model.removeWindow(n.ref.id); }, after: () => autosave(null) },
         item:       { kill: () => { closeItemImage(win, n.ref.id); model.removeItem(win, n.ref.id); clearGrid(win); }, after: () => { refreshImageBoxes(win); autosave(win); } },
         region:     { kill: () => model.removeRegion(win, n.ref.id), after: () => { autosave(win); refreshImageBoxes(win); } },
-        readout:   { kill: () => model.removeReadout(win, n.ref.id), after: () => { rebuildReadoutConsumers(); autosave(win); refreshImageBoxes(win); } },
+        readout:   { kill: () => model.removeReadout(win, n.ref.id), after: () => { autosave(win); refreshImageBoxes(win); } },
         detect:     { kill: () => model.removeDetect(win, n.ref.id), after: () => { rebuildNode(nodeIdOf(win)); autosave(win); refreshImageBoxes(win); } },
         scrollbar:  { kill: () => model.removeScrollbar(win), after: () => { autosave(win); refreshImageBoxes(win); } },
         itemfield:  { kill: () => model.removeItemField(win, n.item.id, n.ref.id), after: () => itemChanged(win, n.item.id, { reread: true }) },
