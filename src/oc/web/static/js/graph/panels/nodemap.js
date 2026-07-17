@@ -279,12 +279,37 @@ function nmBuildMapSvg(m, s, { cap = 11, titleCap = 9, pad = 8, css = null } = {
     return { svg: el, W, H, ox, oy, s };
 }
 
+// Signature of everything the live map draws — node rects/labels, selection, group boxes,
+// edge set + routed geometry, and the projection width. renderNodeViews() fires on EVERY data
+// refresh while the panel is open; when none of these inputs changed, the full SVG teardown +
+// rebuild (plus the layout it forces) is skipped — same raster-once idea as edgecache.js, done
+// as a dirty-signature because the output here is DOM, not pixels.
+let _nmMapSig = null;
+function nmMapSig(m, availW) {
+    const parts = [availW, selectedNodeId || ""];
+    for (const r of m.rects) parts.push(r.id, r.x, r.y, r.w, r.h, m.labels.get(r.id) || "");
+    for (const b of [...groups.superGroupBoxes(), ...groups.groupBoxes(), ...groups.subGroupBoxes()])
+        parts.push(b.id, b.box.x, b.box.y, b.box.w, b.box.h,
+            b.outline?.style || "", b.outline?.color || "", b.bg || "", b.title || "", b.titleAlign || "");
+    for (const e of model.edges()) parts.push(e.from, e.to);
+    for (const [k, c] of routeCache) {
+        parts.push(k, c.pts.length);
+        let acc = 0;
+        for (const p of c.pts) acc += p[0] * 3 + p[1];   // cheap geometry fingerprint
+        parts.push(Math.round(acc));
+    }
+    return parts.join("|");
+}
+
 function nmRenderMap(body) {
     const m = nmMapModel();
-    if (!m) { body.replaceChildren(h("div", { class: "nm-empty" }, "no nodes")); nmTransform = null; return; }
+    if (!m) { body.replaceChildren(h("div", { class: "nm-empty" }, "no nodes")); nmTransform = null; _nmMapSig = null; return; }
     // Resizing drives WIDTH only; the panel height is then locked to the content's aspect
     // (nmFitPanelHeight) so the map always fills the panel exactly — no empty space.
     const availW = Math.max(120, (body.clientWidth || 276) - 12), PAD = 8;
+    const sig = nmMapSig(m, availW);
+    if (sig === _nmMapSig && body.querySelector(".nm-wrap")) { nmUpdateViewport(); return; }   // nothing the map draws changed
+    _nmMapSig = sig;
     const spanX = Math.max(1, m.maxX - m.minX);
     const s = (availW - 2 * PAD) / spanX;   // fit to width; height follows
     const { svg: svgEl, W, H, ox, oy } = nmBuildMapSvg(m, s, { cap: 11, pad: PAD });
@@ -340,6 +365,7 @@ function nmFitPanelHeight(svgH) {
     }
 }
 
+let _nlListSig = null;
 function nmRenderList(body) {
     const nodes = model.nodes();
     const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -409,6 +435,13 @@ function nmRenderList(body) {
         visible.push(r);
         if (r.kids && nlCollapsed.has(r.key)) hideBelow = r.depth;
     }
+
+    // Dirty-signature gate (same idea as the map's _nmMapSig): the row model is cheap to compute,
+    // the DOM rebuild is not — skip replaceChildren when the visible rows are unchanged.
+    const sig = visible.map((r) => [r.kind, r.key, r.type || "", r.label, r.color || "", r.depth || 0, r.kids,
+        nlCollapsed.has(r.key) ? 1 : 0, r.kind === "node" && r.id === selectedNodeId ? 1 : 0].join(",")).join(";");
+    if (sig === _nlListSig && body.querySelector(".nm-list")) return;
+    _nlListSig = sig;
 
     // Allow wrapping after every non-alphanumeric char (':', '→', '▸', '_', space, …) so long
     // labels break at their separators instead of overflowing — emit a real <wbr> after each.

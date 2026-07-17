@@ -47,9 +47,15 @@ function hexRgb(s) {
 // string, by parking it on a hidden probe's `color` and reading the computed value — the browser
 // does the color-mix/oklab math for us, so the canvas group boxes match the DOM ones exactly.
 // Returns null for a fully-transparent result (so callers skip an invisible fill). One probe reused.
+// MEMOIZED per expression: the probe read is a getComputedStyle (style recalc), and callers like
+// pushCanvasGroups re-resolve every group's colours on each node-drag frame. The :root vars these
+// expressions reference never change at runtime (no theme switching), so an expr always resolves
+// to the same value for the session.
 let _probe = null;
+const _resolved = new Map();   // expr -> "rgb(...)" | null
 export function resolveColor(expr) {
     if (!expr || typeof document === "undefined" || !document.body) return null;
+    if (_resolved.has(expr)) return _resolved.get(expr);
     if (!_probe) {
         _probe = document.createElement("span");
         _probe.style.cssText = "position:absolute;left:-99999px;top:0;width:0;height:0;visibility:hidden;pointer-events:none;";
@@ -57,8 +63,9 @@ export function resolveColor(expr) {
     }
     _probe.style.color = "";
     _probe.style.color = expr;
-    const v = getComputedStyle(_probe).color;   // -> "rgb(r,g,b)" | "rgba(r,g,b,a)"
-    if (!v || v === "rgba(0, 0, 0, 0)" || /,\s*0\)$/.test(v)) return null;
+    let v = getComputedStyle(_probe).color;   // -> "rgb(r,g,b)" | "rgba(r,g,b,a)"
+    if (!v || v === "rgba(0, 0, 0, 0)" || /,\s*0\)$/.test(v)) v = null;
+    _resolved.set(expr, v);
     return v;
 }
 
