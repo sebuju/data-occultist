@@ -111,8 +111,10 @@ function navColor(id, groupMode) {
 }
 function cssVarColor(name) { return getComputedStyle(document.body).getPropertyValue(name).trim() || "#4da3ff"; }
 
-// All arrows released: pan to the candidate (no selection). The live arrow LOCKS in place (so a
-// mid-pan re-press stacks a new one over it); each locked arrow then dies on its OWN timer.
+// All arrows released: pan to the candidate AND select it (node-mode only). The live arrow LOCKS
+// in place (so a mid-pan re-press stacks a new one over it); each locked arrow then dies on its OWN
+// timer. Selecting the landed node keeps arrow-nav alive via the `navSel` branch of the navIdle
+// gate below (selection == nav cursor), so a run of arrows walks-and-selects hop by hop.
 function commitNav() {
     const target = navTarget, gm = navGroupMode; navTarget = null;
     const rect = target && navRectOf(target, gm);
@@ -120,6 +122,7 @@ function commitNav() {
         navAnchor = target; navAnchorMode = gm;
         lockLive();                                            // this hop's arrow -> its own death timer
         panZoomToRect(rect, { fit: false });                   // redirects a pan already in flight (no stop)
+        if (!gm) focusNode(target);                            // node-mode: select the node we landed on
     } else drawLive(null);
 }
 
@@ -191,10 +194,12 @@ registerKey({
         zoomStep(ev.key === "PageUp" ? 1 : -1);
         ev.preventDefault(); return;
     }
-    // Arrow keys + Enter navigate the node cloud, but ONLY when nothing is selected — a selected
-    // node hands the keyboard to WASD-nudge + Tab. Arrows pan to the neighbouring node WITHOUT
-    // selecting; Enter selects whichever node is centre-most to the camera.
-    const navIdle = plain && !overlays.get(activeOverlayKey) && !selected.size && !selectedNodeId;
+    // Arrow keys + Enter navigate the node cloud. Active when nothing is selected, OR when the sole
+    // selection IS the nav cursor (`navSel`) — i.e. it was selected BY a prior arrow hop, so a run
+    // of arrows keeps walking-and-selecting instead of flipping to WASD-nudge on the first hop. A
+    // CLICK-selected node (selectedNodeId !== navAnchor) still hands the keyboard to WASD + Tab.
+    const navSel = !navAnchorMode && selectedNodeId && selectedNodeId === navAnchor;
+    const navIdle = plain && !overlays.get(activeOverlayKey) && !selected.size && (!selectedNodeId || navSel);
     if (navIdle && ev.key === "Enter") {
         const c = viewportCenterWorld();
         const anchor = centreMost(nodeCentres(), c.x, c.y);
