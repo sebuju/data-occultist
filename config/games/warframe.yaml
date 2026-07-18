@@ -40,21 +40,7 @@ windows:
     stability_min: 0
   - id: rof_3
     type: number
-    rules:
-    - when: no_digit
-      then: drop
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
-    - when: below
-      then: drop
-      arg: '0'
-    - when: above
-      then: drop
-      arg: '200'
-    - when: always
-      then: floor
+    rules: []
     min_confidence: 0.8
     isolate: false
     glyph_check: false
@@ -70,21 +56,7 @@ windows:
       min_frac: 0.02
   - id: rof_5
     type: number
-    rules:
-    - when: no_digit
-      then: drop
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
-    - when: below
-      then: drop
-      arg: '0'
-    - when: above
-      then: drop
-      arg: '200'
-    - when: always
-      then: floor
+    rules: []
     min_confidence: 0.8
     isolate: false
     glyph_check: false
@@ -100,21 +72,7 @@ windows:
       min_frac: 0.02
   - id: rof_7
     type: number
-    rules:
-    - when: no_digit
-      then: drop
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
-    - when: below
-      then: drop
-      arg: '0'
-    - when: above
-      then: drop
-      arg: '200'
-    - when: always
-      then: floor
+    rules: []
     min_confidence: 0.8
     isolate: false
     glyph_check: false
@@ -130,21 +88,7 @@ windows:
       min_frac: 0.02
   - id: rof_9
     type: number
-    rules:
-    - when: no_digit
-      then: drop
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
-    - when: below
-      then: drop
-      arg: '0'
-    - when: above
-      then: drop
-      arg: '200'
-    - when: always
-      then: floor
+    rules: []
     min_confidence: 0.8
     isolate: false
     glyph_check: false
@@ -160,26 +104,17 @@ windows:
       min_frac: 0.02
   - id: rof_90
     type: text
-    rules:
-    - when: no_letter
-      then: drop
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: extract
-      strategy: alphanum_before
-      sep: '['
+    rules: []
     min_confidence: 0.8
     isolate: false
     glyph_check: false
     stability_reads: 3
     stability_min: 2
     preprocess:
-      mode: none
-      colors: []
-      tolerance: 60
+      mode: color
+      colors:
+      - '#e9eaee'
+      tolerance: 30
       scale: 1.0
       min_frac: 0.0
   - id: rof_93
@@ -265,7 +200,7 @@ windows:
       w: 0.08550724637681151
       h: 0.02904006453347674
     field: rof_90
-    enabled: false
+    enabled: true
   - id: ro_92
     box:
       x: 0.834118350116527
@@ -1320,16 +1255,7 @@ windows:
     stability_min: 0
   - id: rof_9
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1343,16 +1269,7 @@ windows:
       min_frac: 0.0
   - id: rof_2
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1366,16 +1283,7 @@ windows:
       min_frac: 0.0
   - id: rof_4
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.6
     isolate: false
     glyph_check: false
@@ -1389,16 +1297,7 @@ windows:
       min_frac: 0.0
   - id: rof_6
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.6
     isolate: false
     glyph_check: false
@@ -1412,16 +1311,7 @@ windows:
       min_frac: 0.0
   - id: rof_8
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1435,16 +1325,7 @@ windows:
       min_frac: 0.0
   - id: rof_10
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1458,16 +1339,7 @@ windows:
       min_frac: 0.0
   - id: rof_12
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1481,16 +1353,7 @@ windows:
       min_frac: 0.0
   - id: rof_14
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1504,16 +1367,7 @@ windows:
       min_frac: 0.0
   - id: rof_16
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1527,16 +1381,7 @@ windows:
       min_frac: 0.0
   - id: rof_18
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1550,16 +1395,7 @@ windows:
       min_frac: 0.0
   - id: rof_20
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1573,16 +1409,7 @@ windows:
       min_frac: 0.0
   - id: rof_22
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
-    - when: always
-      then: dictionary
-      dict_mode: correct
-      dict_id: wiki
-      fuzzy: 0.82
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1596,11 +1423,7 @@ windows:
       min_frac: 0.0
   - id: rof_2_split1
     type: number
-    rules:
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1614,11 +1437,7 @@ windows:
       min_frac: 0.0
   - id: rof_4_split1
     type: number
-    rules:
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
+    rules: []
     min_confidence: 0.65
     isolate: false
     glyph_check: false
@@ -1632,11 +1451,7 @@ windows:
       min_frac: 0.0
   - id: rof_6_split1
     type: number
-    rules:
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
+    rules: []
     min_confidence: 0.6
     isolate: false
     glyph_check: false
@@ -1650,11 +1465,7 @@ windows:
       min_frac: 0.0
   - id: rof_8_split1
     type: number
-    rules:
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1668,11 +1479,7 @@ windows:
       min_frac: 0.0
   - id: rof_10_split1
     type: number
-    rules:
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1686,11 +1493,7 @@ windows:
       min_frac: 0.0
   - id: rof_12_split1
     type: number
-    rules:
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1704,11 +1507,7 @@ windows:
       min_frac: 0.0
   - id: rof_14_split1
     type: number
-    rules:
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1722,11 +1521,7 @@ windows:
       min_frac: 0.0
   - id: rof_16_split1
     type: number
-    rules:
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1740,11 +1535,7 @@ windows:
       min_frac: 0.0
   - id: rof_18_split1
     type: number
-    rules:
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1758,11 +1549,7 @@ windows:
       min_frac: 0.0
   - id: rof_2_split2
     type: number
-    rules:
-    - when: always
-      then: extract
-      strategy: number
-      sep: /
+    rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
@@ -1776,11 +1563,7 @@ windows:
       min_frac: 0.0
   - id: rof_4_split2
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
+    rules: []
     min_confidence: 0.6
     isolate: false
     glyph_check: false
@@ -1794,11 +1577,7 @@ windows:
       min_frac: 0.0
   - id: rof_6_split2
     type: text
-    rules:
-    - when: always
-      then: fold
-    - when: always
-      then: lowercase
+    rules: []
     min_confidence: 0.6
     isolate: false
     glyph_check: false
@@ -2092,17 +1871,7 @@ windows:
       min_frac: 0.0
   - id: rof_88
     type: text
-    rules:
-    - when: has_letter
-      then: extract
-      strategy: text_after
-      sep: /
-    - when: always
-      then: extract
-      strategy: text_before
-      sep: '['
-    - when: always
-      then: lowercase
+    rules: []
     min_confidence: 0.7
     isolate: false
     glyph_check: false
@@ -4804,91 +4573,37 @@ triggers:
   - toast_2
   enabled: true
   ready_field: ''
-- id: ab_trigger_1
+- id: trigger
   kind: on_register
   interval_s: 300.0
-  watch: []
+  watch:
+  - relics_select
   readout_watch: []
   readout_op: gte
   readout_value: 0.0
   register_watch:
-  - ability_register
+  - register
   register_conds:
-    ability_register:
+    register:
     - key: ability_1_cd
       when: lt
       value: 3.0
-      value2: 3.0
-  register_logic: or
-  targets:
-  - bob
-  - clear_1
-  enabled: true
-  throttle_ms: 3000.0
-  ready_field: ''
-- id: ab_trigger_2
-  kind: on_register
-  interval_s: 300.0
-  watch: []
-  readout_watch: []
-  readout_op: gte
-  readout_value: 0.0
-  register_watch:
-  - ability_register
-  register_conds:
-    ability_register:
+      value2: 0.0
     - key: ability_2_cd
       when: lt
       value: 3.0
-      value2: 3.0
-  register_logic: or
-  targets:
-  - bob
-  - clear_2
-  enabled: true
-  throttle_ms: 3000.0
-  ready_field: ''
-- id: ab_trigger_3
-  kind: on_register
-  interval_s: 300.0
-  watch: []
-  readout_watch: []
-  readout_op: gte
-  readout_value: 0.0
-  register_watch:
-  - ability_register
-  register_conds:
-    ability_register:
+      value2: 0.0
     - key: ability_3_cd
       when: lt
       value: 3.0
-      value2: 3.0
-  register_logic: or
-  targets:
-  - bob
-  - clear_3
-  enabled: true
-  throttle_ms: 3000.0
-  ready_field: ''
-- id: ab_trigger_4
-  kind: on_register
-  interval_s: 300.0
-  watch: []
-  readout_watch: []
-  readout_op: gte
-  readout_value: 0.0
-  register_watch:
-  - ability_register
-  register_conds:
-    ability_register:
+      value2: 0.0
     - key: ability_4_cd
-      when: lt
+      when: eq
       value: 3.0
-      value2: 3.0
+      value2: 0.0
   register_logic: or
   targets:
   - bob
-  - clear_4
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
@@ -5229,109 +4944,193 @@ sounds:
     crush: 11
   volume: 0.7
   enabled: true
-actions:
-- id: clear_1
-  action: clear
-  sources:
-  - register:ability_register
-  slots:
-    ability_register:
-    - ability_1_cd
-  dest: ''
-  enabled: true
-- id: clear_2
-  action: clear
-  sources:
-  - register:ability_register
-  slots:
-    ability_register:
-    - ability_2_cd
-  dest: ''
-  enabled: true
-- id: clear_3
-  action: clear
-  sources:
-  - register:ability_register
-  slots:
-    ability_register:
-    - ability_3_cd
-  dest: ''
-  enabled: true
-- id: clear_4
-  action: clear
-  sources:
-  - register:ability_register
-  slots:
-    ability_register:
-    - ability_4_cd
-  dest: ''
-  enabled: true
+actions: []
 registers:
 - id: loadout_register
   sources:
-  - readout:slot_arcane_1
-  - readout:slot_4_name
-  - readout:slot_8_name
-  - readout:slot_1_name
-  - readout:slot_2_name
-  - readout:slot_3_name
-  - readout:slot_5_name
-  - readout:slot_6_name
-  - readout:slot_7_name
-  - readout:slot_aura_name
-  - readout:slot_exilus_name
-  - readout:slot_arcane_2
-  - readout:slot_1_drain
-  - readout:slot_aura_drain
-  - readout:slot_2_drain
-  - readout:slot_3_drain
-  - readout:slot_4_drain
-  - readout:slot_5_drain
-  - readout:slot_6_drain
-  - readout:slot_7_drain
-  - readout:slot_8_drain
-  - readout:slot_exilus_drain
-  - readout:mod_drain_max
-  - readout:mod_drain_remaining
-  - readout:slot_8_school
-  - readout:slot_7_school
-  - readout:slot_6_school
-  - readout:slot_4_school
-  - readout:slot_3_school
-  - readout:slot_2_school
-  - readout:slot_1_school
-  - readout:slot_5_school
-  - readout:slot_aura_school
-  - readout:slot_exilus_school
-  - readout:slot_1_po
-  - readout:slot_2_po
-  - readout:slot_3_po
-  - readout:slot_4_po
-  - readout:slot_5_po
-  - readout:slot_6_po
-  - readout:slot_7_po
-  - readout:slot_8_po
-  - readout:slot_aura_po
-  - readout:slot_exilus_po
-  - readout:warframe_name
+  - process:proc_slot_name
+  - process:proc_slot_drain
+  - process:proc_slot_school
+  - process:proc_slot_po
+  - process:proc_arcane
+  - process:proc_mod_drain
+  - process:proc_warframe_name
   title: ''
   enabled: true
   capacity: 1
   aggregate: ''
   ignore_empty: false
   persist: loadout
-- id: ability_register
+- id: register
   sources:
-  - readout:ability_1_cd
-  - readout:ability_2_cd
-  - readout:ability_3_cd
-  - readout:ability_4_cd
+  - process:process_renamed
   title: ''
   enabled: true
   capacity: 3
   aggregate: stable
-  ignore_empty: true
+  ignore_empty: false
   persist: ''
+- id: register_2
+  sources:
+  - process:proc_live_warframe_name
+  title: ''
+  enabled: true
+  capacity: 1
+  aggregate: ''
+  ignore_empty: false
+  persist: ''
+processes:
+- id: process_renamed
+  type: number
+  sources:
+  - ref: readout:ability_1_cd
+  - ref: readout:ability_2_cd
+  - ref: readout:ability_3_cd
+  - ref: readout:ability_4_cd
+  rules:
+  - when: no_digit
+    then: drop
+  - when: always
+    then: extract
+    strategy: number
+    sep: /
+  - when: always
+    then: decimal
+  - when: below
+    then: drop
+    arg: '0'
+  - when: above
+    then: drop
+    arg: '200'
+  enabled: true
+- id: proc_slot_name
+  type: text
+  sources:
+  - ref: readout:slot_1_name
+  - ref: readout:slot_2_name
+  - ref: readout:slot_3_name
+  - ref: readout:slot_4_name
+  - ref: readout:slot_5_name
+  - ref: readout:slot_6_name
+  - ref: readout:slot_7_name
+  - ref: readout:slot_8_name
+  - ref: readout:slot_aura_name
+  - ref: readout:slot_exilus_name
+  rules:
+  - when: always
+    then: fold
+  - when: always
+    then: lowercase
+  - when: always
+    then: dictionary
+    dict_mode: correct
+    dict_id: wiki
+    fuzzy: 0.82
+  enabled: true
+- id: proc_slot_drain
+  type: number
+  sources:
+  - ref: readout:slot_1_drain
+  - ref: readout:slot_2_drain
+  - ref: readout:slot_3_drain
+  - ref: readout:slot_4_drain
+  - ref: readout:slot_5_drain
+  - ref: readout:slot_6_drain
+  - ref: readout:slot_7_drain
+  - ref: readout:slot_8_drain
+  - ref: readout:slot_aura_drain
+  - ref: readout:slot_exilus_drain
+  rules:
+  - when: always
+    then: extract
+    strategy: number
+    sep: /
+  enabled: true
+- id: proc_slot_school
+  type: text
+  sources:
+  - ref: readout:slot_1_school
+  - ref: readout:slot_2_school
+  - ref: readout:slot_3_school
+  - ref: readout:slot_4_school
+  - ref: readout:slot_5_school
+  - ref: readout:slot_6_school
+  - ref: readout:slot_7_school
+  - ref: readout:slot_8_school
+  - ref: readout:slot_aura_school
+  - ref: readout:slot_exilus_school
+  rules: []
+  enabled: true
+- id: proc_slot_po
+  type: text
+  sources:
+  - ref: readout:slot_1_po
+  - ref: readout:slot_2_po
+  - ref: readout:slot_3_po
+  - ref: readout:slot_4_po
+  - ref: readout:slot_5_po
+  - ref: readout:slot_6_po
+  - ref: readout:slot_7_po
+  - ref: readout:slot_8_po
+  - ref: readout:slot_aura_po
+  - ref: readout:slot_exilus_po
+  rules: []
+  enabled: true
+- id: proc_arcane
+  type: text
+  sources:
+  - ref: readout:slot_arcane_1
+  - ref: readout:slot_arcane_2
+  rules:
+  - when: always
+    then: fold
+  - when: always
+    then: lowercase
+  - when: always
+    then: dictionary
+    dict_mode: correct
+    dict_id: wiki
+    fuzzy: 0.82
+  enabled: true
+- id: proc_mod_drain
+  type: text
+  sources:
+  - ref: readout:mod_drain_max
+  - ref: readout:mod_drain_remaining
+  rules:
+  - when: always
+    then: fold
+  - when: always
+    then: lowercase
+  enabled: true
+- id: proc_warframe_name
+  type: text
+  sources:
+  - ref: readout:warframe_name
+  rules:
+  - when: has_letter
+    then: extract
+    strategy: text_after
+    sep: /
+  - when: always
+    then: extract
+    strategy: text_before
+    sep: '['
+  - when: always
+    then: lowercase
+  enabled: true
+- id: proc_live_warframe_name
+  type: text
+  sources:
+  - ref: readout:warframe_name_live
+  rules:
+  - when: empty
+    then: drop
+  - when: always
+    then: fold
+  - when: always
+    then: lowercase
+  enabled: true
 dictionaries:
 - id: wiki
   enabled: true
@@ -5830,7 +5629,13 @@ layout:
     ds:relics_refinement:
       x: 6200.0
       y: -4200.0
+      w: 380.0
+      h: 220.0
       collapsed: false
+      custW: true
+      custH: false
+      softW: true
+      softH: true
     sub:relics_refinement_with_contents:
       x: 6200.0
       y: -6380.0
@@ -5967,8 +5772,8 @@ layout:
       custH: true
       softH: true
     sound:bob:
-      x: -380.0
-      y: -6240.0
+      x: -1180.0
+      y: -5480.0
       w: 300.0
       h: 420.0
       collapsed: false
@@ -5992,16 +5797,16 @@ layout:
       collapsed: false
     win:arsenal_warframe:
       x: 11280.0
-      y: -6160.0
-      w: 1100.0
-      h: 1140.0
+      y: -6260.0
+      w: 1080.0
+      h: 1120.0
       collapsed: false
       custW: true
       custH: false
       softW: false
       softH: false
     item:arsenal_warframe:mod:
-      x: 11980.0
+      x: 11940.0
       y: -4720.0
       w: 400.0
       h: 760.0
@@ -6011,7 +5816,7 @@ layout:
       softW: false
       softH: false
     fld:arsenal_warframe:mod:name:
-      x: 12140.0
+      x: 12100.0
       y: -3920.0
       w: 240.0
       h: 321.0
@@ -6020,7 +5825,7 @@ layout:
       custH: false
       softW: true
     fld:arsenal_warframe:mod:drain:
-      x: 11860.0
+      x: 11820.0
       y: -3920.0
       w: 240.0
       h: 321.0
@@ -6029,7 +5834,7 @@ layout:
       custH: false
       softW: true
     fld:arsenal_warframe:mod:rank:
-      x: 11580.0
+      x: 11540.0
       y: -3920.0
       w: 240.0
       h: 320.0
@@ -6048,8 +5853,8 @@ layout:
       custH: false
       softW: false
     ro:arsenal_warframe:slot_arcane_1:
-      x: 12600.0
-      y: -7600.0
+      x: 12660.0
+      y: -7200.0
       w: 320.0
       h: 540.0
       collapsed: false
@@ -6057,8 +5862,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_arcane_2:
-      x: 12600.0
-      y: -7000.0
+      x: 13020.0
+      y: -7200.0
       w: 320.0
       h: 540.0
       collapsed: false
@@ -6082,49 +5887,39 @@ layout:
       custW: false
       custH: true
       softH: true
-    ro:live_game_window:ability_1_cd:
-      x: -3840.0
-      y: -6240.0
-      w: 360.0
-      h: 700.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
     ro:live_game_window:ability_2_cd:
-      x: -2740.0
+      x: -2940.0
       y: -6240.0
       w: 360.0
-      h: 700.0
+      h: 586.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     ro:live_game_window:ability_3_cd:
-      x: -3840.0
-      y: -5480.0
+      x: -3760.0
+      y: -5600.0
       w: 360.0
-      h: 700.0
+      h: 586.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     ro:live_game_window:ability_4_cd:
-      x: -2740.0
-      y: -5480.0
+      x: -2940.0
+      y: -5600.0
       w: 360.0
-      h: 700.0
+      h: 586.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     ro:arsenal_warframe:mod_drain_remaining:
-      x: 13480.0
-      y: -6980.0
+      x: 13920.0
+      y: -7200.0
       w: 320.0
       h: 540.0
       collapsed: false
@@ -6133,8 +5928,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:mod_drain_max:
-      x: 13840.0
-      y: -6980.0
+      x: 14280.0
+      y: -7200.0
       w: 320.0
       h: 540.0
       collapsed: false
@@ -6153,7 +5948,7 @@ layout:
       softW: false
       softH: false
     ro:arsenal_warframe:slot_5_name:
-      x: 9280.0
+      x: 9080.0
       y: -4240.0
       w: 520.0
       h: 660.0
@@ -6163,7 +5958,7 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_6_name:
-      x: 10280.0
+      x: 10180.0
       y: -4240.0
       w: 520.0
       h: 660.0
@@ -6173,7 +5968,7 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_7_name:
-      x: 12580.0
+      x: 12700.0
       y: -4240.0
       w: 520.0
       h: 660.0
@@ -6183,7 +5978,7 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_8_name:
-      x: 13580.0
+      x: 13800.0
       y: -4240.0
       w: 520.0
       h: 660.0
@@ -6193,8 +5988,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_4_name:
-      x: 13580.0
-      y: -5680.0
+      x: 13800.0
+      y: -5780.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6203,8 +5998,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_3_name:
-      x: 12580.0
-      y: -5680.0
+      x: 12700.0
+      y: -5780.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6213,8 +6008,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_2_name:
-      x: 10280.0
-      y: -5680.0
+      x: 10180.0
+      y: -5780.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6223,8 +6018,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_1_name:
-      x: 9280.0
-      y: -5680.0
+      x: 9080.0
+      y: -5780.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6233,8 +6028,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_aura_name:
-      x: 9280.0
-      y: -7120.0
+      x: 9080.0
+      y: -7340.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6243,8 +6038,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_exilus_name:
-      x: 10280.0
-      y: -7120.0
+      x: 10180.0
+      y: -7340.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6253,64 +6048,68 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_aura_drain:
-      x: 9280.0
-      y: -7600.0
+      x: 9080.0
+      y: -7820.0
       w: 240.0
-      h: 440.0
+      h: 424.0
       collapsed: false
       custW: true
-      custH: true
+      custH: false
+      softW: true
       softH: true
     ro:arsenal_warframe:slot_aura_school:
-      x: 9560.0
-      y: -7600.0
+      x: 9360.0
+      y: -7820.0
       w: 240.0
-      h: 440.0
+      h: 424.0
       collapsed: false
       custW: true
-      custH: true
+      custH: false
+      softW: true
       softH: true
     ro:arsenal_warframe:slot_aura_po:
-      x: 9840.0
-      y: -7600.0
+      x: 9640.0
+      y: -7820.0
       w: 240.0
-      h: 440.0
+      h: 424.0
       collapsed: false
       custW: true
-      custH: true
+      custH: false
       softW: true
       softH: true
     ro:arsenal_warframe:slot_exilus_drain:
-      x: 10280.0
-      y: -7600.0
+      x: 10180.0
+      y: -7820.0
       w: 240.0
-      h: 440.0
+      h: 424.0
       collapsed: false
       custW: true
-      custH: true
+      custH: false
+      softW: true
       softH: true
     ro:arsenal_warframe:slot_exilus_school:
-      x: 10560.0
-      y: -7600.0
+      x: 10460.0
+      y: -7820.0
       w: 240.0
-      h: 440.0
+      h: 424.0
       collapsed: false
       custW: true
-      custH: true
+      custH: false
+      softW: true
       softH: true
     ro:arsenal_warframe:slot_exilus_po:
-      x: 10840.0
-      y: -7600.0
+      x: 10740.0
+      y: -7820.0
       w: 240.0
-      h: 440.0
+      h: 424.0
       collapsed: false
       custW: true
-      custH: true
+      custH: false
       softW: true
       softH: true
     ro:arsenal_warframe:slot_1_drain:
-      x: 9280.0
-      y: -6160.0
+      x: 9080.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6318,8 +6117,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_1_school:
-      x: 9560.0
-      y: -6160.0
+      x: 9360.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6327,8 +6126,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_1_po:
-      x: 9840.0
-      y: -6160.0
+      x: 9640.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6337,8 +6136,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_2_drain:
-      x: 10280.0
-      y: -6160.0
+      x: 10180.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6346,8 +6145,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_2_po:
-      x: 10840.0
-      y: -6160.0
+      x: 10740.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6356,8 +6155,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_3_drain:
-      x: 12580.0
-      y: -6160.0
+      x: 12720.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6365,8 +6164,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_3_po:
-      x: 13140.0
-      y: -6160.0
+      x: 13260.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6375,8 +6174,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_4_drain:
-      x: 13580.0
-      y: -6160.0
+      x: 13800.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6384,8 +6183,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_4_po:
-      x: 14140.0
-      y: -6160.0
+      x: 14360.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6394,7 +6193,7 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_8_drain:
-      x: 13580.0
+      x: 13800.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6403,7 +6202,7 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_8_po:
-      x: 14140.0
+      x: 14360.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6413,7 +6212,7 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_7_drain:
-      x: 12580.0
+      x: 12720.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6422,7 +6221,7 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_7_po:
-      x: 13140.0
+      x: 13260.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6432,7 +6231,7 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_6_drain:
-      x: 10280.0
+      x: 10180.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6441,7 +6240,7 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_5_drain:
-      x: 9280.0
+      x: 9080.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6450,8 +6249,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_2_school:
-      x: 10560.0
-      y: -6160.0
+      x: 10460.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6460,8 +6259,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_3_school:
-      x: 12860.0
-      y: -6160.0
+      x: 12980.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6469,8 +6268,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_4_school:
-      x: 13860.0
-      y: -6160.0
+      x: 14080.0
+      y: -6260.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6478,7 +6277,7 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_8_school:
-      x: 13860.0
+      x: 14080.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6487,7 +6286,7 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_7_school:
-      x: 12860.0
+      x: 12980.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6496,7 +6295,7 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_6_school:
-      x: 10560.0
+      x: 10460.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6505,7 +6304,7 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_5_school:
-      x: 9560.0
+      x: 9360.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6514,7 +6313,7 @@ layout:
       custH: true
       softH: true
     ds:dataset:
-      x: 11560.0
+      x: 11540.0
       y: -4720.0
       w: 380.0
       h: 189.0
@@ -6533,8 +6332,8 @@ layout:
       softW: true
       softH: true
     ds:loadout:
-      x: 12020.0
-      y: -7600.0
+      x: 11640.0
+      y: -9260.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6638,10 +6437,11 @@ layout:
       x: 10120.0
       y: -2500.0
       w: 360.0
-      h: 760.0
+      h: 840.0
       collapsed: false
       custW: false
-      custH: true
+      custH: false
+      softW: true
       softH: true
     producer:overframe_build_mods:
       x: 11800.0
@@ -6694,7 +6494,7 @@ layout:
       x: 12460.0
       y: -2020.0
       w: 360.0
-      h: 1220.0
+      h: 1240.0
       collapsed: false
       custW: false
       custH: true
@@ -6731,16 +6531,86 @@ layout:
       x: 13720.0
       y: -2020.0
       w: 360.0
-      h: 1220.0
+      h: 1240.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     register:loadout_register:
-      x: 11280.0
-      y: -7360.0
+      x: 11260.0
+      y: -9020.0
       w: 1100.0
       h: 860.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    process:proc_slot_name:
+      x: 11420.0
+      y: -7120.0
+      w: 320.0
+      h: 440.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    process:proc_slot_drain:
+      x: 11940.0
+      y: -7760.0
+      w: 320.0
+      h: 440.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    process:proc_slot_school:
+      x: 11940.0
+      y: -7120.0
+      w: 320.0
+      h: 440.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    process:proc_slot_po:
+      x: 11420.0
+      y: -7760.0
+      w: 320.0
+      h: 440.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    process:proc_arcane:
+      x: 13020.0
+      y: -7540.0
+      w: 320.0
+      h: 260.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    process:proc_mod_drain:
+      x: 14160.0
+      y: -7540.0
+      w: 440.0
+      h: 240.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    process:proc_warframe_name:
+      x: 14160.0
+      y: -7820.0
+      w: 440.0
+      h: 240.0
       collapsed: false
       custW: true
       custH: true
@@ -6767,7 +6637,7 @@ layout:
       x: 12880.0
       y: -2020.0
       w: 360.0
-      h: 1220.0
+      h: 1240.0
       collapsed: false
       custW: true
       custH: true
@@ -6776,13 +6646,13 @@ layout:
       x: 13300.0
       y: -2020.0
       w: 360.0
-      h: 1220.0
+      h: 1240.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     ro:arsenal_warframe:slot_5_po:
-      x: 9840.0
+      x: 9640.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6792,7 +6662,7 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_6_po:
-      x: 10840.0
+      x: 10740.0
       y: -4720.0
       w: 240.0
       h: 440.0
@@ -6847,8 +6717,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:warframe_name:
-      x: 13120.0
-      y: -6980.0
+      x: 13560.0
+      y: -7200.0
       w: 320.0
       h: 540.0
       collapsed: false
@@ -6856,45 +6726,35 @@ layout:
       custH: true
       softW: true
       softH: true
-    rohist:live_game_window:ability_1_cd:
-      x: -3400.0
-      y: -6240.0
-      w: 580.0
-      h: 700.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
     rohist:live_game_window:ability_2_cd:
-      x: -2340.0
+      x: -2540.0
       y: -6240.0
-      w: 580.0
-      h: 700.0
+      w: 340.0
+      h: 580.0
       collapsed: false
       custW: true
       custH: true
-      softW: true
+      softW: false
       softH: true
     rohist:live_game_window:ability_3_cd:
-      x: -3400.0
-      y: -5480.0
-      w: 580.0
-      h: 700.0
+      x: -3360.0
+      y: -5600.0
+      w: 340.0
+      h: 580.0
       collapsed: false
       custW: true
       custH: true
-      softW: true
+      softW: false
       softH: true
     rohist:live_game_window:ability_4_cd:
-      x: -2340.0
-      y: -5480.0
-      w: 580.0
-      h: 700.0
+      x: -2540.0
+      y: -5600.0
+      w: 340.0
+      h: 580.0
       collapsed: false
       custW: true
       custH: true
-      softW: true
+      softW: false
       softH: true
     prodhist:wf_market_relic:
       x: 1940.0
@@ -6939,20 +6799,10 @@ layout:
       y: -3840.0
       collapsed: false
     ro:live_game_window:warframe_name_live:
-      x: -2740.0
-      y: -4700.0
+      x: -2280.0
+      y: -4620.0
       w: 360.0
-      h: 620.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
-    rohist:live_game_window:warframe_name_live:
-      x: -2340.0
-      y: -4700.0
-      w: 800.0
-      h: 620.0
+      h: 420.0
       collapsed: false
       custW: true
       custH: true
@@ -6996,142 +6846,95 @@ layout:
       custH: true
       softW: true
       softH: true
-    register:ability_register:
-      x: -1380.0
+    register:register:
+      x: -2160.0
+      y: -5860.0
+      w: 520.0
+      h: 340.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    process:process_renamed:
+      x: -2160.0
       y: -6240.0
-      w: 480.0
-      h: 260.0
+      w: 340.0
+      h: 340.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    reghist:register:
+      x: -1600.0
+      y: -5860.0
+      w: 720.0
+      h: 340.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: false
-    reghist:ability_register:
-      x: -860.0
+    prochist:process_renamed:
+      x: -1780.0
       y: -6240.0
-      w: 440.0
-      h: 360.0
+      w: 900.0
+      h: 340.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: false
+    ro:live_game_window:ability_1_cd:
+      x: -3760.0
+      y: -6240.0
+      w: 360.0
+      h: 586.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
-    trigger:ab_trigger_1:
-      x: -1380.0
-      y: -5660.0
-      w: 500.0
-      h: 280.0
+    rohist:live_game_window:ability_1_cd:
+      x: -3360.0
+      y: -6240.0
+      w: 340.0
+      h: 580.0
       collapsed: false
       custW: true
       custH: true
-      softW: true
+      softW: false
       softH: true
-    action:clear_1:
-      x: -20.0
-      y: -5660.0
-      w: 240.0
-      h: 163.0
+    trigger:trigger:
+      x: -1600.0
+      y: -5480.0
+      w: 380.0
+      h: 305.0
       collapsed: false
       custW: true
       custH: false
       softW: true
-    trigger:ab_trigger_2:
-      x: -1380.0
-      y: -5340.0
-      w: 500.0
-      h: 280.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
-    trigger:ab_trigger_3:
-      x: -1380.0
-      y: -5020.0
-      w: 500.0
-      h: 280.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
-    trigger:ab_trigger_4:
-      x: -1380.0
-      y: -4700.0
-      w: 500.0
-      h: 280.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
-    action:clear_2:
-      x: -20.0
-      y: -5340.0
-      w: 240.0
-      h: 163.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-    action:clear_3:
-      x: -20.0
-      y: -5020.0
-      w: 240.0
-      h: 163.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-    action:clear_4:
-      x: -20.0
-      y: -4700.0
-      w: 240.0
-      h: 163.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-    hist:ab_trigger_1:
-      x: -800.0
-      y: -5660.0
-      w: 720.0
+    register:register_2:
+      x: -1880.0
+      y: -4960.0
+      w: 400.0
       h: 280.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: false
-    hist:ab_trigger_2:
-      x: -800.0
-      y: -5340.0
-      w: 720.0
+    process:proc_live_warframe_name:
+      x: -2280.0
+      y: -4960.0
+      w: 360.0
       h: 280.0
       collapsed: false
       custW: true
       custH: true
       softW: true
-      softH: false
-    hist:ab_trigger_3:
-      x: -800.0
-      y: -5020.0
-      w: 720.0
-      h: 280.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: false
-    hist:ab_trigger_4:
-      x: -800.0
-      y: -4700.0
-      w: 720.0
-      h: 280.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: false
+      softH: true
   tables:
     warframe:ds:master:
       sorts:
@@ -7523,44 +7326,44 @@ layout:
       sorts: []
     rohist:live_game_window:ability_1_cd:
       widths:
-        when: 154
-        raw: 43
+        when: 151
+        raw: 40
         empty→drop: 36
         always→extract: 43
         always→floor: 43
-        confidence: 43
-        consensus: 48
+        confidence: 40
+        consensus: 40
         no_digit→drop: 43
         below→drop: 43
         above→drop: 43
-        value: 43
+        value: 40
       sorts: []
     rohist:live_game_window:ability_2_cd:
       widths:
-        when: 154
-        raw: 36
+        when: 150
+        raw: 39
         always→extract: 43
         always→floor: 43
         empty→drop: 36
-        consensus: 48
-        confidence: 43
+        consensus: 44
+        confidence: 39
         no_digit→drop: 43
         below→drop: 43
         above→drop: 43
-        value: 43
+        value: 39
       sorts:
       - col: when
         dir: -1
     rohist:live_game_window:ability_3_cd:
       widths:
-        when: 154
-        raw: 43
+        when: 151
+        raw: 40
         always→extract: 43
         always→floor: 43
-        value: 43
+        value: 40
         empty→drop: 36
-        confidence: 43
-        consensus: 48
+        confidence: 40
+        consensus: 40
         no_digit→drop: 43
         below→drop: 43
         above→drop: 43
@@ -7570,14 +7373,14 @@ layout:
     rohist:live_game_window:ability_4_cd:
       sorts: []
       widths:
-        when: 154
-        raw: 43
+        when: 150
+        raw: 39
         no_digit→drop: 43
         always→extract: 43
         always→floor: 43
-        value: 43
-        confidence: 43
-        consensus: 48
+        value: 39
+        confidence: 39
+        consensus: 44
         below→drop: 43
         above→drop: 43
       order: []
@@ -7608,11 +7411,13 @@ layout:
         value: 82
         consensus: 37
     reghist:register:
-      sorts:
-      - col: when
-        dir: -1
+      sorts: []
       widths:
-        when: 147
+        when: 189
+        key: 130
+        value: 78
+        ring: 78
+        overwritten: 78
     reghist:ability_register:
       widths:
         when: 157
@@ -7659,6 +7464,17 @@ layout:
       sorts:
       - col: when
         dir: -1
+    prochist:process_renamed:
+      widths:
+        key: 113
+        input: 61
+        no_digit→drop: 61
+        always→extract: 61
+        always→decimal: 61
+        below→drop: 61
+        above→drop: 61
+        output: 61
+        when: 172
   open_images:
   - atlas
   - live_game_window
@@ -7906,14 +7722,21 @@ layout:
     - ro:live_game_window:ability_2_cd
     - ro:live_game_window:ability_3_cd
     - ro:live_game_window:ability_4_cd
-    - rohist:live_game_window:ability_1_cd
-    - rohist:live_game_window:ability_2_cd
-    - rohist:live_game_window:ability_3_cd
-    - rohist:live_game_window:ability_4_cd
     - ro:live_game_window:warframe_name_live
-    - rohist:live_game_window:warframe_name_live
     - ro:live_game_window:ro_92
     - rohist:live_game_window:ro_92
+    - process:process_renamed
+    - register:register
+    - reghist:register
+    - prochist:process_renamed
+    - rohist:live_game_window:ability_1_cd
+    - rohist:live_game_window:ability_2_cd
+    - rohist:live_game_window:ability_4_cd
+    - rohist:live_game_window:ability_3_cd
+    - sound:bob
+    - trigger:trigger
+    - register:register_2
+    - process:proc_live_warframe_name
     outline:
       color: '#e6e05a'
       style: none
@@ -8072,6 +7895,8 @@ layout:
     - ro:arsenal_warframe:mod_drain_max
     - ro:arsenal_warframe:mod_drain_remaining
     - ro:arsenal_warframe:warframe_name
+    - process:proc_mod_drain
+    - process:proc_warframe_name
     outline:
       color: '#04dc91'
       style: none
@@ -8124,6 +7949,7 @@ layout:
     members:
     - ro:arsenal_warframe:slot_arcane_1
     - ro:arsenal_warframe:slot_arcane_2
+    - process:proc_arcane
     outline:
       color: '#04dc91'
       style: none
@@ -8287,24 +8113,6 @@ layout:
     titleColor: ''
     titleAlign: left
     titlePos: tl
-  - id: group_67
-    title: warframe
-    members:
-    - win:arsenal_warframe
-    - register:loadout_register
-    - ds:loadout
-    outline:
-      color: '#04dc91'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#ff7300'
-    titleBg: '#e69a5a'
-    titleColor: '#1a0e08'
-    titleAlign: left
-    titlePos: tl
-    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
-    gate: false
   - id: group_68
     title: group_68
     members:
@@ -8352,35 +8160,27 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
-  - id: group_72
-    title: ability timer triggers
+  - id: group_71
+    title: process
     members:
-    - trigger:ab_trigger_1
-    - hist:ab_trigger_1
-    - trigger:ab_trigger_2
-    - hist:ab_trigger_2
-    - trigger:ab_trigger_3
-    - hist:ab_trigger_3
-    - trigger:ab_trigger_4
-    - hist:ab_trigger_4
-    - sound:bob
-    - action:clear_1
-    - action:clear_2
-    - action:clear_3
-    - action:clear_4
-    - register:ability_register
-    - reghist:ability_register
+    - process:proc_slot_name
+    - process:proc_slot_drain
+    - process:proc_slot_school
+    - process:proc_slot_po
+    - ds:loadout
+    - register:loadout_register
+    - win:arsenal_warframe
     outline:
-      color: '#5aa9e6'
+      color: '#262c37'
       style: none
       width: 2
       offset: 0
-    bg: '#15212d'
-    titleBg: '#5aa9e6'
-    titleColor: '#08121d'
+    bg: '#10141c'
+    titleBg: ''
+    titleColor: ''
     titleAlign: left
     titlePos: tl
-    schemeId: blue
+    gate: false
   float_windows: {}
   super_groups:
   - id: sgroup_2
@@ -8424,7 +8224,6 @@ layout:
     - group_36
     - group_51
     - group_41
-    - group_67
     - group_55
     - group_46
     - group_64
@@ -8478,7 +8277,6 @@ layout:
     title: 'live: hud'
     members:
     - group_28
-    - group_72
     outline:
       color: '#2b323f'
       style: none
@@ -8503,24 +8301,20 @@ layout:
   - vt:ds:ee_log_
   - vtd:src:source
   - vt:sub:overframe_suggestions
-  - rohist:live_game_window:ability_1_cd
-  - rohist:live_game_window:ability_2_cd
-  - rohist:live_game_window:ability_3_cd
-  - rohist:live_game_window:ability_4_cd
   - prodhist:wf_market_relic
   - vt:sub:relic_rewards_with_price
   - prev:relic_rewards
   - hist:on_new_relic_fetched
   - vt:ds:relics_offered
-  - rohist:live_game_window:warframe_name_live
   - vt:sub:relic_rewards_limit
   - vt:ds:relic_prices
   - rohist:live_game_window:ro_92
-  - hist:ab_trigger_1
-  - hist:ab_trigger_2
-  - hist:ab_trigger_3
-  - hist:ab_trigger_4
-  - reghist:ability_register
+  - reghist:register
+  - prochist:process_renamed
+  - rohist:live_game_window:ability_2_cd
+  - rohist:live_game_window:ability_4_cd
+  - rohist:live_game_window:ability_3_cd
+  - rohist:live_game_window:ability_1_cd
   sub_groups:
   - id: subgroup_5
     parent: group_22
