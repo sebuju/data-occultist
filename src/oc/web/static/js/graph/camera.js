@@ -68,9 +68,19 @@ export function fitZoom(w, h, rect) {
 export function usableViewport() {
     const rect = $("graph").getBoundingClientRect();
     let L = 0, T = 0, R = rect.width, B = rect.height;
-    for (const [, w] of floatWins()) {
-        if (w.el.hidden || w.state.collapsed) continue;
-        const r = w.el.getBoundingClientRect();
+    // Occluders that steal usable space: the floating panels, PLUS two position:fixed chrome bars
+    // that overlay #graph but aren't floatWins — the selection toolbar (top, up whenever a node is
+    // selected, i.e. during the very double-click that centres it) and the log bar's collapsed
+    // strip (bottom 25px). Clip the log bar by its .log-head child, not the whole #logbar: an OPEN
+    // log-body grows tall but draws OVER panels (z 1100), so reserve only the collapsed strip —
+    // same call floatwin.js's _botGap makes. Off-screen / display:none bars yield a non-overlapping
+    // rect and fall out at the overlap guard below (boot logbar, pretty-view where #graph is hidden).
+    const occluders = [];
+    for (const [, w] of floatWins()) if (!w.el.hidden && !w.state.collapsed) occluders.push(w.el);
+    const sel = $("seltoolbar"); if (sel && !sel.hidden) occluders.push(sel);
+    const logHead = document.querySelector("#logbar .log-head"); if (logHead) occluders.push(logHead);
+    for (const el of occluders) {
+        const r = el.getBoundingClientRect();
         const l = Math.max(r.left - rect.left, L), t = Math.max(r.top - rect.top, T);
         const rr = Math.min(r.right - rect.left, R), bb = Math.min(r.bottom - rect.top, B);
         if (rr <= l || bb <= t) continue;   // no overlap with the current usable box
