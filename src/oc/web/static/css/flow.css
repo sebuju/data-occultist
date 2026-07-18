@@ -372,6 +372,7 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 .pr-chk { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; flex: 0 0 auto; margin: 0; }
 .gnode .pr-chk input.pr-f-req { margin: 0; margin-left: 0px; }
 .pr-arr .pr-ff-add { align-self: start; }   /* array-reduction's inline "+ filter" stays compact, not full-width */
+.pr-ff-op { max-width: 6ch; }   /* op dropdown stays narrow; long labels (contains/ncontains) truncate, value unchanged */
 .pr-f-type { width: auto; }
 
 /* producer preview satellite (resolved inputs + output schema + live test-fetch) */
