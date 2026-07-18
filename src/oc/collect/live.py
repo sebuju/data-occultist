@@ -25,8 +25,9 @@ from ..ocr.device_switch import enter_device, exit_device
 from ..profile.models import GameProfile
 from ..store import store_for
 from ..store.flow_events import publish_flow
-from . import readout_history, register_history
+from . import process_history, readout_history, register_history
 from .collector import Collector, TickStatus
+from .fields import run_rule_pipeline
 from .readout_stability import gate_readouts
 
 # How many recent debug entries the live session keeps for the panel's debug log. Bounded so a
@@ -85,6 +86,10 @@ class LiveSession:
         # in server memory only (never persisted). Fed from readouts each tick; deliberately NOT
         # reset by start() — a register accumulates across runs and is wiped only by clear_register.
         self._registers: dict[str, dict[str, dict]] = {}
+        # Process-node output maps: {process_id: {key: value}}. Recomputed FRESH each tick from the
+        # node's resolved inputs (a process is a pure key-preserved rules transform, no accumulation
+        # unlike a register); held in server memory only. Downstream registers/processes read this.
+        self._process_values: dict[str, dict[str, object]] = {}
         # DatasetStore per persisted register (RegisterDef.persist), opened lazily on first
         # flush and kept open for the session's life — see ``_flush_register``.
         self._persist_stores: dict[str, object] = {}
@@ -96,7 +101,6 @@ class LiveSession:
         self._debug: collections.deque = collections.deque(maxlen=_DEBUG_CAP)
         self._debug_seq = 0
         self._dbg_prev_readouts: dict[str, object] = {}   # last-LOGGED readout values (change gate)
-        self._flow_prev_readouts: dict[str, object] = {}  # last readout values a flow blob was sent for
         # ONE TriggerRunner shared by the live loop (Collector.run) and the teach-UI test feed
         # (feed_readouts), so their on_readout edge state is identical (rule 7). Built lazily by
         # _trigger_runner; _triggers_for pins the profile it was built from so a swap rebuilds it.
@@ -152,7 +156,7 @@ class LiveSession:
             self._readout_confs = {}
             self._readouts_all = {}
             self._readout_confs_all = {}
-            self._flow_prev_readouts = {}
+            self._process_values = {}
             self._error = None
             self._last_saved_frame = None
             self._debug.clear()
@@ -230,7 +234,9 @@ class LiveSession:
                 # feed from the full accumulated map (every readout seen all session), not just this
                 # tick's delta -- a register wired to a readout from a window that isn't the one just
                 # read would otherwise wait for that window to be revisited before showing anything.
+                self._feed_processes()   # BEFORE registers -> a readout->process->register chain lands this tick
                 reg_events = self._feed_registers(self._readouts_all, self._readout_confs_all)
+                self._emit_register_process_flow()   # IN blobs: register-slot -> process (every held slot)
                 if reg_events:
                     reg_snapshot = self._register_snapshot()
             self._last_status = result.status.value   # why we are / aren't reading right now
@@ -298,34 +304,38 @@ class LiveSession:
 
     # ---- readout flow blobs ------------------------------------------------
 
-    def _readout_targets(self, rid: str) -> list[str]:
-        """Graph node ids a readout FEEDS — every toast and register whose sources reference it.
-        Matches the readout's OUT edges the canvas draws (``ro:<win>:<id>`` -> ``toast:``/
-        ``register:`` in model.js), so a flow blob addressed to one animates that exact edge."""
+    def _readout_targets(self, rid: str, profile=None) -> list[str]:
+        """Graph node ids a readout FEEDS — every toast, register, and process whose sources
+        reference it. Matches the readout's OUT edges the canvas draws (``ro:<win>:<id>`` ->
+        ``toast:``/``register:``/``process:`` in model.js), so a flow blob addressed to one animates
+        that exact edge. ``profile`` overrides the session's possibly-stale wiring (a just-added
+        process/register reaches its blob without a live restart — mirrors the ``registers=`` feed)."""
+        prof = profile if profile is not None else self._profile
         out: list[str] = []
-        for toast in getattr(self._profile, "toasts", []) or []:
+        for toast in getattr(prof, "toasts", []) or []:
             if any(self._readout_ref(s) == rid for s in (getattr(toast, "sources", []) or [])):
                 out.append(f"toast:{toast.id}")
-        for reg in getattr(self._profile, "registers", []) or []:
+        for reg in getattr(prof, "registers", []) or []:
             if any(self._readout_ref(s) == rid for s in (reg.sources or [])):
                 out.append(f"register:{reg.id}")
+        for proc in getattr(prof, "processes", []) or []:
+            if not getattr(proc, "enabled", True):
+                continue
+            if any(getattr(inp, "ref", inp) == f"readout:{rid}" for inp in (proc.sources or [])):
+                out.append(f"process:{proc.id}")
         return out
 
-    def _emit_readout_flow(self, window_id: str, readouts: dict) -> None:
-        """Animate a data blob from each readout that CHANGED value this tick to every node it
-        feeds, mirroring the producer/source data hops (:func:`publish_flow`). Change-gated so the
-        continuous readout loop doesn't spam the wire (an unchanged HUD reading sends nothing);
-        a consensus-HELD readout is absent from this GATED map, so it emits nothing either. Called
-        under the lock — publish_flow is a fire-and-forget fan-out, cheap and non-blocking."""
+    def _emit_readout_flow(self, window_id: str, readouts: dict, profile=None) -> None:
+        """Animate a data blob from EVERY readout read this tick to every node it feeds (readout ->
+        register/toast/process), mirroring the producer/source data hops (:func:`publish_flow`). No
+        change-gate — a valid read always animates its edge; coalescing/throttling is the downstream
+        (client) job, not something the backend drops silently. Called under the lock — publish_flow
+        is fire-and-forget. ``profile`` overrides the target-lookup wiring (see :meth:`_readout_targets`)."""
         if not window_id or not readouts:
             return
-        prev = self._flow_prev_readouts
-        for rid, val in readouts.items():
-            if rid in prev and prev[rid] == val:
-                continue
-            prev[rid] = val
+        for rid in readouts:
             src = f"ro:{window_id}:{rid}"
-            for dst in self._readout_targets(rid):
+            for dst in self._readout_targets(rid, profile):
                 try:
                     publish_flow(self._profile.name, "data", src, dst, 1)
                 except Exception:  # noqa: BLE001 - a UI animation must never break the tick
@@ -446,7 +456,7 @@ class LiveSession:
         return self._triggers
 
     def feed_readouts(self, detailed: dict, ro_trace: list, ro_field: dict, window,
-                      window_id: str, registers=None) -> None:
+                      window_id: str, registers=None, profile=None) -> None:
         """Full live-like readout fold for a caller OUTSIDE the collector loop — the teach-UI
         ``test`` feed (``/api/preview?feed=1``). The readout twin of :meth:`feed_registers`:
         runs the SAME consensus + history gate (:func:`gate_readouts`), folds the surviving
@@ -478,9 +488,14 @@ class LiveSession:
             self._readout_confs.update(readout_confs_now)
             self._readouts_all.update(readouts_all_now)        # FULL map (registers/.ro-live)
             self._readout_confs_all.update(readout_confs_all_now)
+            # BEFORE registers -> a readout->process->register chain lands this tick. Pass the FRESH
+            # request profile so a process wired since the session started is fed + animated (mirrors
+            # the ``registers=`` override the register feed already uses).
+            self._feed_processes(processes=(profile.processes if profile is not None else None), profile=profile)
             reg_events = self._feed_registers(self._readouts_all, self._readout_confs_all, registers)
+            self._emit_register_process_flow(profile)   # IN blobs: register-slot -> process (every held slot)
             reg_snapshot = self._register_snapshot() if reg_events else {}
-            self._emit_readout_flow(window_id, readouts_now)   # readout -> register/toast data blob
+            self._emit_readout_flow(window_id, readouts_now, profile)   # readout -> register/toast/process
         # on_readout / on_register fire OUTSIDE the lock (a fired sweep/toast must not hold the
         # session lock), mirroring the collector loop's post-tick trigger evaluation.
         runner = self._trigger_runner()
@@ -508,7 +523,9 @@ class LiveSession:
         with self._lock:
             self._readouts_all.update(readouts or {})
             self._readout_confs_all.update(confs or {})
+            self._feed_processes()   # BEFORE registers -> a readout->process->register chain lands this tick
             reg_events = self._feed_registers(self._readouts_all, self._readout_confs_all, registers)
+            self._emit_register_process_flow()   # IN blobs: register-slot -> process (every held slot)
             reg_snapshot = self._register_snapshot() if reg_events else {}
         # on_register fires OUTSIDE the lock (mirrors feed_readouts) so a preview-fed register write
         # drives its watch triggers too, not only a live collector tick.
@@ -548,43 +565,45 @@ class LiveSession:
             ignore_empty = bool(getattr(reg, "ignore_empty", False))
             dirty = False
             for src in reg.sources or []:
-                rid = self._readout_ref(src)
-                if rid is None or rid not in readouts:
-                    continue
-                val = readouts[rid]
-                if val is None or val == "":
-                    if ignore_empty:
-                        continue   # ignore the empty read — don't write it to a keyslot
-                    val = None     # record the drop as an explicit null (not "") in the ring
-                m = self._registers.setdefault(reg.id, {})
-                prev = m.get(rid)
-                prev_vals = prev["values"] if prev else []
-                prev_exposed = self._aggregate_ring(prev_vals, mode) if prev else None
-                # append EVERY read (duplicates included) -> the ring is a true rolling window
-                full = prev_vals[:]
-                full.append(val)
-                vals = full[-cap:]
-                evicted = full[:-cap]   # samples the append pushed out of the ring (may be empty)
-                # ring_index = the circular write cursor (0,1,..,cap-1,0,..) — WHICH slot this write
-                # lands in, so the push-history shows a rotating slot (not a constant cap-1 tail). The
-                # value it overwrote is that slot's prior content = the evicted-oldest (None until full).
-                writes = (prev["writes"] if prev else 0) + 1
-                register_history.record(
-                    game, reg.id,
-                    ts=datetime.now().isoformat(timespec="milliseconds"),
-                    key=rid, value=val, ring_index=(writes - 1) % cap,
-                    overwritten=(evicted[-1] if evicted else None))
-                exposed = self._aggregate_ring(vals, mode)
-                if prev is None or prev_exposed != exposed:
-                    dirty = True   # exposed value moved -> persist (skips a static non-aggregate)
-                    changed.append({"reg": reg.id, "key": rid, "value": exposed})
-                m[rid] = {
-                    "values": vals,
-                    "writes": writes,
-                    "conf": confs.get(rid),
-                    "first_seen": prev["first_seen"] if prev else now,
-                    "last_seen": now,
-                }
+                # readout:<id> keys the ring by the readout id (conf is that readout's, for the UI
+                # tint); process:/register: sources contribute their OWN {key: value} pairs, KEY
+                # preserved, with no confidence (only key + value flow out of a process). One shared
+                # source resolver both registers and processes feed from (rule 7).
+                is_readout = src.startswith("readout:") or ":" not in src
+                for key, val in self._resolve_source(src, readouts).items():
+                    if val is None or val == "":
+                        if ignore_empty:
+                            continue   # ignore the empty read — don't write it to a keyslot
+                        val = None     # record the drop as an explicit null (not "") in the ring
+                    m = self._registers.setdefault(reg.id, {})
+                    prev = m.get(key)
+                    prev_vals = prev["values"] if prev else []
+                    prev_exposed = self._aggregate_ring(prev_vals, mode) if prev else None
+                    # append EVERY read (duplicates included) -> the ring is a true rolling window
+                    full = prev_vals[:]
+                    full.append(val)
+                    vals = full[-cap:]
+                    evicted = full[:-cap]   # samples the append pushed out of the ring (may be empty)
+                    # ring_index = the circular write cursor (0,1,..,cap-1,0,..) — WHICH slot this write
+                    # lands in, so the push-history shows a rotating slot (not a constant cap-1 tail). The
+                    # value it overwrote is that slot's prior content = the evicted-oldest (None until full).
+                    writes = (prev["writes"] if prev else 0) + 1
+                    register_history.record(
+                        game, reg.id,
+                        ts=datetime.now().isoformat(timespec="milliseconds"),
+                        key=key, value=val, ring_index=(writes - 1) % cap,
+                        overwritten=(evicted[-1] if evicted else None))
+                    exposed = self._aggregate_ring(vals, mode)
+                    if prev is None or prev_exposed != exposed:
+                        dirty = True   # exposed value moved -> persist (skips a static non-aggregate)
+                        changed.append({"reg": reg.id, "key": key, "value": exposed})
+                    m[key] = {
+                        "values": vals,
+                        "writes": writes,
+                        "conf": confs.get(key) if is_readout else None,
+                        "first_seen": prev["first_seen"] if prev else now,
+                        "last_seen": now,
+                    }
             if dirty and getattr(reg, "persist", ""):
                 self._flush_register(reg)
         return changed
@@ -607,6 +626,183 @@ class LiveSession:
             if reg.id == reg_id:
                 return reg
         return None
+
+    def _register_current(self, reg_id: str) -> dict:
+        """One register's exposed per-key map (the aggregate fold, or the ring tail) — the single-
+        register twin of :meth:`_register_snapshot`, so a process consuming a register reads exactly
+        what the register exposes. Caller holds ``self._lock``."""
+        m = self._registers.get(reg_id) or {}
+        rd = self._reg_def(reg_id)
+        mode = getattr(rd, "aggregate", "") or "" if rd else ""
+        return {k: self._aggregate_ring(e["values"], mode) for k, e in m.items()}
+
+    # ---- processes: standalone key-preserved rules pipelines (see ProcessDef) --------
+
+    def _resolve_source(self, src: str, readouts: dict) -> dict:
+        """``{key: value}`` a wired source contributes THIS tick — the ONE readout/process/register
+        lookup both registers (:meth:`_feed_registers`) and processes (:meth:`_feed_process_one`)
+        feed from (rule 7). ``readouts`` is the readout-value map to resolve ``readout:`` refs against
+        (the register feed passes its accumulated map arg; the process feed passes ``_readouts_all``).
+        Caller holds ``self._lock``. Confidence is NEVER surfaced here — a process carries key + value only.
+
+        * ``readout:<id>``        -> ``{<id>: value}`` (one key = the readout id; absent -> ``{}``)
+        * ``process:<id>``        -> that process's whole ``{key: value}`` output (empty -> ``{}``)
+        * ``register:<id>``       -> the register's exposed per-key snapshot (ALL its keys)
+        * ``register:<id>#<key>`` -> a single sliced key of that register (``{}`` if not held)
+        * bare ``"<id>"``         -> treated as ``readout:<id>`` (tolerated legacy shape)
+        """
+        if ":" not in src:
+            return {src: readouts[src]} if src in readouts else {}
+        kind, _, rest = src.partition(":")
+        if kind == "readout":
+            return {rest: readouts[rest]} if rest in readouts else {}
+        if kind == "process":
+            return dict(self._process_values.get(rest, {}))
+        if kind == "register":
+            reg_id, _, key = rest.partition("#")
+            snap = self._register_current(reg_id)
+            if key:
+                return {key: snap[key]} if key in snap else {}
+            return snap
+        return {}
+
+    def _feed_processes(self, processes=None, profile=None) -> None:
+        """Recompute every enabled process node's ``{key: value}`` output from its resolved inputs
+        (caller holds the lock). Runs BEFORE :meth:`_feed_registers` each tick so a
+        ``readout -> process -> register`` chain lands the SAME tick. Processes are evaluated in
+        dependency order (a process may consume another process's output — see :meth:`_process_order`);
+        a register consumed by a process is read at its currently-held value (registers are fed just
+        after, so the rarer ``register -> process`` direction carries a one-tick lag). Each input key
+        flows through the shared rules pipeline KEY-PRESERVED; only key + value enter (confidence is
+        never read from inputs), and a ``drop`` rule omits that key. Output is rebuilt fresh each tick
+        (a process holds no state, unlike a register). ``processes`` / ``profile`` override the
+        session's possibly-stale wiring on the preview-feed path (mirrors the ``registers=`` feed)."""
+        procs = processes if processes is not None else (getattr(self._profile, "processes", []) or [])
+        procs = [p for p in procs if getattr(p, "enabled", True)]
+        self._process_values = {}
+        for proc in self._process_order(procs):
+            self._feed_process_one(proc)
+        self._emit_process_flow(profile)   # OUT blobs: process -> register/process (every tick it ran)
+
+    @staticmethod
+    def _process_order(procs) -> list:
+        """Topological order over the enabled processes so each is evaluated AFTER any process it
+        consumes (a ``process:<id>`` input ref). Inputs are single-key today (no ``process:`` refs),
+        so this is a no-op ordering in practice, but the guard stays defensive. A dependency cycle
+        stops descending (the offending node is emitted in declaration order)."""
+        by_id = {p.id: p for p in procs}
+        ordered: list = []
+        seen: set = set()
+        temp: set = set()
+
+        def visit(p):
+            if p.id in seen or p.id in temp:
+                return   # already emitted, or a cycle -> don't descend again
+            temp.add(p.id)
+            for src in p.sources or []:
+                ref = getattr(src, "ref", src)   # ProcessInput.ref (tolerate a bare string)
+                if ref.startswith("process:"):
+                    dep = by_id.get(ref.partition(":")[2])
+                    if dep is not None:
+                        visit(dep)
+            temp.discard(p.id)
+            seen.add(p.id)
+            ordered.append(p)
+
+        for p in procs:
+            visit(p)
+        return ordered
+
+    def _feed_process_one(self, proc) -> None:
+        """Resolve one process's single-key inputs, run the rules pipeline on each value, and emit it
+        under the input's ``out`` key (or the input key when ``out`` is blank — the key mangler).
+        Writes the ``{out_key: value}`` output into ``self._process_values`` and records each fire
+        (input value, trace, output) to :mod:`process_history` under the emitted key."""
+        game = self._profile.name
+        ftype = getattr(getattr(proc, "type", None), "value", None) or "text"
+        rules = getattr(proc, "rules", None) or []
+        out: dict[str, object] = {}
+        for src in proc.sources or []:
+            ref = getattr(src, "ref", src)          # ProcessInput.ref (tolerate a bare string)
+            rename = (getattr(src, "out", "") or "").strip()
+            for key, val in self._resolve_source(ref, self._readouts_all).items():
+                out_key = rename or key              # blank out -> keep the input key
+                raw = "" if val is None else str(val)
+                res = run_rule_pipeline(rules, ftype, raw, trace=True)
+                value = None if res.dropped else res.value
+                process_history.record(
+                    game, proc.id,
+                    ts=datetime.now().isoformat(timespec="milliseconds"),
+                    key=out_key, raw=raw, value=value, trace=res.trace)
+                if res.dropped:
+                    continue   # a `drop` rule removes this key from the output
+                out[out_key] = value
+        self._process_values[proc.id] = out
+
+    # ---- process flow blobs (in + out edges animate as data moves through) --------
+
+    def _process_consumers(self, proc_id: str, profile=None) -> list[str]:
+        """Graph node ids a process FEEDS — registers (and other processes) whose sources reference
+        its output (``process:<id>``). Matches the process's OUT edges in model.js. ``profile``
+        overrides the session's possibly-stale wiring (preview-feed path)."""
+        prof = profile if profile is not None else self._profile
+        ref = f"process:{proc_id}"
+        out: list[str] = []
+        for reg in getattr(prof, "registers", []) or []:
+            if ref in (reg.sources or []):
+                out.append(f"register:{reg.id}")
+        for p in getattr(prof, "processes", []) or []:
+            if p.id != proc_id and any(getattr(inp, "ref", inp) == ref for inp in (p.sources or [])):
+                out.append(f"process:{p.id}")
+        return out
+
+    def _emit_process_flow(self, profile=None) -> None:
+        """Animate a data blob from every process that produced output this tick to every node it
+        feeds (the process's OUT edges). No change-gate — a process that ran animates its edges;
+        downstream coalesces. Called under the lock right after the outputs are recomputed. An empty
+        output isn't gated away — there is simply no data on that edge to animate. ``profile``
+        overrides the consumer-lookup wiring (see :meth:`_process_consumers`)."""
+        for pid, output in self._process_values.items():
+            if not output:
+                continue   # no data produced this tick -> no edge to animate (absence of data, not a gate)
+            for dst in self._process_consumers(pid, profile):
+                try:
+                    publish_flow(self._profile.name, "data", f"process:{pid}", dst, 1)
+                except Exception:  # noqa: BLE001 - a UI animation must never break the tick
+                    pass
+
+    def _emit_register_process_flow(self, profile=None) -> None:
+        """Animate a data blob from a register to each process consuming one of its slots
+        (``register:<id>#<key>``), for every currently-HELD slot each tick — the 'in' hop for a
+        register-slot process input. No change-gate: the process reads the slot every tick, so its
+        edge animates every tick (downstream coalesces); a slot with no held value has no data to
+        animate. ``profile`` overrides the possibly-stale wiring (preview-feed path)."""
+        prof = profile if profile is not None else self._profile
+        for p in getattr(prof, "processes", []) or []:
+            if not getattr(p, "enabled", True):
+                continue
+            for inp in (p.sources or []):
+                ref = getattr(inp, "ref", inp)
+                if not ref.startswith("register:") or "#" not in ref:
+                    continue
+                reg_id, _, key = ref[len("register:"):].partition("#")
+                if key in (self._registers.get(reg_id) or {}):   # slot actually holds a value (a real read)
+                    try:
+                        publish_flow(self._profile.name, "data", f"register:{reg_id}", f"process:{p.id}", 1)
+                    except Exception:  # noqa: BLE001 - a UI animation must never break the tick
+                        pass
+
+    def rename_process(self, old_id: str, new_id: str) -> None:
+        """Carry a process's live output + history to its new id (client renamed the node), so the
+        renamed node isn't blank until the next tick recomputes it."""
+        with self._lock:
+            if old_id in self._process_values:
+                self._process_values[new_id] = self._process_values.pop(old_id)
+        game = self._profile.name
+        for e in process_history.recent(game, old_id)[::-1]:   # oldest-first so appendleft rebuilds newest-first
+            process_history.record(game, new_id, ts=e["ts"], key=e["key"], raw=e["raw"],
+                                   value=e["value"], trace=e.get("trace"))
+        process_history.clear(game, old_id)
 
     def _flush_register(self, reg) -> None:
         """Mirror one register's held map into its ``persist`` dataset — one row per wired

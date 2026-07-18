@@ -56,25 +56,6 @@ def _ocr_cache_for(game, image_id, config, prefer_cache):
     return cache, key, hit
 
 
-def _feed_live_registers(game, payload, registers=None):
-    """Feed one ``/preview`` read's readouts into `game`'s live session, cache hit or not, so a
-    register (and any ``persist`` flush) updates from a one-shot OCR read too — otherwise a
-    register could visibly show a value in the teaching UI that never reaches its ``persist``
-    dataset just because live collection isn't running. See LiveSession.feed_registers.
-
-    ``registers`` is the register wiring from the FRESH request profile — passed through so a
-    just-added/just-rewired register source persists immediately, instead of being dropped
-    against the long-lived session's stale ``self._profile`` (which is only refreshed on a live
-    start). Without this, wiring a new readout into a ``persist`` register never reached the
-    dataset until the live collector was restarted."""
-    readouts_all = payload.get("readouts_all")
-    if not game or not readouts_all:
-        return
-    sess = session_for(game, create=True)
-    if sess is not None:
-        sess.feed_registers(readouts_all, payload.get("readout_confs_all") or {}, registers)
-
-
 def _feed_readouts_live(engine, profile, game, capture, registers=None):
     """Full live-like readout fold for a deliberate ``test`` feed (``/api/preview?feed=1``): read
     THIS image's readouts WITH their rule trace and hand them to the game's live session, so the
@@ -82,9 +63,11 @@ def _feed_readouts_live(engine, profile, game, capture, registers=None):
     watch triggers all fire exactly as they would live (see ``LiveSession.feed_readouts``). Feeding
     a window's stashed images one at a time thus reproduces live readout behaviour.
 
-    A plain one-shot canvas preview (``feed`` off) never calls this — it stays register-only via
-    :func:`_feed_live_registers`, so a mere refresh can't pollute the readout history ring, move
-    the consensus state, or fire a watch line."""
+    This is the ONLY ``/preview`` path that touches the live session: it fires solely on an explicit
+    user feed (the feed / feed all buttons and an image change, all ``feed=1``). A plain one-shot
+    canvas preview (``feed`` off) never calls this and has NO live-session side effect — a mere
+    refresh, boot preview, or post-live-exit readout read can't populate a register, move the
+    consensus state, or fire a watch line."""
     if not game:
         return
     sess = session_for(game, create=True)
@@ -99,7 +82,9 @@ def _feed_readouts_live(engine, profile, game, capture, registers=None):
     # readout id -> its resolved FieldDef (mirrors Collector.tick's ro_field), for the gate's
     # expected-type / confidence-floor / stability params.
     ro_field = {v.id: fields.get(v.field) for v in window.readouts if v.enabled}
-    sess.feed_readouts(detailed, ro_trace, ro_field, window, window.id, registers)
+    # pass the FRESH request profile so a process/register wired since the live session started is
+    # fed + flow-animated without a live restart (mirrors the `registers=` fresh-wiring override).
+    sess.feed_readouts(detailed, ro_trace, ro_field, window, window.id, registers, profile)
 
 
 def _frame_for(engine, profile, game, capture):
@@ -363,9 +348,12 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     image (the one shown in the image node); otherwise capture the live window.
 
     ``feed`` (the ``test`` button) makes this read behave like a live tick for READOUTS:
-    beyond feeding registers it runs the consensus/history gate, emits the readout->register
-    data blob, and fires ``on_readout`` watch lines (see :func:`_feed_readouts_live`). Off (a
-    plain canvas preview/refresh) it stays register-only so a refresh can't pollute that state."""
+    it feeds registers, runs the consensus/history gate, emits the readout->register data blob,
+    and fires ``on_readout`` watch lines (see :func:`_feed_readouts_live`). Off (a plain canvas
+    preview/refresh) it is a pure OCR read with NO live-session side effect — it does not populate
+    registers, so a mere refresh (or a boot / post-live-exit read) can't pollute that state. Register
+    population is thus gated to explicit user feeds (feed / feed all / image change) and the live
+    collector tick only."""
     if not profile.windows:
         raise HTTPException(status_code=400, detail="profile has no window")
     window = profile.windows[0]
@@ -377,10 +365,9 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     cache, key, hit = _ocr_cache_for(game, capture, cfg, prefer_cache)
     if hit is not None:
         # cache serves the grid read; a feed still re-reads readouts (cheap) for the live fold.
+        # feed off = pure preview, no live-session touch (no register populate on refresh/boot).
         if feed:
             _feed_readouts_live(get_engine(), profile, game, capture, profile.registers)
-        else:
-            _feed_live_registers(game, hit, profile.registers)
         return {**hit, "cached": True}
     engine = get_engine()
     frame, window, result = _read_window(engine, profile, game, capture)
@@ -409,11 +396,9 @@ def preview(profile: GameProfile, game: str | None = Query(None), capture: str |
     if cache is not None:
         cache.put(key, out)
         cache.save()
-    # feed_readouts already feeds registers, so a feed skips the register-only path (no double).
+    # Only an explicit feed touches the live session; a plain preview leaves registers alone.
     if feed:
         _feed_readouts_live(engine, profile, game, capture, profile.registers)
-    else:
-        _feed_live_registers(game, out, profile.registers)
     return out
 
 

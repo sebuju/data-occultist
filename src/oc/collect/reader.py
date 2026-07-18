@@ -837,22 +837,23 @@ class RegionReader:
                                fields: dict[str, FieldDef],
                                *, trace_sink: list | None = None) -> dict[str, tuple[object, float, object, object]]:
         """Read the window's readouts -> ``{readout_id: (value, confidence, raw, substituted)}``.
-        Each reads its box through the linked field, exactly like a region.
+        A readout is a RAW OCR TAP: it reads its box through the linked field's preprocess/OCR
+        recipe (color mask, upscale, ``isolate``, ``glyph_check``) and emits the text as-is. It
+        does NOT run the field's rules pipeline — value-filtering (drop/fold/lowercase/extract/
+        dictionary) belongs to the downstream process node (:class:`ProcessDef`), not here.
 
-        A read that fails its field's plausibility gate (min confidence / out of range) or
-        yields nothing is OMITTED — a trigger must never fire on a garbage/occluded reading.
-        The confidence is the raw OCR confidence of the read (1.0 for a deterministic pip/bar
-        value). ``raw`` is the pre-rules OCR text (``None`` for pip/symbol readouts that carry no
-        OCR text) and ``substituted`` is the dictionary substitution a resolve applied (else
-        ``None``) — both feed the OCR log's raw→value display. Nothing here is stored; the
-        collector surfaces the values and hands them to triggers, and the UI shows
-        ``value (conf)`` on each readout node.
+        A read below the field's ``min_confidence`` floor, or one that yields nothing, is OMITTED
+        — a trigger must never fire on a garbage/occluded reading. The confidence is the raw OCR
+        confidence of the read (1.0 for a deterministic pip/symbol value). ``raw`` equals the
+        emitted text (``None`` for pip/symbol readouts that carry no OCR text) and ``substituted``
+        is always ``None`` (readouts carry no dictionary). Nothing here is stored; the collector
+        surfaces the values and hands them to triggers/processes, and the UI shows ``value (conf)``
+        on each readout node.
 
         ``trace_sink`` (optional): when a list is passed, one debug record is appended for EVERY
-        enabled readout — passed OR dropped — as ``{id, raw, value, dropped, trace, conf}``, where
-        ``trace`` is the per-rule step list from :func:`run_rules` (the same trace the readout node
-        shows). Feeds the readout-history satellite ([[readout_history]]); off the hot path unless
-        requested."""
+        enabled readout as ``{id, raw, value, dropped, trace, conf}``. A readout has no rules, so
+        ``trace`` is empty and ``value`` is the raw read. Feeds the readout-history satellite
+        ([[readout_history]]); off the hot path unless requested."""
         out: dict[str, tuple[object, float, object, object]] = {}
         cw, ch = frame.client.w, frame.client.h
         boxes = {v.id: v.box.to_fraction().to_pixels(cw, ch) for v in window.readouts if v.enabled}
@@ -884,27 +885,19 @@ class RegionReader:
                                        "dropped": not label, "trace": [], "conf": conf})
                 continue
             text, conf = text_reads.get(v.id) or ("", 0.0)
-            substituted, dropped = None, False
-            if self._resolver and fdef:
-                resolved = self._resolver.resolve(fdef, text, conf)
-                value, substituted, dropped = resolved.value, resolved.substituted, resolved.dropped
-            elif fdef:
-                res = run_rules(fdef, text)
-                value, substituted, dropped = res.value, res.substituted, res.dropped
-            else:
-                value = text or None
+            # A readout is a RAW OCR TAP: the read is already glyph/isolate/preprocess-cleaned
+            # (see _readout_text_reads / _detect_reads) and emitted as-is. Value-filtering
+            # (drop/fold/lowercase/extract/dictionary) is NOT a readout concern -- it lives in
+            # the downstream process node (ProcessDef). The readout node UI has no rules editor.
+            value, substituted = text or None, None
             if trace_sink is not None:
-                # trace mirrors the readout node's own rule-trace panel (run_rules, not the
-                # resolver) so the satellite's per-rule columns match what the node shows.
-                rr = run_rules(fdef, text, trace=True) if fdef else None
-                trace_sink.append({"id": v.id, "raw": text,
-                                   "value": rr.value if rr else (text or None),
-                                   "dropped": bool(rr.dropped) if rr else False,
-                                   "trace": (rr.trace or []) if rr else [], "conf": conf})
-            if value is None or dropped:   # nothing read, or a drop rule rejected it
+                # no rules on a readout -> the satellite shows the raw read, no rule steps
+                trace_sink.append({"id": v.id, "raw": text, "value": value,
+                                   "dropped": False, "trace": [], "conf": conf})
+            if value is None:   # nothing read
                 continue
             # a genuine read must clear the field's confidence floor
-            if substituted is None and fdef:
+            if fdef:
                 mc = getattr(fdef, "min_confidence", 0.0) or 0.0
                 if mc and conf < mc:
                     continue

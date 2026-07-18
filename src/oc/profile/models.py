@@ -1363,6 +1363,63 @@ class RegisterDef(BaseModel):
     persist: str = ""
 
 
+class ProcessInput(BaseModel):
+    """One wired input of a :class:`ProcessDef` — a SINGLE key plus its output-key rename (the
+    "key mangler" unit). ``ref`` is a single-key prefixed ref:
+
+    * ``readout:<id>``        — the readout's live value, under key = the readout id.
+    * ``register:<id>#<key>`` — one slot of a register, under key = that slot key.
+
+    ``out`` renames the emitted key: blank keeps the input key (the collector emits the value under
+    the input key), a value re-keys it to ``out`` downstream. Value still flows through the rules
+    pipeline; only the KEY is mangled here."""
+
+    ref: str
+    out: str = ""
+
+    @model_serializer
+    def _ser(self) -> dict:
+        """Drop ``out`` when blank so an un-renamed input stays a bare ``{ref}`` on disk."""
+        return {"ref": self.ref, "out": self.out} if self.out else {"ref": self.ref}
+
+
+class ProcessDef(BaseModel):
+    """A *process node*: a standalone holder of ONE value :class:`FieldRule` pipeline AND a per-input
+    KEY MANGLER. It applies the pipeline to every wired input's value while renaming each input's key
+    (see :class:`ProcessInput`). It exists to consolidate the identical rules section otherwise
+    copy-pasted across many readouts' fields — wire N single-key inputs into one process, author the
+    correction pipeline once, and optionally re-key each on the way out.
+
+    ``sources`` are :class:`ProcessInput` rows, each a SINGLE key: a ``readout:<id>`` or a register
+    slot ``register:<id>#<key>`` (no whole-register / process inputs — every input maps exactly one
+    key). Each collector tick the process resolves each input to its ``{key: value}``, runs the
+    pipeline on the value (see :func:`oc.collect.fields.run_rule_pipeline`), and emits it under the
+    input's ``out`` key (or the input key when ``out`` is blank). Only key + value ever flow in —
+    never confidence — and no consensus/gate logic lives here. Like a register, the output lives only
+    in the running :class:`oc.collect.live.LiveSession`; only id + type + inputs + rules hit the YAML.
+    """
+
+    id: str
+    # Value type carried into the pipeline: gates which rules apply (a number-only rule is
+    # ignored for a text process) and coerces the final value, exactly as FieldDef.type does.
+    type: FieldType = FieldType.text
+    # Wired single-key inputs, each with its output-key rename (see ProcessInput).
+    sources: list[ProcessInput] = Field(default_factory=list)
+    # The shared value pipeline every input flows through, top-to-bottom (see FieldRule). The
+    # SAME rule model readouts' fields use — a process just carries it standalone.
+    rules: list[FieldRule] = Field(default_factory=list)
+    enabled: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_sources(cls, data):
+        """Coerce the legacy ``sources: ["readout:x", …]`` string form (before the key mangler) into
+        ``[{ref: "readout:x"}, …]`` ProcessInput rows, so an older profile loads unchanged."""
+        if isinstance(data, dict) and isinstance(data.get("sources"), list):
+            data = {**data, "sources": [{"ref": s} if isinstance(s, str) else s for s in data["sources"]]}
+        return data
+
+
 class SourceMatch(BaseModel):
     """One line-filter clause for a ``log_lines`` source: keep a line only when its text
     relates to ``text`` per ``op``. Several clauses on a field all-must-hold (AND). No regex
@@ -1639,6 +1696,10 @@ class GameProfile(BaseModel):
     # In-memory keyed maps fed by readouts (never persisted; see RegisterDef). Only the node
     # definitions live here — the held values stay in the live session's server memory.
     registers: list[RegisterDef] = Field(default_factory=list)
+    # Standalone rules-pipeline nodes fed by readouts/registers/other processes (never persisted;
+    # see ProcessDef). Only the node definitions live here — the keyed output stays in the live
+    # session's server memory, exactly like a register's held map.
+    processes: list[ProcessDef] = Field(default_factory=list)
     dictionaries: list[DictionaryDef] = Field(default_factory=list)
     # Taught cutout atlas: glyph-kind entries feed post-OCR refinement (FieldDef.glyph_check),
     # symbol-kind entries feed whole-box classification (FieldDef.type == symbol). See CutoutDef.

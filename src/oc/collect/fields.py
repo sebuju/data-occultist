@@ -205,10 +205,10 @@ def _round(then: RuleThen, value: str) -> str:
     return str(math.ceil(n))
 
 
-def _finalize(field: FieldDef, value: str) -> object:
+def _finalize(ftype: str, value: str) -> object:
     """Type the surviving pipeline value: a number field parses out its number; a text
     field keeps the stripped string. Empty -> None."""
-    if field.type is FieldType.number:
+    if ftype == FieldType.number.value:
         return _to_number(_first_number(value)) if value else None
     return value.strip() or None
 
@@ -217,6 +217,18 @@ def run_rules(field: FieldDef, raw: str, *, dict_hook=None,
               confidence: float = 1.0, trace: bool = False) -> RuleResult:
     """Run ``field``'s rule pipeline over the ``raw`` read. See the module docstring.
 
+    Thin wrapper over :func:`run_rule_pipeline` — the shared core a standalone process node
+    (:class:`oc.profile.models.ProcessDef`) drives with its own ``rules``/``type``, so the two
+    never diverge. ``dict_hook`` / ``confidence`` / ``trace`` pass straight through."""
+    return run_rule_pipeline(field.rules, field.type.value, raw,
+                             dict_hook=dict_hook, confidence=confidence, trace=trace)
+
+
+def run_rule_pipeline(rules: list, ftype: str, raw: str, *, dict_hook=None,
+                      confidence: float = 1.0, trace: bool = False) -> RuleResult:
+    """Run an ordered ``rules`` pipeline of the given field ``ftype`` over the ``raw`` read.
+    See the module docstring for the pipeline semantics.
+
     ``dict_hook(value, rule, confidence) -> DictOutcome`` services ``dictionary`` rules;
     omit it for pure value logic (those rules then pass through). ``trace`` records each
     rule's in/out value for the node debug panel."""
@@ -224,8 +236,7 @@ def run_rules(field: FieldDef, raw: str, *, dict_hook=None,
     value = raw.strip()
     steps: list | None = [] if trace else None
 
-    ftype = field.type.value
-    for i, rule in enumerate(field.rules):
+    for i, rule in enumerate(rules):
         vin = value
         if not rule_applies(rule, ftype):   # invalid for this field type -> ignored (kept, not run)
             if steps is not None:
@@ -271,7 +282,7 @@ def run_rules(field: FieldDef, raw: str, *, dict_hook=None,
             result.value, result.dropped, result.trace = None, True, steps
             return result
 
-    result.value = _finalize(field, value)
+    result.value = _finalize(ftype, value)
     result.trace = steps
     return result
 

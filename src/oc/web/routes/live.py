@@ -189,6 +189,16 @@ def rename_register(game: str, register_id: str, body: _RegisterRename):
     return {"ok": True}
 
 
+@router.post("/{game}/process/{process_id}/rename")
+def rename_process(game: str, process_id: str, body: _RegisterRename):
+    """Carry a process's live output + history across a rename of its id. No-op when no live session
+    runs (the output lives only in the running session's memory; graceful like status)."""
+    s = _sessions.get(game)
+    if s is not None:
+        s.rename_process(process_id, body.new_id)
+    return {"ok": True}
+
+
 @router.get("/{game}/debug")
 def debug(game: str, after: int = 0):
     """Incremental debug-log poll: entries newer than ``after`` (the last seq the client has).

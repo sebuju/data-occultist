@@ -32,6 +32,8 @@ def _frame(h=100, w=200):
 # ---- read_readouts --------------------------------------------------------------
 
 def test_read_ocr_readout():
+    # A readout is a RAW OCR TAP: it emits the read text as-is, no rules/typing. Value-filtering
+    # (and any number coercion) is the downstream process node's job, not the readout's.
     win = WindowDef(
         id="hud",
         fields=[FieldDef(id="hpf", type=FieldType.number)],
@@ -39,11 +41,12 @@ def test_read_ocr_readout():
     )
     fields = {f.id: f for f in win.fields}
     out = RegionReader(StubOcr("450")).read_readouts(_frame(), win, fields)
-    assert out == {"hp": 450}
+    assert out == {"hp": "450"}
 
 
-def test_ocr_readout_out_of_range_omitted():
-    # a read above the field's plausible max is a misread -> the readout is OMITTED (no fire on junk)
+def test_readout_ignores_field_rules():
+    # Readouts DO NOT run the field's rules pipeline (that surface moved to process nodes). A
+    # drop rule that would have omitted this read is inert -- the raw text is still emitted.
     win = WindowDef(
         id="hud",
         fields=[FieldDef(id="hpf", type=FieldType.number,
@@ -52,6 +55,19 @@ def test_ocr_readout_out_of_range_omitted():
     )
     fields = {f.id: f for f in win.fields}
     out = RegionReader(StubOcr("999999")).read_readouts(_frame(), win, fields)
+    assert out == {"hp": "999999"}
+
+
+def test_ocr_readout_below_confidence_omitted():
+    # The readout's surviving plausibility gate is min_confidence: a low-confidence read is
+    # OMITTED (a trigger/process must never fire on a garbage/occluded reading).
+    win = WindowDef(
+        id="hud",
+        fields=[FieldDef(id="hpf", type=FieldType.number, min_confidence=0.8)],
+        readouts=[ReadoutDef(id="hp", box=Box(x=0, y=0, w=0.5, h=0.5), field="hpf")],
+    )
+    fields = {f.id: f for f in win.fields}
+    out = RegionReader(StubOcr("450", conf=0.3)).read_readouts(_frame(), win, fields)
     assert "hp" not in out
 
 
