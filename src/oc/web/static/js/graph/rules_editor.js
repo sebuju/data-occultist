@@ -68,12 +68,13 @@ export function wireFieldRules(div, fd, { edit, retrace }) {
 // `selector` scopes to one chip list (default the generic "sv-rmin" trash class; a node with more
 // than one sources-input list — e.g. a trigger's targets/watch/readout-watch — gives each its own
 // class so their removals don't cross-fire).
-export function wireArmedRemove(container, selector, onFire) {
+export function wireArmedRemove(container, selector, onFire, { pill = ".sv-input" } = {}) {
     container.querySelectorAll(selector).forEach((b) => {
-        const pill = b.closest(".sv-input");
+        const el = b.closest(pill);   // arm target — the whole pill/row (caller picks; process arms .pr-maprow)
+        if (!el) return;
         const armed = makeArmed({
-            onArm: () => pill.classList.add("armed"),
-            onTimeout: () => pill.classList.remove("armed"),
+            onArm: () => el.classList.add("armed"),
+            onTimeout: () => el.classList.remove("armed"),
             onFire: () => onFire(b.dataset.val),
         });
         b.addEventListener("click", (e) => { e.stopPropagation(); armed.trigger(); });

@@ -23,8 +23,9 @@ function ruleLabel(s) {
     return `${when}→${then}`;
 }
 
-// One rule column's cell for a read's matching trace step.
-function cellFor(s) {
+// One rule column's cell for a read's matching trace step. Exported so the process-history
+// satellite paints its rule columns identically (rule 7 — one trace-cell renderer, not two).
+export function cellFor(s) {
     if (s.ignored) return "—";                          // rule invalid for the field type (skipped)
     if (s.out === null || s.out === undefined) return "drop";   // a drop rule rejected the read here
     if (s.fired === false) return "·";                  // condition didn't match — value passes through
@@ -32,8 +33,9 @@ function cellFor(s) {
 }
 
 // Build the ordered rule columns from every read's trace (union by step index). Headers are made
-// unique (a suffix on collision) so VTable's row-object keys don't clash.
-function ruleColumns(history) {
+// unique (a suffix on collision) so VTable's row-object keys don't clash. Exported so the process-
+// history satellite derives its rule columns identically (rule 7).
+export function ruleColumns(history) {
     const label = new Map();   // step index -> label (first seen wins)
     for (const e of history)
         for (const s of (e.trace || []))

@@ -23,7 +23,7 @@ import {
     queueNodeRefresh, wireSubset,
 } from "./subset_wire.js";
 import {
-    wireProducer, wireProducerPreview, wireTrigger, wireAction, wireRegister, wireSource,
+    wireProducer, wireProducerPreview, wireTrigger, wireAction, wireRegister, wireProcess, wireSource,
     refreshSourcePreview,
 } from "./io_wire.js";
 import { persist, setScrubHook } from "./persist.js";
@@ -41,14 +41,15 @@ import {
 import { drawEdges, nodeRect, freezeRouting, requestEdges } from "./routing.js";
 import {
     panTo, panZoomTo, panZoomToRect, zoomToNode, viewportCenterWorld,
-    applyView, resizeCanvas,
+    applyView, resizeCanvas, dragOnlyZoom,
 } from "./camera.js";
 import { movePos, renameNode } from "./node_lifecycle.js";
-import { nodeParts, windowControls, gamePriority, itemLists, slideToggle, vtShowRemoved, rectEditBtn, markColorCollisions } from "./node_parts.js";
+import { nodeParts, windowControls, gamePriority, itemLists, enableBtn, vtShowRemoved, rectEditBtn, markColorCollisions } from "./node_parts.js";
 import * as dsevents from "./dsevents.js";
 import { renderReadoutHistory } from "./readout_history_node.js";
 import { renderProducerHistory } from "./producer_history_node.js";
 import { renderRegisterHistory } from "./register_history_node.js";
+import { renderProcessHistory } from "./process_history_node.js";
 import { clearTools } from "./drawtool.js";
 import { singleFlight } from "../singleflight.js";
 import { nmSyncSelection, renderNodeViews } from "./panels/nodemap.js";
@@ -291,8 +292,17 @@ initGameLifecycle();   // table-store + persist funnel (incl. save-conflict moda
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", prodhist: "vttable", hist: "vttable", rohist: "vttable", reg: "region", register: "register", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", prodhist: "vttable", hist: "vttable", rohist: "vttable", reghist: "vttable", prochist: "vttable", reg: "region", register: "register", process: "process", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
 export function nodeTypeOf(id) { return id === "game" ? "game" : id === "atlas" ? "atlas" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
+// Strip a node id's KNOWN type-prefix -> the bare id the model keys on. Same master map as
+// nodeTypeOf (one source of truth), so a new node type that registers its prefix above is wired
+// end-to-end. Strips only the leading segment (readout ro:win:vid -> win:vid); leaves unknown/
+// unprefixed ids untouched.
+export function bareNodeId(id) {
+    const s = String(id || "");
+    const pfx = s.split(":")[0];
+    return (pfx in _TYPE_BY_PREFIX) ? s.slice(pfx.length + 1) : s;
+}
 groups.initGroups({
     world: () => $("ggroups"),
     superWorld: () => $("sgroups"),
@@ -364,10 +374,10 @@ function fillNode(div, n, wire = true) {
     else div.style.removeProperty("--nt");
     if (n.type === "dataset") div.dataset.ds = n.ref;   // out-port drop target id (tabs moved to the vt-table satellite)
     const parts = nodeParts(n);
-    // the enable toggle (gn-enable checkbox) — only on toggleable node types; null otherwise. Its
-    // .gn-enable class + `.checked` state are read by the post-build wiring below.
+    // the enable toggle (gn-enable button) — only on toggleable node types; null otherwise. Its
+    // .gn-enable class + `aria-pressed` state are read/flipped by the post-build click wiring below.
     const toggle = canToggle
-        ? slideToggle({ on: enabled, cls: "gn-enable", title: "enabled — turn off to skip this node during detection" })
+        ? enableBtn({ on: enabled, title: "enabled — turn off to skip this node during detection" })
         : null;
     // delete + detach moved to the selection toolbar (act on the selection); nodes carry
     // neither button anymore — select a node (or several) and use the toolbar.
@@ -377,29 +387,41 @@ function fillNode(div, n, wire = true) {
     // whether .gn-hctl actually has anything in it (same three sources built below) — types with
     // none (game, toast, sound, register, atlas, preview, vttable) get an empty cluster, so the
     // type label must stay put on hover instead of fading into nothing (graph.css .gn-has-ctl).
-    const hasHoverCtl = !!(parts.head || toggle || RECT_TYPES.has(n.type));
+    const hasHoverCtl = !!(parts.head || toggle || RECT_TYPES.has(n.type));   // any of these -> the tag fades to reveal .gn-hctl on hover
     div.replaceChildren(
+        // box-panel header: TWO islands that straddle the card's top border (graph.css), each with
+        // the card bg so it punches a gap in the frame — the `┌─ title ─── [tag] ─┐` look. Left
+        // island = disc + title (+ always-visible headfix like vttable tabs); right island = the
+        // hover cluster, type tag, pretty/spin badges, and the always-visible enable rocker.
         h("div", { class: `gn-h ${hasHoverCtl ? "gn-has-ctl " : ""}${parts.pulse || ""}` },
-            h("span", { class: "gn-disc", title: "collapse/expand" },
-                nodeIcon(n),
-                h("button", { class: "collapse", "aria-label": "collapse/expand" },
-                    svg("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "aria-hidden": "true" },
-                        svg("rect", { x: "3.5", y: "3.5", width: "17", height: "17", rx: "5.5" }),
-                        svg("line", { x1: "8", y1: "12", x2: "16", y2: "12" }),
-                        svg("line", { class: "cv", x1: "12", y1: "8", x2: "12", y2: "16" })))),
-            parts.title, parts.headfix,
-            // hover-only controls (satellite toggles, enable, rect-edit) all sink into ONE
-            // reveal container (`.gn-hctl`, graph.css) instead of each carrying its own
-            // opacity rule -- count/mix varies per node type, so the container (not per-button
-            // placement) is what governs "hidden takes no space, shown shifts nothing" (rule 7).
-            h("span", { class: "gn-hctl" },
-                parts.head, toggle,
-                RECT_TYPES.has(n.type) ? rectEditBtn() : null),
-            h("span", { class: "gn-type", "aria-hidden": "true" }, typeLabel),
-            h("span", { class: "gn-pretty-dirty", title: "held by a pretty override — not saved to yaml" }, "pretty"),
-            // tiny loader — lives IN the header (not a full-node overlay), shown by .gnode.busy.
-            // The body locks (CSS .gnode.busy > .gn-body) while it spins.
-            h("span", { class: "gn-hspin", title: "working…" })),
+            h("span", { class: "gn-hl" },
+                h("span", { class: "gn-disc", title: "collapse/expand" },
+                    nodeIcon(n),
+                    h("button", { class: "collapse", "aria-label": "collapse/expand" },
+                        svg("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "aria-hidden": "true" },
+                            svg("rect", { x: "3.5", y: "3.5", width: "17", height: "17", rx: "5.5" }),
+                            svg("line", { x1: "8", y1: "12", x2: "16", y2: "12" }),
+                            svg("line", { class: "cv", x1: "12", y1: "8", x2: "12", y2: "16" })
+                        )
+                    )
+                ),
+                parts.title, parts.headfix
+            ),
+            h("span", { class: "gn-hr" },
+                // hover-only cluster: the enable toggle, satellite toggles, AND rect-edit all sink
+                // into ONE reveal container (`.gn-hctl`) — hidden at rest (only the type tag shows),
+                // revealed on header hover like every other control. Enable sits leftmost.
+                h("span", { class: "gn-hctl" },
+                    toggle,
+                    parts.head,
+                    RECT_TYPES.has(n.type) ? rectEditBtn() : null
+                ),
+                h("span", { class: "gn-type", "aria-hidden": "true" }, typeLabel),
+                h("span", { class: "gn-pretty-dirty", title: "held by a pretty override — not saved to yaml" }, "pretty"),
+                // tiny loader — lives IN the header, shown by .gnode.busy. Body locks while it spins.
+                h("span", { class: "gn-hspin", title: "working…" })
+            )
+        ),
         // body is ONE two-column grid (`.gn-grid`) — every builder emits flat wrapped-label +
         // control children into it (rule 7: one body layout). Action buttons live in the
         // separate `.gn-foot` slot below (parts.foot), never inside the body grid.
@@ -410,9 +432,10 @@ function fillNode(div, n, wire = true) {
         ...(parts.ports ? [parts.ports] : []));   // vttable nodes have no ports — replaceChildren would stringify undefined to a "undefined" text node
     div.querySelector(".collapse").addEventListener("click", () => toggleCollapse(n.id));
     const tog = div.querySelector(".gn-enable");
-    tog?.addEventListener("change", (e) => {
+    tog?.addEventListener("click", (e) => {
         e.stopPropagation();
-        const on = e.currentTarget.checked;   // native checkbox state
+        const on = e.currentTarget.getAttribute("aria-pressed") !== "true";   // flip the button state
+        e.currentTarget.setAttribute("aria-pressed", on);
         n.ref.enabled = on;
         div.classList.toggle("node-disabled", !on);
         const winId = n.type === "window" ? n.ref.id : n.win?.id;
@@ -611,6 +634,9 @@ function _refKey() {
         model.datasets(),
         (P.subsets || []).map((s) => [s.id, model.subsetInputs(s), model.subsetColumns(s.id)]),
         (P.registers || []).map((r) => [r.id, r.sources, r.persist]),
+        // a process's sources carry each input's ref + `out` rename — a consuming register scaffolds
+        // one cell per process output key, so an out-key edit / input add-remove must flip the gate.
+        (P.processes || []).map((p) => [p.id, p.sources]),
         model.readouts().map((v) => v.id),
         (P.producers || []).map((p) => [p.id, p.dataset, p.sources, model.producerColumns(p)]),
         (P.actions || []).map((x) => [x.id, x.sources, x.dest, Object.keys(x.slots || {})]),
@@ -760,6 +786,16 @@ function wireNode(div, n) {
         // of the multi-selection and NEVER drags — owned centrally by ctrl_select.js (capture
         // phase, ahead of every stopPropagation()ing child), so it never even reaches here.
         if (ev.ctrlKey || ev.metaKey) return;
+        // DRAG-ONLY regime (three furthest-out zoom rungs): the node is too small to aim inside,
+        // so ANY press drags it — bypass the content/input/canvas/resize-corner gates entirely.
+        // preventDefault so a press over an input never steals native focus/caret out here.
+        if (dragOnlyZoom()) {
+            ev.preventDefault();
+            if (!selected.has(n.id)) clearMultiSelect();
+            focusNode(n.id);
+            startMove(n.id, ev);
+            return;
+        }
         // the collapse caret and the title input double as drag HANDLES: a real drag moves
         // the node, a plain click still toggles / edits (threshold-gated below).
         const handle = ev.target.closest(".collapse, input.gi-id");
@@ -818,9 +854,17 @@ function wireNode(div, n) {
         div.querySelector(".dictname")?.addEventListener("change", (e) => {
             const oldId = n.ref.id;
             const newName = e.target.value.trim() || oldId;
-            n.ref.name = newName;
             const newId = newName.replace(/[^A-Za-z0-9._-]+/g, "_");
-            if (newId !== oldId && model.renameDictionary(oldId, newId)) movePos(`dict:${oldId}`, `dict:${newId}`);
+            if (newId === oldId) {
+                n.ref.name = newName;   // name-only tweak, id unchanged
+            } else if (model.renameDictionary(oldId, newId)) {
+                n.ref.name = newName;   // commit the display name only once the id rename took
+                movePos(`dict:${oldId}`, `dict:${newId}`);
+            } else {
+                // collision: leave name/id as they were (don't let them diverge) + tell the user
+                e.target.value = n.ref.name;
+                setStatus(`Dictionary "${newId}" already exists — rename skipped`, "warn");
+            }
             render(); autosave(null);
         });
         div.querySelector(".dictterms")?.addEventListener("change", (e) => {
@@ -875,7 +919,11 @@ function wireNode(div, n) {
         });
         div.querySelector(".dsrename")?.addEventListener("change", async (e) => {
             const oldId = n.ref, newId = (e.target.value || "").trim();
-            if (!model.renameDataset(oldId, newId)) { e.target.value = oldId; return; }
+            if (!model.renameDataset(oldId, newId)) {
+                e.target.value = oldId;
+                if (newId && newId !== oldId) setStatus(`Dataset "${newId}" already exists — rename skipped`, "warn");
+                return;
+            }
             movePos(`ds:${oldId}`, `ds:${newId}`);
             render();   // migrate the live DOM node to the new id NOW (its drag wiring binds the new
                                     // id) — refreshLive below skips render when the dataset SET is unchanged, which
@@ -998,6 +1046,10 @@ function wireNode(div, n) {
             // register_history rides the activity beat top-level (live collection AND the test feed);
             // paint on mount so a just-opened satellite shows its last snapshot (or empty) immediately.
             queueMicrotask(() => renderRegisterHistory(r.id));
+        } else if (r.kind === "processhistory") {
+            // process_history rides the activity beat top-level (live collection AND the test feed);
+            // paint on mount so a just-opened satellite shows its last snapshot (or empty) immediately.
+            queueMicrotask(() => renderProcessHistory(r.id));
         } else {
             const rmTog = div.querySelector(".vt-showrm");   // "show removed" header toggle (checkbox)
             rmTog?.addEventListener("change", (e) => {
@@ -1033,6 +1085,8 @@ function wireNode(div, n) {
         wireAction(div, n);
     } else if (n.type === "register") {
         wireRegister(div, n);
+    } else if (n.type === "process") {
+        wireProcess(div, n);
     } else if (n.type === "filesource") {
         wireSource(div, n);
     } else if (n.type === "region") {

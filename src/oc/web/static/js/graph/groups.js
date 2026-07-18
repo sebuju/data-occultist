@@ -222,8 +222,16 @@ function renderSchemeGrid(grid, t, tier, syncPickers, commit, markFn, hasTitleBg
     const mk = (s) => {
         const b = schemeSwatch(s, s.id === t.schemeId);
         b.addEventListener("click", () => { applySchemeTo(t, s, tier); syncPickers(); commit(); });
+        // armed two-click (rule 2), same makeArmed primitive its .gp-mgr-rm twin uses (rule 7)
         const rm = b.querySelector(".gp-sw-rm");
-        if (rm) rm.addEventListener("click", (e) => { e.stopPropagation(); removeScheme(s.id); renderGroups(); ctx.persist(); notifySchemesChanged(); rebuild(); });
+        if (rm) {
+            const armed = makeArmed({
+                onArm: () => { rm.classList.add("armed"); rm.title = "click again to remove"; },
+                onTimeout: () => { rm.classList.remove("armed"); rm.title = "remove scheme"; },
+                onFire: () => { removeScheme(s.id); renderGroups(); ctx.persist(); notifySchemesChanged(); rebuild(); },
+            });
+            rm.addEventListener("click", (e) => { e.stopPropagation(); armed.trigger(); });
+        }
         return b;
     };
     const premades = SCHEMES.slice(0, BUILTIN_SCHEMES.length).map(mk);   // built-ins

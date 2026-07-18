@@ -8,7 +8,7 @@ import { forgetNodeState } from "./node_lifecycle.js";
 import { itemChanged } from "./item_wire.js";
 import { render, autosave, rebuildNode, refreshLive, live } from "./main.js";
 
-export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource", "action", "readout"]);
+export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource", "action", "readout", "process"]);
 // Denylist, NOT allowlist: every node type is removable EXCEPT these. Inverted on purpose so a new
 // functional node type is deletable by default — the recurring bug was forgetting to add each new
 // type to an allowlist. Only the profile-root nodes (game, atlas) and toggle-only satellites
@@ -53,6 +53,7 @@ export function removeNode(n) {
         sound:      { kill: () => model.removeSound(n.ref.id), after: () => autosave(null) },
         action:     { kill: () => model.removeAction(n.ref.id), after: () => autosave(null) },
         register:   { kill: () => model.removeRegister(n.ref.id), after: () => autosave(null) },
+        process:    { kill: () => model.removeProcess(n.ref.id), after: () => autosave(null) },
         filesource: { kill: () => model.removeFileSource(n.ref.id), after: () => autosave(null) },
         dataset:    { kill: () => { model.removeDataset(n.ref); purgeDatasetData(n.ref); }, after: () => autosave(null) },
     };

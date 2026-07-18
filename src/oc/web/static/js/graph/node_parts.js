@@ -26,11 +26,16 @@ import { soundParts } from "./sound_node.js";
 import { triggerParts } from "./trigger_node.js";
 import { actionParts } from "./action_node.js";
 import { registerParts } from "./register_node.js";
+import { processParts } from "./process_node.js";
 import { sourcesInput } from "./sources_input.js";
 import { subsetParts } from "./main.js";
 
 // Header toggle button that shows/hides a node's opt-in satellite (preview / vt-table).
 // `.gn-sat-tog` carries the satellite id; main.js wires every one through model.toggleSatellite.
+//
+// PARKED ICONS: the header buttons now render one-word text labels (_SAT_WORD below, bracketed
+// by CSS .gn-cog::before/::after), not these SVG glyphs. The factories + _SAT_ICON map are kept
+// here (the "stash") so a revert to icons is a one-line swap — do not delete.
 const SAT_EYE = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
     svg("path", { fill: "currentColor", d: "M8 3.5C4.5 3.5 1.7 5.7.5 8c1.2 2.3 4 4.5 7.5 4.5S14.3 10.3 15.5 8C14.3 5.7 11.5 3.5 8 3.5zm0 7.5a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm0-1.6a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8z" }));
 const SAT_GRID = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
@@ -43,15 +48,21 @@ const SAT_DISMISS = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height
 const SAT_HIST = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
     svg("circle", { cx: "8", cy: "8", r: "5.5", fill: "none", stroke: "currentColor", "stroke-width": "1.3" }),
     svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round", d: "M8 5v3l2 1.5" }));
-const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)", history: "fire history", readouthistory: "read history", producerhistory: "fetch history", registerhistory: "push history" };
-const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS, history: SAT_HIST, readouthistory: SAT_HIST, producerhistory: SAT_HIST, registerhistory: SAT_HIST };
+const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)", history: "fire history", readouthistory: "read history", producerhistory: "fetch history", registerhistory: "push history", processhistory: "input/output history" };
+const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS, history: SAT_HIST, readouthistory: SAT_HIST, producerhistory: SAT_HIST, registerhistory: SAT_HIST, processhistory: SAT_HIST };
+// the one-word header label per kind (rendered bare; CSS wraps it in [ ]). Every history flavour
+// reads "log"; the full meaning stays in the button's title/aria-label (unchanged below).
+const _SAT_WORD = { preview: "preview", producer: "preview", vttable: "data", dismissed: "dropped", history: "log", readouthistory: "log", producerhistory: "log", registerhistory: "log", processhistory: "log" };
 export function satToggleBtn(satId, kind) {
     const on = model.satelliteOn(satId);
     const title = `${on ? "hide" : "show"} ${_SAT_LABEL[kind] || "data table"}`;
+    const word = _SAT_WORD[kind] || "data";
+    // `.gn-log` (every history flavour reads "log") is flex-ordered LAST in .gn-hctl (graph.css),
+    // so a [log] button always sits rightmost even when the node also carries a [box]/other toggle.
     return h("button", {
-        class: `gn-sat-tog gn-cog${on ? " on" : ""}`, dataset: { sat: satId },
+        class: `gn-sat-tog gn-cog${on ? " on" : ""}${word === "log" ? " gn-log" : ""}`, dataset: { sat: satId },
         title, "aria-label": title, "aria-pressed": on,
-    }, (_SAT_ICON[kind] || SAT_GRID)());
+    }, word);
 }
 
 // Rect-edit toggle: reveals typed x/y/w/h inputs for this node's OCR box, overlaid on the body
@@ -63,7 +74,8 @@ const RECT_ICON = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: 
         d: "M1.5 5V1.5H5M11 1.5h3.5V5M14.5 11v3.5H11M5 14.5H1.5V11" }),
     svg("rect", { x: "4.5", y: "4.5", width: "7", height: "7", fill: "none", stroke: "currentColor", "stroke-width": "1.1" }));
 export function rectEditBtn() {
-    return h("button", { class: "gn-rectbtn gn-cog", title: "edit box position/size", "aria-label": "edit box position/size" }, RECT_ICON());
+    // one-word label "box" (CSS wraps it in [ ]); RECT_ICON is parked above for a revert.
+    return h("button", { class: "gn-rectbtn gn-cog", title: "edit box position/size", "aria-label": "edit box position/size" }, "box");
 }
 
 // A slide toggle: now a NATIVE checkbox (base.css renders every checkbox as a slide switch,
@@ -76,6 +88,17 @@ export function slideToggle({ on, title, cls = "", label = "", hidden = false })
     const root = label ? h("label", { class: "gn-slide-wrap" }, box, h("span", { class: "gn-slide-lbl" }, label)) : box;
     if (hidden) root.hidden = true;
     return root;
+}
+
+// The node ENABLE toggle: a [1|0] BUTTON (was a label+checkbox rocker) that wears .gn-cog like the
+// other header word buttons, so CSS adds the outer [ ]. Inner `1 | 0`: the active digit tints by
+// `[aria-pressed]` (graph.css). main.js wires the click (flips aria-pressed + reads it). Lives
+// always-visible + rightmost in the header, unlike the hover-revealed sat/rect controls.
+export function enableBtn({ on, title }) {
+    return h("button", { class: "gn-enable gn-cog", title, "aria-label": title, "aria-pressed": on },
+        h("span", { class: "rk rk-1", "aria-hidden": "true" }, "1"),
+        h("span", { class: "rk-b", "aria-hidden": "true" }, "|"),
+        h("span", { class: "rk rk-0", "aria-hidden": "true" }, "0"));
 }
 
 // per-dataset "show removed (no-longer-present) rows" flag for the vt-table satellite (default
@@ -197,7 +220,7 @@ export function windowControls(w) {
 // black-on-white; `threshold` is global Otsu; `invert` flips light-on-dark; `scale` upsamples
 // small fonts. Dual-use (rule 7): `holder` is any object carrying `.preprocess` — a WindowDef
 // (window node) or a readout's FieldDef (readout node). Handlers = wirePreprocess (window_wire).
-const PP_MODES = [["none", "none"], ["color", "keep text color(s)"],
+const PP_MODES = [["none", "none"], ["color", "keep color(s)"],
     ["threshold", "auto threshold"], ["invert", "invert"]];
 
 // Tooltips carried on the CONTROL elements themselves (not just the kv label) so hovering the
@@ -536,7 +559,7 @@ export function fieldConfigBody(fd, cls, fid, afterConf = null, stability = fals
         type: "number", min: "0", class: `gi stab-n ${cls}`, dataset: { k, ...da },
         value: String(val ?? 0), title });
     return frag(
-        kv("type", h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, fd.type === v ? `<${t}>` : t)))),
+        cls !== "roset" && kv("type", h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, fd.type === v ? `<${t}>` : t)))),   // readouts have no editable type
         kv("isolate", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate }),
             { title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. an '8' read as '81')" }),
         isText && kv("glyph-check", h("input", { type: "checkbox", class: cls, dataset: { k: "glyph_check", ...da }, checked: !!fd.glyph_check }),
@@ -547,14 +570,21 @@ export function fieldConfigBody(fd, cls, fid, afterConf = null, stability = fals
             stabNum("stab_min", fd.stability_min, "N — minimum expected-quality reads required within the window"),
             h("span", { class: "stab-of" }, "of"),
             stabNum("stab_reads", fd.stability_reads, "M — window size, how many recent reads to consider (0 = filter off)")),
-            { title: "misfire filter (live only): surface this readout only when at least N of the last M reads were the expected type/quality — a number field wants a number, text wants non-empty — else HOLD the last value. Kills the OCR garbage a busy action screen produces without lagging a legit fast-changing number. Second box 0 = off." }),
+            { title: "misfire filter (live only): surface this readout only when at least N of the last M reads were a good value — a real read, not OCR noise — else HOLD the last value. Kills the OCR garbage a busy action screen produces without lagging a legit fast-changing value. Second box 0 = off." }),
         // per-readout OCR crop cleanup — the SAME controls as the window's Text appearance,
         // sunk into this readout's own preprocess (overrides the window's for this box). Masking
         // white/whitish HUD digits + upscale saves a thin decimal a busy background would drop.
-        stability && subhead("text appearance", null,
-            "clean THIS readout's crop before OCR (overrides the window's). Mask the digit colour + upscale so a thin decimal survives — the fix for a cooldown that reads e.g. 400 instead of 4.00"),
-        stability && preprocessControls(fd),
+        stability && preprocessControls(fd),   // per-readout OCR crop cleanup (overrides the window's), no heading
         afterConf,   // optional extra row right below conf (readout node slots its live value here)
+        cls !== "roset" && rulesSection(fd, cls, fid));   // readouts don't process values through a rule pipeline
+}
+
+// The rules PIPELINE section — copy/paste/add header + the rows — SHARED by the per-field config
+// body (region/item-field/readout) and the standalone process node (rule 7). `fd` is any rule-
+// holder with a `.rules` array; `wireFieldRules` binds the same `.rule*` controls for both.
+export function rulesSection(fd, cls, fid) {
+    const da = fid ? { fid } : {};
+    return frag(
         subhead("rules", h("div", { class: "frule-btns" },
             h("button", { class: "rulecopy", dataset: { ...da }, disabled: !(fd.rules || []).length, title: "copy this pipeline" }, COPY()),
             h("button", { class: "rulepaste", dataset: { ...da }, title: "replace all rules with the copied pipeline" }, PASTE()),
@@ -925,7 +955,7 @@ export function nodeParts(n) {
     if (n.type === "itemfield") return itemFieldParts(n);
     if (n.type === "itemtell") return itemTellParts(n);
     if (n.type === "readout") return readoutParts(n);
-    if (n.type === "scrollbar") return { title: "scrollbar", body: scrollbarParts(n) };
+    if (n.type === "scrollbar") return { title: h("span", { class: "gi-id" }, "scrollbar"), body: scrollbarParts(n) };
     if (n.type === "preview") {
         // live-read node — what the current layout would read from this window. Runs OCR
         // on demand (its own button, or the image's 👁), rendered inline.
@@ -977,6 +1007,14 @@ export function nodeParts(n) {
             // (register_history_node.js) into the .hist-host.
             return {
                 title: h("span", { class: "gi-id" }, `${r.id} pushes`),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
+        if (r.kind === "processhistory") {
+            // a process's recent input/output (non-persisted): one row per key per tick — key + input
+            // + per-rule trace + output. Filled by renderProcessHistory (process_history_node.js).
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} raw`),
                 body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
             };
         }
@@ -1041,6 +1079,8 @@ export function nodeParts(n) {
     if (n.type === "action") return actionParts(n.ref, model);
     if (n.type === "register") return { ...registerParts(n.ref, model),
         head: satToggleBtn(`reghist:${n.ref.id}`, "registerhistory") };
+    if (n.type === "process") return { ...processParts(n.ref, model),
+        head: satToggleBtn(`prochist:${n.ref.id}`, "processhistory") };
     if (n.type === "dictionary") {
         // a named word list. Text reads snap to the closest entry (exact, then fuzzy). The
         // terms live in config/dictionaries/<source>; this node just references that file.

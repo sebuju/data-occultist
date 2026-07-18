@@ -166,7 +166,7 @@ export function triggerParts(t, model) {
 // rows plus a "+ key" add-select of the register's not-yet-conditioned keys. `data-reg` scopes the
 // wiring (io_wire) to this register.
 function regCondBlock(t, rid, model) {
-    const keys = model.registerSources(rid).filter((s) => s.kind === "readout").map((s) => s.id);
+    const keys = model.registerKeys(rid);
     const conds = t.register_conds?.[rid] || [];
     const used = new Set(conds.map((c) => c.key));
     const free = keys.filter((k) => !used.has(k));

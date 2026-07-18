@@ -66,7 +66,10 @@ a.node.win:hover { border-color: var(--accent); }
 /* host nodes (dataset/preview/batches/dictionary/subset): the NODE itself resizes and
    its body + content host fill it. ONE behaviour — no separate resize handle inside. */
 .gnode.dataset, .gnode.preview, .gnode.dictionary, .gnode.subset, .gnode.producer, .gnode.vttable, .gnode.register {
-    display: flex; flex-direction: column; resize: none; overflow: hidden; min-width: 280px; }
+    /* overflow VISIBLE so the header islands (which straddle the top border) aren't clipped — the
+       inner .nodehost/.scrollhost scrolls its own content, so nothing else spills. */
+    display: flex; flex-direction: column; resize: none; overflow: visible; min-width: 280px; }
+.gnode.dictionary > .gn-body, .gnode.preview > .gn-body, .gnode.vttable > .gn-body, .gnode.register > .gn-body { overflow: hidden; }
 /* trigger node: compact, fixed; out-port must show so it can be wired to a price node */
 .gnode.trigger { width: 280px; overflow: visible; }
 .pr-src { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px;
@@ -101,7 +104,7 @@ a.node.win:hover { border-color: var(--accent); }
    so match it here: the title fills the row and pushes the type tag to the right edge (the same
    right-push every normal node gets from its input title, rule 7), instead of the tag relying on a
    margin-left:auto that the dataset "removed" toggle can fight or overflow can collapse. */
-.gnode:is(.vttable, .preview) .gi-id { flex: 1; min-width: 0; margin-left: 8px; }
+.gnode:is(.vttable, .preview, .atlas, .scrollbar) .gi-id { flex: 1; min-width: 0; color: var(--nt); padding: 6px 0px; }
 .gnode.vttable .gn-h:hover .gn-type { visibility: hidden;}
 /* vt-table satellite (dataset): [data | history] tabs sit ABOVE the table and pick which host shows */
 .ds-tabs { display: flex; gap: 4px; margin: 0; flex: 0 0 auto; position: absolute; right: 8px; }
@@ -121,12 +124,17 @@ a.node.win:hover { border-color: var(--accent); }
 .gnode.dataset .gn-foot button { flex: 0 0 auto; }
 /* subset config editors */
 .sub-of { margin-left: 6px; font-size: var(--fs-sm); }
-.gn-cog { margin-left: auto; flex: 0 0 auto; width: 22px; height: 22px; min-height: 0; padding: 0;
+/* header word buttons: a compact text chip (was a 22x22 icon box). Uppercase to sit with the
+   .gn-type tag; the [ ] come from the pseudo-elements below so the word stays bare in JS. */
+.gn-cog { margin-left: auto; flex: 0 0 auto; min-height: 0; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
-    background: transparent; border: 0; color: var(--muted); line-height: 0; cursor: pointer; }
-.gn-cog svg { display: block; margin: auto; }
+    background: transparent; border: 0; color: var(--muted); cursor: pointer; }
+.gn-cog::before { content: "["; }
+.gn-cog::after  { content: "]"; }
+.gn-cog svg { display: block; margin: auto; }   /* parked: only used if the icon glyphs are restored */
 .gn-cog:hover { color: var(--text); }
-.gn-cog.on { color: var(--accent); }
+.gn-cog.on:after,
+.gn-cog.on:before { color: var(--accent); }
 /* header controls (cog, enable toggle) appear only on node hover — sunk into the ONE `.gn-hctl`
    reveal container (graph.css) so hidden costs zero header width and showing shifts nothing.
    (delete/detach moved to the selection toolbar; collapse lives in `.gn-disc`, always visible.) */
@@ -179,32 +187,36 @@ a.node.win:hover { border-color: var(--accent); }
 .sub-row > span.muted { align-self: center; }
 .gnode .sub-rows > .sub-row > select.ss-dir { width: 50px; text-align: center; }
 .gnode .sub-rows > .sub-row > select.ss-op { width: 70px; text-align: center; }
-.sv-inputs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; align-items: center; }
-.sv-input { position: relative; display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; box-sizing: border-box;
-    min-height: 22px;   /* pin chip + add-select to one height so the select's UA min never makes them differ */
-    background: color-mix(in oklab, var(--nt, var(--accent)) 14%, transparent); color: var(--nt);
-    border-radius: 10px; font-size: var(--fs-sm); word-break: break-all;}
+.sv-inputs { display: flex; flex-wrap: wrap; margin-bottom: 4px; align-items: center; column-gap: 1ch }
+.sv-input { position: relative; display: inline-flex; align-items: center; gap: 0px; box-sizing: border-box;
+    color: var(--nt);
+    font-size: var(--fs-sm); word-break: break-all;}
+.sv-input:before { content:"["; }
+.sv-input:after { content:"]"; }
+
 /* the remove button lives INSIDE the pill — the pill supplies the outline, so the button is a
    borderless glyph (no box-shadow ring, no border), even though it carries .btn-trash. The .gnode
    prefix out-specifies the node trash rule (.gnode .btn-trash) that would otherwise ring it.
    It's HOVER-ONLY and ABSOLUTELY placed over the pill's right end, so it neither widens the pill
    nor shifts the layout when it appears; a node-tint gradient fades the text out beneath it. */
 .gnode .sv-input .sv-rmin {
-    position: absolute; top: 0; right: 0; height: 100%; padding: 0 4px 0 12px; min-height: 0;
-    display: inline-flex; align-items: center; visibility: hidden; border-radius: 0 10px 10px 0;
-    background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--nt, var(--accent)) 14%, var(--panel)) 45%);
-    color: var(--danger); border: 0; box-shadow: none; }
+    position: absolute; top: 50%; transform: translate(0, -50%); right: 0; min-height: 0;
+    display: inline-flex; align-items: center; visibility: hidden;
+    background: color-mix(in srgb, var(--nt) 5%, var(--panel));
+    color: var(--danger); border: 0; box-shadow: none;
+    width: 17px; }
 .gnode .sv-input:hover .sv-rmin { visibility: visible; }
+.sv-input:hover { filter: brightness(1.3); }
 .gnode .sv-input .sv-rmin:hover:not(:disabled) { color: var(--danger); filter: brightness(1.3); }
 /* focusable pill (carries a source node id): body click pans+zooms to it — the trash keeps its
    own click zone/hover, this only signals the REST of the pill is clickable. */
 .sv-input[data-node] { cursor: pointer; }
 /* armed removal (two-stage — CLAUDE.md rule 2): first trash click turns the WHOLE pill yellow;
    the trash stays visible (not hover-only) so the confirming second click doesn't need a re-hover. */
-.gnode .sv-input.armed { background: var(--warn); color: var(--on-accent); }
+.gnode .sv-input.armed { background: var(--warn); color: var(--on-accent); border-radius: 4px; }
 .gnode .sv-input.armed .sv-rmin,
 .gnode .sv-input.armed .sv-rmin:hover:not(:disabled) { visibility: visible; color: var(--on-accent); filter: none;
-    background: linear-gradient(90deg, transparent, var(--warn) 45%); }
+    background: var(--warn) ; }
 /* the "+ join source" add control is a pill like the source pills; the select inside is
    borderless/transparent so the pill (.sv-input) supplies the look */
 /* the add control is a plain "+" glyph, not a pill: drop the .sv-input border/fill so only the
@@ -273,7 +285,7 @@ select.sv-addin:not(:hover) { opacity: 0.7; }
    edge. A labelled toggle is a <label class=gn-slide-wrap> wrapping the checkbox + text. */
 .gn-h .gn-slide-wrap { margin-left: auto; flex: 0 0 auto; }
 .gn-slide-wrap { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
-    color: var(--muted); font-size: 11px; }
+    color: var(--muted); font-size: 11px; margin: 0; }
 .gn-slide-lbl { white-space: nowrap; }
 .gnode.node-disabled { filter: grayscale(1); }
 
@@ -372,7 +384,7 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 .pr-chk { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; flex: 0 0 auto; margin: 0; }
 .gnode .pr-chk input.pr-f-req { margin: 0; margin-left: 0px; }
 .pr-arr .pr-ff-add { align-self: start; }   /* array-reduction's inline "+ filter" stays compact, not full-width */
-.pr-ff-op { max-width: 6ch; }   /* op dropdown stays narrow; long labels (contains/ncontains) truncate, value unchanged */
+.pr-ff-op { max-width: 6ch; box-sizing: content-box; }   /* op dropdown stays narrow; long labels (contains/ncontains) truncate, value unchanged */
 .pr-f-type { width: auto; }
 
 /* producer preview satellite (resolved inputs + output schema + live test-fetch) */

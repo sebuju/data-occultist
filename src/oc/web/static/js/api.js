@@ -531,6 +531,15 @@ export async function renameRegister(game, oldId, newId) {
     if (!r.ok) throw new Error(`rename register: ${r.status} ${await r.text()}`);
     return r.json();
 }
+// Carry a process's live output + input/output history to its new id after a rename — else its
+// "raw" satellite reads empty under the new id until the next collector tick repopulates it.
+export async function renameProcess(game, oldId, newId) {
+    const r = await tfetch(`/api/live/${encodeURIComponent(game)}/process/${encodeURIComponent(oldId)}/rename`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ new_id: newId }),
+    });
+    if (!r.ok) throw new Error(`rename process: ${r.status} ${await r.text()}`);
+    return r.json();
+}
 
 // Wipe a dataset's stored records + ledger.
 export async function clearDataset(game, dataset) {

@@ -83,7 +83,7 @@ function selClsFor(aId, bId) {
 // A data edge always leaves its source node's `.port.out` handle. Every source that draws
 // one — window, producer, dataset, view (subset), file source — anchors its data line at the port
 // dot and gets the animated flow. (Keep this prefix set in sync with `outPortSpec`.)
-const PORT_OUT_SRC = ["win:", "producer:", "ds:", "sub:", "src:", "ro:", "register:"];
+const PORT_OUT_SRC = ["win:", "producer:", "ds:", "sub:", "src:", "ro:", "register:", "process:"];
 // parent->child structural tethers (a node bonded to its companion/children): preview/vttable (img),
 // region+field boxes (field), item crops (item), tell boxes (tell). They attach at face CENTRES, not
 // corners; their middle segments are still evicted off bands/nodes, only the centred endpoints are spared.

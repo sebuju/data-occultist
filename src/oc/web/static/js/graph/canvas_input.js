@@ -11,7 +11,7 @@ import { openContextMenu } from "../ctxmenu.js";
 import { registerKey, SCOPE } from "../inputbus.js";
 import {
     createWindowNode, createDatasetNode, createSubsetNode, createProducerNode, createFileSourceNode,
-    createTriggerNode, createToastNode, createSoundNode, createActionNode, createRegisterNode,
+    createTriggerNode, createToastNode, createSoundNode, createActionNode, createRegisterNode, createProcessNode,
     createDictionaryNode,
 } from "./panels/toolbox.js";
 import { deselectAll, setMultiSelect, selectionIds } from "./main.js";
@@ -150,6 +150,7 @@ export function wireCanvasInput() {
             ["sound", "sound", createSoundNode],
             ["action", "action", createActionNode],
             ["register", "register", createRegisterNode],
+            ["process", "process", createProcessNode],
             ["dictionary", "dictionary", createDictionaryNode],
         ];
         openContextMenu(ev.clientX, ev.clientY, ADD_ITEMS.map(([type, title, make]) => ({

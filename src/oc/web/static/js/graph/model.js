@@ -255,7 +255,7 @@ export class GraphModel {
             ["toast", this.profile.toasts], ["sound", this.profile.sounds],
             ["filesource", this.profile.file_sources], ["trigger", this.profile.triggers],
             ["register", this.profile.registers], ["dictionary", this.profile.dictionaries],
-            ["window", this.profile.windows],
+            ["process", this.profile.processes], ["window", this.profile.windows],
         ];
         for (const [kind, arr] of defs)
             for (const o of arr || []) scalar([kind], true, () => o.id, (v) => { o.id = v; });
@@ -312,6 +312,25 @@ export class GraphModel {
         prefixedList(this.profile.actions, (x) => x.sources);      // dataset: | register:
         prefixedList(this.profile.toasts, (x) => x.sources);       // dataset: | subset: | readout:
         prefixedList(this.profile.registers, (x) => x.sources);    // readout:
+        // process inputs (ProcessInput {ref,out}) — like prefixedList but the id lives in `.ref`, and a
+        // register-slot ref carries a "#<key>" suffix (register:<id>#<key>); decode the kind, and for
+        // register refs match/repoint the id BEFORE the "#" while preserving the suffix, so a register
+        // rename moves "register:old#k" -> "register:new#k" and a register delete prunes it (blank id).
+        const procRegId = (r) => { const rest = r.slice(r.indexOf(":") + 1), h = rest.indexOf("#"); return h < 0 ? rest : rest.slice(0, h); };
+        for (const p of this.profile.processes || []) {
+            const a = p.sources; if (!a) continue;
+            a.forEach((inp, i) => {
+                const ref = inp.ref || ""; const c = ref.indexOf(":"); if (c < 0) return;
+                const kind = ref.slice(0, c);
+                if (kind === "register") {
+                    const suf = (() => { const rest = ref.slice(c + 1), h = rest.indexOf("#"); return h < 0 ? "" : rest.slice(h); })();
+                    scalar(["register"], false, () => procRegId(a[i].ref), (v) => { a[i].ref = `register:${v}${suf}`; });
+                } else {
+                    scalar([kind], false, () => a[i].ref.slice(a[i].ref.indexOf(":") + 1), (v) => { a[i].ref = `${kind}:${v}`; });
+                }
+            });
+            lists.push({ arr: () => p.sources, empty: (o) => !procRegId(o.ref || "") });
+        }
 
         // dict-key sites (register slots) — re-key on rename, drop on delete
         const dictSite = (kinds, owner, key) => sites.push({
@@ -489,6 +508,7 @@ export class GraphModel {
         if (id.startsWith("hist:")) return `trigger:${id.slice(5)}`;    // trigger's recent-fires history
         if (id.startsWith("rohist:")) return `ro:${id.slice(7)}`;       // readout's recent-reads history
         if (id.startsWith("reghist:")) return `register:${id.slice(8)}`; // register's recent-pushes history
+        if (id.startsWith("prochist:")) return `process:${id.slice(9)}`; // process's recent input/output history
         return null;
     }
     satelliteBonds() {
@@ -560,6 +580,15 @@ export class GraphModel {
             if (this.satelliteOn(`reghist:${x.id}`))
                 ns.push({ id: `reghist:${x.id}`, type: "vttable", ref: { kind: "registerhistory", id: x.id } });
         }
+        // standalone rules-pipeline node fed by readouts/registers/processes (never persisted). Id
+        // prefix `process:` — distinct from every existing prefix (see _TYPE_BY_PREFIX).
+        for (const x of this.profile.processes || []) {
+            ns.push({ id: `process:${x.id}`, type: "process", ref: x });
+            // input/output-history satellite (opt-in): key + input + per-rule trace + output, non-
+            // persisted — a standard vttable grid (kind "processhistory"). See process_history_node.js.
+            if (this.satelliteOn(`prochist:${x.id}`))
+                ns.push({ id: `prochist:${x.id}`, type: "vttable", ref: { kind: "processhistory", id: x.id } });
+        }
         for (const d of this.profile.dictionaries || []) ns.push({ id: `dict:${d.id}`, type: "dictionary", ref: d });
         return ns;
     }
@@ -579,7 +608,8 @@ export class GraphModel {
             case "window": return `win:${bare}`;
             case "filesource": return `src:${bare}`;
             case "producer": return `producer:${bare}`;
-            case "register": return `register:${bare}`;
+            case "register": return `register:${bare.split("#")[0]}`;   // register:<id>#<key> -> the register node
+            case "process": return `process:${bare}`;
             case "dataset": return `ds:${bare}`;
             case "subset": return `sub:${bare}`;
             case "readout": { const site = this.readoutSite(bare); return site ? `ro:${site.win}:${bare}` : null; }
@@ -593,6 +623,7 @@ export class GraphModel {
         if (this.toastNode(ref)) return `toast:${ref}`;
         if (this.soundNode(ref)) return `sound:${ref}`;
         if (this.actionNode(ref)) return `action:${ref}`;
+        if (this.processNode(ref)) return `process:${ref}`;
         const site = this.readoutSite(ref);
         return site ? `ro:${site.win}:${ref}` : null;
     }
@@ -693,13 +724,23 @@ export class GraphModel {
         // that state becomes joinable/excludable like any other dataset.
         for (const x of this.profile.registers || []) {
             for (const s of this.registerSources(x.id)) {
-                if (s.kind !== "readout") continue;
-                const from = this.refNode(s.ref);
+                const from = this.refNode(s.ref);   // a readout OR a process feeds a register
                 if (from) es.push({ from, to: `register:${x.id}`, kind: "data" });
             }
             if (x.persist) es.push({ from: `register:${x.id}`, to: `ds:${x.persist}`, kind: "data" });
             // push-history satellite: dotted "img" edge register -> its recent-pushes grid (opt-in)
             if (this.satelliteOn(`reghist:${x.id}`)) es.push({ from: `register:${x.id}`, to: `reghist:${x.id}`, kind: "img" });
+        }
+        // a process APPLIES its rules pipeline to every wired input (readout/register/process ->
+        // process), key preserved, and its output feeds another process or a register (that wire is
+        // drawn from the consumer's own sources, above / below).
+        for (const x of this.profile.processes || []) {
+            for (const s of this.processSources(x.id)) {
+                const from = this.refNode(s.ref);   // readout:/register:(#key)/process: source -> process
+                if (from) es.push({ from, to: `process:${x.id}`, kind: "data" });
+            }
+            // input/output-history satellite: dotted "img" edge process -> its recent-fires grid (opt-in)
+            if (this.satelliteOn(`prochist:${x.id}`)) es.push({ from: `process:${x.id}`, to: `prochist:${x.id}`, kind: "img" });
         }
         for (const d of this.profile.dictionaries || []) {
             es.push({ from: "game", to: `dict:${d.id}`, kind: "own" });
@@ -1048,7 +1089,7 @@ export class GraphModel {
         if (!x) return;
         x.slots = x.slots || {};
         const uniq = [...new Set(keys || [])];
-        const all = this.registerSources(regId).filter((s) => s.kind === "readout").map((s) => s.id);
+        const all = this.registerKeys(regId);
         if (!uniq.length || (uniq.length === all.length && all.every((k) => uniq.includes(k)))) delete x.slots[regId];
         else x.slots[regId] = uniq;
     }
@@ -1079,13 +1120,63 @@ export class GraphModel {
         this._emitRename("register", oldId, newId);
         return true;
     }
-    // Wired readout feeders as prefixed refs "readout:<id>" (mirrors toastSources). -> {kind,id,ref}.
-    registerSources(id) {
-        const x = this.registerNode(id);
-        return ((x && x.sources) || []).map((ref) => {
+    // Parse a prefixed-ref sources[] array ("kind:id" per entry) -> [{kind,id,ref}], dropping any
+    // entry with no kind or id. The ONE parse every prefixed-source list (register/toast/process)
+    // shares — a new sources holder calls this, it doesn't re-inline the split (rule 7).
+    static _parseRefs(sources) {
+        return (sources || []).map((ref) => {
             const i = ref.indexOf(":");
             return i < 0 ? { kind: "", id: ref, ref } : { kind: ref.slice(0, i), id: ref.slice(i + 1), ref };
         }).filter((s) => s.kind && s.id);
+    }
+    // The source KINDS each consumer node type accepts — the ONE truth every "+ add source" picker
+    // reads (and the port-drop targets agree with). Declaring a new wireable pairing = one edit here,
+    // not a hand-rolled candidate list per node (rule 7). `register_key` = a single register slot
+    // (register:<id>#<key>), the process key-mangler's single-key unit.
+    static SOURCE_KINDS = {
+        register: ["readout", "process"],
+        process: ["readout", "register_key"],
+        toast: ["readout", "dataset", "subset"],
+    };
+    // Addable source candidates for a consumer node, derived from SOURCE_KINDS + the consumer's
+    // already-wired refs. -> [{ref,label,kind}]. Every picker calls this so the listings can't drift
+    // from what's actually wireable (e.g. a register's "+" now lists processes, not only readouts).
+    sourceCandidates(consumerType, consumerId) {
+        const kinds = GraphModel.SOURCE_KINDS[consumerType] || [];
+        const wired = new Set(this._wiredRefs(consumerType, consumerId));
+        const out = [];
+        const add = (ref, label, kind) => { if (!wired.has(ref)) out.push({ ref, label, kind }); };
+        for (const kind of kinds) {
+            if (kind === "readout") for (const v of this.readouts()) add(`readout:${v.id}`, `readout: ${v.id}`, kind);
+            else if (kind === "process") for (const pid of this.processes()) { if (pid !== consumerId) add(`process:${pid}`, `process: ${pid}`, kind); }
+            else if (kind === "register_key") for (const rg of this.registers()) for (const k of this.registerKeys(rg)) add(`register:${rg}#${k}`, `register: ${rg} · ${k}`, kind);
+            else if (kind === "register") for (const rg of this.registers()) add(`register:${rg}`, `register: ${rg}`, kind);
+            else if (kind === "dataset") for (const ds of this.datasets()) add(`dataset:${ds}`, `dataset: ${ds}`, kind);
+            else if (kind === "subset") for (const s of (this.profile.subsets || [])) add(`subset:${s.id}`, `subset: ${s.id}`, kind);
+        }
+        return out;
+    }
+    // The refs a consumer already has wired (excluded from candidates) — reads each consumer's own
+    // parsed sources, so it tracks whatever shape that node stores (strings vs ProcessInput objects).
+    _wiredRefs(consumerType, id) {
+        if (consumerType === "register") return this.registerSources(id).map((s) => s.ref);
+        if (consumerType === "process") return this.processSources(id).map((s) => s.ref);
+        if (consumerType === "toast") return this.toastSources(id).map((s) => s.ref);
+        return [];
+    }
+    // Wired readout feeders as prefixed refs "readout:<id>" (mirrors toastSources). -> {kind,id,ref}.
+    registerSources(id) { return GraphModel._parseRefs(this.registerNode(id)?.sources); }
+    // The full ordered key set a register holds from its WIRING alone: each wired readout's id, plus
+    // each wired process's declared output keys. Deduped, first-wins order. The ONE truth every
+    // register key list reads (register cells, trigger conditions, action slots, register_key
+    // candidates) — was 5 diverging copies of a readout-only filter that dropped process keys (rule 7).
+    registerKeys(id) {
+        const keys = [];
+        for (const s of this.registerSources(id)) {
+            if (s.kind === "readout") keys.push(s.id);
+            else if (s.kind === "process") keys.push(...this.processOutputKeys(s.id));
+        }
+        return [...new Set(keys)];
     }
     addRegisterSource(id, ref) {
         const x = this.registerNode(id);
@@ -1117,6 +1208,62 @@ export class GraphModel {
     // Ignore null / empty reads instead of writing them to a keyslot.
     setRegisterIgnoreEmpty(id, on) { const x = this.registerNode(id); if (x) x.ignore_empty = !!on; }
 
+    // ---- process nodes: standalone rules pipeline applied to wired inputs, key-preserved
+    // (consolidates the identical rules section otherwise copy-pasted across readouts — see ProcessDef) ----
+    processNode(id) { return (this.profile.processes || []).find((x) => x.id === id) || null; }
+    processes() { return (this.profile.processes || []).map((x) => x.id); }
+    addProcess() {
+        this.profile.processes = this.profile.processes || [];
+        let n = 1, id = "process";
+        while (this.processNode(id)) id = `process_${++n}`;
+        this.profile.processes.push({ id, type: "text", sources: [], rules: [], enabled: true });
+        return id;
+    }
+    // unwire nothing points AT a process today (its output is read by consumers' own sources, which
+    // the registry repoints), so delete just drops the def + any dangling ref via the one registry.
+    removeProcess(id) {
+        this.profile.processes = (this.profile.processes || []).filter((x) => x.id !== id);
+        this._unwire("process", id);
+    }
+    renameProcess(oldId, newId) {
+        newId = (newId || "").trim();
+        if (!newId || newId === oldId || this.processNode(newId)) return false;
+        this._repoint("process", oldId, newId, { decl: true });   // def id + every consumer's "process:" source
+        this._emitRename("process", oldId, newId);
+        return true;
+    }
+    // Wired single-key inputs as {kind,id,key?,ref,out} — each is a ProcessInput {ref,out}. Parses the
+    // ref via the shared prefixed-ref parse (rule 7), splits a register slot's "#<key>" into id+key,
+    // and carries the output-key rename `out` (blank = keep the input key). `ref` stays the full ref.
+    processSources(id) {
+        return ((this.processNode(id)?.sources) || []).map((inp) => {
+            const [p] = GraphModel._parseRefs([inp.ref]);
+            if (!p) return null;
+            const s = { ...p, out: inp.out || "" };
+            if (s.kind === "register") { const h = s.id.indexOf("#"); if (h >= 0) { s.key = s.id.slice(h + 1); s.id = s.id.slice(0, h); } }
+            return s;
+        }).filter(Boolean);
+    }
+    addProcessSource(id, ref) {
+        const x = this.processNode(id);
+        if (!x || !ref) return false;
+        x.sources = x.sources || [];
+        if (x.sources.some((s) => s.ref === ref)) return false;
+        x.sources.push({ ref, out: "" });
+        return true;
+    }
+    removeProcessSource(id, ref) { const x = this.processNode(id); if (x) x.sources = (x.sources || []).filter((s) => s.ref !== ref); }
+    // The output keys a process emits — one per input: its `out` rename, or the input's own key when
+    // blank (mirrors process_node.js inKey + the output field placeholder). Lets a downstream register
+    // scaffold a cell per process key from the wiring alone, before any data flows.
+    processOutputKeys(id) {
+        return this.processSources(id).map((s) => s.out || (s.kind === "register" ? (s.key || s.id) : s.id));
+    }
+    // Set an input's output-key rename (the key mangler). Blank -> keep the input key.
+    setProcessSourceOut(id, ref, out) { const x = this.processNode(id); const s = x && (x.sources || []).find((s) => s.ref === ref); if (s) s.out = (out || "").trim(); }
+    // Value type carried into the rules pipeline (gates which rules apply + final coercion) — text | number.
+    setProcessType(id, t) { const x = this.processNode(id); if (x) x.type = t === "number" ? "number" : "text"; }
+
     // ---- toasts: raise an OS notification when fired (a trigger target) -------
     toastNode(id) { return (this.profile.toasts || []).find((x) => x.id === id) || null; }
     addToast() {
@@ -1131,13 +1278,7 @@ export class GraphModel {
     // A toast's wired {{token}} feeders are prefixed refs — "readout:<id>" | "dataset:<id>" |
     // "subset:<id>", one per connected node. `toastSources` parses them to {kind, id, ref}; the UI
     // builds token chips + edges from this, and ONLY these sources drive the suggestion chips.
-    toastSources(id) {
-        const x = this.toastNode(id);
-        return ((x && x.sources) || []).map((ref) => {
-            const i = ref.indexOf(":");
-            return i < 0 ? { kind: "", id: ref, ref } : { kind: ref.slice(0, i), id: ref.slice(i + 1), ref };
-        }).filter((s) => s.kind && s.id);
-    }
+    toastSources(id) { return GraphModel._parseRefs(this.toastNode(id)?.sources); }
     addToastSource(id, ref) {
         const x = this.toastNode(id);
         if (!x || !ref) return false;

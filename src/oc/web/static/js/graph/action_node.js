@@ -43,7 +43,7 @@ export function actionParts(x, model) {
                     ACTIONS.map(([v, l]) => h("option", { value: v, selected: v === cur }, v === cur ? `<${l}>` : l))),
                 ...regSrcs.map((s) => slotRow({
                     regId: s.id,
-                    keys: model.registerSources(s.id).filter((k) => k.kind === "readout").map((k) => k.id),
+                    keys: model.registerKeys(s.id),
                     targeted: model.actionSlots(x.id, s.id),
                     hint: `which of ${s.id}'s keys this action operates on (default all)` })),
                 needsDest && labCell("into", "destination dataset for clone/move"),

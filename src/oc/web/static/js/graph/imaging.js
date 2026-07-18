@@ -391,7 +391,8 @@ async function openImage(winId, nodeEl = null) {
             h("span", { class: "tools" },
                 KINDS.map(([v, label, icon, tip]) =>
                     h("button", { class: "tool", dataset: { kind: v }, title: tip || `draw ${label}` }, `${icon} ${label}`)))),
-        h("div", { class: "canvas-wrap" }, h("canvas")),
+       h("div", { class: "canvas-wrap" }, h("canvas")),
+        imgLayers(),
         h("div", { class: "img-foot" },
             h("span", { class: "img-pages", hidden: true },
                 h("button", { class: "imgpg", dataset: { d: "-1" }, title: "previous image" }, "‹"),
@@ -402,7 +403,7 @@ async function openImage(winId, nodeEl = null) {
             h("button", { class: "imgcap", title: "capture the live window as a new image for this window" }, "capture"),
             h("button", { class: "imgtestone", title: "run the image currently shown through the collect pipeline (feeds readouts/registers + writes records), like live" }, "feed"),
             h("button", { class: "imgtest", title: "run ALL this window's images through the collect pipeline one at a time (feeds readouts/registers + writes records), like live — click again to stop" }, "feed all")),
-        imgLayers());
+        );
     const canvas = host.querySelector("canvas");
     const { kindOf, canCreate } = wireTools(host);   // one shared tool group; no draw until a tool is armed
     const overlay = new Overlay(canvas, {
@@ -516,20 +517,22 @@ async function _imageForWindow(winId) {
 
 // Open the zoomed-cutout picker for a box (window fractions) on ``winId``'s image; ``onSample(hex)``
 // receives the clicked colour. Shared by the readout and colour-detector pickers.
-export async function openBoxColorPick(winId, box, onSample) {
+export async function openBoxColorPick(winId, box, onSample, cfg) {
     const img = await _imageForWindow(winId);
-    if (img) _openColorPickModal(img, box, onSample);
+    if (img) _openColorPickModal(img, box, onSample, cfg);
 }
 
 export function openReadoutColorPick(winId, roId) {
     const ro = (model.window(winId)?.readouts || []).find((r) => r.id === roId);
     if (!ro) return;
+    const fd = model.readoutFieldOf(winId, roId);
+    const p = fd?.preprocess;                            // paint the picker like the readout's match-preview
+    const cfg = p?.mode === "color" ? { colors: p.colors, tolerance: p.tolerance, mask: true, minFrac: p.min_frac || 0 } : {};
     openBoxColorPick(winId, ro.box, (hex) => {
-        const fd = model.readoutFieldOf(winId, roId);
         nodeEdit(`ro:${winId}:${roId}`, "read",
             () => { const pp = model._ppOf(fd); if (pp && !pp.colors.includes(hex)) pp.colors.push(hex); rebuildNode(`ro:${winId}:${roId}`); },
             () => autosave(winId));                      // preprocess changes OCR input -> re-read
-    });
+    }, cfg);
 }
 
 // Same zoomed-cutout picker for a colour DETECTOR: sample from the detector's own box and drop the
@@ -537,6 +540,8 @@ export function openReadoutColorPick(winId, roId) {
 export function openDetectColorPick(winId, detId) {
     const d = model.detect(winId, detId);
     if (!d || !d.search) return;
+    const dc = d.colors;                           // paint the picker like the detector's match-preview
+    const cfg = (dc && dc.length && d.text == null) ? { colors: dc, tolerance: d.tolerance, border: d.width != null, width: d.width } : {};
     openBoxColorPick(winId, d.search, (hex) => {   // a detector's box lives on `.search`, not `.box`
         nodeEdit(`det:${winId}:${detId}`, "read", () => {
             const cols = d.colors && d.colors.length ? d.colors : [""];
@@ -546,11 +551,14 @@ export function openDetectColorPick(winId, detId) {
             rebuildNode(`det:${winId}:${detId}`);
             refreshImageBoxes(winId);
         }, () => { autosave(winId === "game" ? null : winId); refreshDetect(winId); });
-    });
+    }, cfg);
 }
 
 // box is in window fractions; draw its crop from `img` blown up, click a pixel to sample.
-function _openColorPickModal(img, box, onSample) {
+// `cfg` is the SAME shape mountMatchPreview's getCfg builds ({ colors, tolerance, mask, minFrac,
+// border, width }); it drives the pink match overlay so the picker SHOWS what the current colours
+// hit (existing picks on open) + a live preview of the pixel under the cursor.
+function _openColorPickModal(img, box, onSample, cfg = {}) {
     const natW = img.naturalWidth, natH = img.naturalHeight;
     const sx = Math.round(box.x * natW), sy = Math.round(box.y * natH);
     const sw = Math.max(1, Math.round(box.w * natW)), sh = Math.max(1, Math.round(box.h * natH));
@@ -558,9 +566,30 @@ function _openColorPickModal(img, box, onSample) {
     const dw = Math.round(sw * zoom), dh = Math.round(sh * zoom);
     const canvas = h("canvas", { class: "pp-pick-canvas", width: String(dw), height: String(dh),
         style: `width:${dw}px;height:${dh}px` });
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     ctx.imageSmoothingEnabled = false;                        // crisp pixels -> canvas pixel == source pixel
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
+
+    // snapshot the clean cutout: the reset source before each repaint AND the true-colour source
+    // for sampling (painting mutates the canvas, so read colours off `base`, never the live ctx).
+    const base = ctx.getImageData(0, 0, dw, dh);
+    const baseCols = (cfg.colors || []).filter(_isHex6).map(_mpHexToRgb);
+    // repaint the cutout with the pink match overlay for the existing picks (+ the hovered colour
+    // when previewing). Same _mpPaint the node match-preview uses (rule 7) + same arg order as _mpRender.
+    const repaint = (hoverRgb) => {
+        ctx.putImageData(base, 0, 0);
+        const cols = hoverRgb ? [...baseCols, hoverRgb] : baseCols;
+        if (cols.length) _mpPaint(ctx, 0, 0, dw, dh, cols, cfg.tolerance ?? 60,
+            cfg.border ? (cfg.width ?? 0.1) : 0, !!cfg.mask, cfg.minFrac || 0);
+    };
+    // canvas pixel under a pointer event (clamped to the cutout).
+    const ptOf = (e) => {
+        const r = canvas.getBoundingClientRect();
+        const cx = Math.min(dw - 1, Math.max(0, Math.round((e.clientX - r.left) * dw / (r.width || 1))));
+        const cy = Math.min(dh - 1, Math.max(0, Math.round((e.clientY - r.top) * dh / (r.height || 1))));
+        return { cx, cy, i: (cy * dw + cx) * 4 };
+    };
+    repaint(null);                                           // paint the existing picks on open
 
     let closed = false;
     const close = () => {
@@ -571,13 +600,23 @@ function _openColorPickModal(img, box, onSample) {
     };
     const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
 
+    // live hover: preview what the pixel under the cursor would match (coalesced on a rAF).
+    let hoverRaf = 0, pending = null;
+    canvas.addEventListener("mousemove", (e) => {
+        const { i } = ptOf(e);
+        pending = { r: base.data[i], g: base.data[i + 1], b: base.data[i + 2] };
+        if (hoverRaf) return;
+        hoverRaf = requestAnimationFrame(() => { hoverRaf = 0; repaint(pending); });
+    });
+    canvas.addEventListener("mouseleave", () => {
+        if (hoverRaf) { cancelAnimationFrame(hoverRaf); hoverRaf = 0; }
+        repaint(null);                                       // drop the hover, keep existing picks
+    });
+
     canvas.addEventListener("click", (e) => {
-        const r = canvas.getBoundingClientRect();
-        const cx = Math.min(dw - 1, Math.max(0, Math.round((e.clientX - r.left) * dw / (r.width || 1))));
-        const cy = Math.min(dh - 1, Math.max(0, Math.round((e.clientY - r.top) * dh / (r.height || 1))));
-        const [rr, gg, bb] = ctx.getImageData(cx, cy, 1, 1).data;
+        const { i } = ptOf(e);                              // sample off `base` so the pink overlay can't tint the hex
         const hx = (n) => n.toString(16).padStart(2, "0");
-        onSample(`#${hx(rr)}${hx(gg)}${hx(bb)}`);
+        onSample(`#${hx(base.data[i])}${hx(base.data[i + 1])}${hx(base.data[i + 2])}`);
         close();
     });
 

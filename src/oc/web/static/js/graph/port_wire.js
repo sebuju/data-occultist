@@ -3,7 +3,7 @@
 // source type — each contributes a `spec` (target/onDrop/onEmpty) consumed by startWire. Split
 // out of main.js; placeAt/startWire stay in main and are imported back.
 import { model } from "./state.js";
-import { placeAt, startWire } from "./main.js";
+import { placeAt, startWire, bareNodeId } from "./main.js";
 
 // Drag a node's out-port to wire its data somewhere. ONE mechanism for every source type;
 // each type contributes a `spec` describing what kind of node it drops onto (`target`),
@@ -49,23 +49,33 @@ function outPortSpec(n) {
             onEmpty: (pt) => { const id = model.addSubset(n.ref.id); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
         };
         case "readout": return {
-            // a readout feeds a TOAST its live value as a {{readout:id}} token, or a REGISTER that
-            // holds its latest value in an in-memory keyed map
-            target: ["toast", "register"],
+            // a readout feeds a TOAST its live value as a {{readout:id}} token, a REGISTER that holds
+            // its latest value in an in-memory keyed map, or a PROCESS that runs it through a rules pipeline
+            target: ["toast", "register", "process"],
             onDrop: (id, ttype) => {
                 const ref = `readout:${n.ref.id}`;
                 if (ttype === "register") model.addRegisterSource(id, ref);
+                else if (ttype === "process") model.addProcessSource(id, ref);
                 else model.addToastSource(id, ref);
             },
             onEmpty: (pt) => { const id = model.addRegister(); model.addRegisterSource(id, `readout:${n.ref.id}`); placeAt(`register:${id}`, pt); return `register:${id}`; },
         };
         case "register": return {
-            // a register OPTIONALLY mirrors its held map into a DATASET too (RegisterDef.persist),
-            // so that state becomes joinable/excludable like any other dataset — same wiring shape
-            // as window/producer/filesource -> dataset.
+            // a register OPTIONALLY mirrors its held map into a DATASET (RegisterDef.persist), so that
+            // state becomes joinable like any other dataset (same wiring shape as window/producer ->
+            // dataset). A register SLOT can feed a process, but that's a per-key pick made from the
+            // process's "+ input" picker (a whole-register drag has no single key), so no process target here.
             target: "dataset",
             onDrop: (ds) => model.setRegisterPersist(n.ref.id, ds),
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setRegisterPersist(n.ref.id, ds); return `ds:${ds}`; },
+        };
+        case "process": return {
+            // a process feeds a REGISTER (hold its re-keyed output). Its inputs are single-key
+            // (readout / register slot), so nothing takes a process AS input -> no process target.
+            // Empty-canvas drop mints a register holding it, mirroring readout->register.
+            target: "register",
+            onDrop: (id) => model.addRegisterSource(id, `process:${n.ref.id}`),
+            onEmpty: (pt) => { const id = model.addRegister(); model.addRegisterSource(id, `process:${n.ref.id}`); placeAt(`register:${id}`, pt); return `register:${id}`; },
         };
         case "filesource": return {
             target: "dataset",
@@ -131,7 +141,8 @@ function wirePortHandle(port, id, spec) {
 }
 
 // the source id a drop target commits to: a dataset node's name, or a node's bare id
-// (subset/price/trigger carry a prefixed node id in data-id).
+// (every other target carries a prefixed node id in data-id). bareNodeId strips the prefix via
+// the master _TYPE_BY_PREFIX map, so a new drop-target type never needs a hand-edited strip list.
 export function targetIdOf(el, target) {
-    return target === "dataset" ? el.dataset.ds : (el.dataset.id || "").replace(/^(sub|producer|trigger|src|dict|toast|sound|register):/, "");
+    return target === "dataset" ? el.dataset.ds : bareNodeId(el.dataset.id || "");
 }

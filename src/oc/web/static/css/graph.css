@@ -86,12 +86,12 @@
 /* header loader stays visible even collapsed (header IS the whole node then) — a collapsed
    node that refreshes now shows it, instead of the old full-node overlay being hidden. */
 .gn-h .collapse { background: transparent; padding: 0; min-height: 0; flex: 0 0 auto;
-    width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
-.gn-h .collapse svg { width: 16px; height: 16px; display: block; }
+    width: 15px; height: 15px; display: flex; align-items: center; justify-content: center; }
+.gn-h .collapse svg { width: 14px; height: 14px; display: block; }
 /* collapse + type icon share ONE fixed slot: the type icon shows at rest, the collapse
-   button replaces it while the slot is hovered. Both are absolute inside the 22px box, so the
-   hidden one takes no space and swapping never shifts the header. */
-.gn-disc { position: relative; z-index: 1; width: 22px; height: 22px; flex: 0 0 auto; }   /* keep the type icon above the id input's focus background while editing the id */
+   button replaces it while the slot is hovered. Both are absolute inside the box, so the
+   hidden one takes no space and swapping never shifts the header. Compact for the rule-island. */
+.gn-disc { position: relative; z-index: 1; width: 15px; height: 15px; flex: 0 0 auto; display: none; }   /* keep the type icon above the id input's focus background while editing the id */
 .gn-disc .nicon, .gn-disc .collapse { position: absolute; inset: 0; margin: auto; }
 .gn-disc .collapse { display: none; }
 .gn-disc:hover .collapse { display: flex; }
@@ -130,10 +130,11 @@
 .gnode.sound      { --nt: var(--nt-sound); }
 .gnode.action     { --nt: var(--nt-action); }
 .gnode.register   { --nt: var(--nt-register); }
+.gnode.process    { --nt: var(--nt-process); }
 .gnode.history    { --nt: var(--nt-history); }
 .gnode.filesource { --nt: var(--nt-filesource); }
 .gn-h { --ntint: var(--nt); }
-.gn-h .nicon { width: 18px; height: 18px; flex: 0 0 auto; color: var(--ntint); }
+.gn-h .nicon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--ntint); }
 
 /* ---- shared blueprint primitives (rule 7): ONE meter / chip / divider vocabulary every node
    reuses instead of bespoke per-type bars. The segmented meter's colour rides `--mc` (defaults
@@ -151,7 +152,7 @@
 /* editable meter: a draggable threshold bar that REPLACES a number input (field conf, tell conf).
    Segments flex to fill whatever cell it lands in (count is cosmetic), so it works at any node
    width. The whole row is the hit target; the value reads to the right like the preview's bars. */
-.meter.editable { display: flex; min-width: 0; cursor: pointer; gap: 6px; align-items: center; margin-left: 4px; }
+.meter.editable { display: flex; min-width: 0; cursor: pointer; gap: 6px; align-items: center; padding: 0.75px 0px 0.75px 4px; }
 /* FIXED-width segments (not flex) — flex 1fr rounds to uneven sub-pixel widths that look ragged.
    Fixed px keeps every segment identical at any node width; the value is pushed to the right edge. */
 .meter.editable .segs { flex: 0 0 auto; gap: 2px; flex-wrap: nowrap; }
@@ -176,15 +177,16 @@
    regardless of load order. Checkboxes (slide-toggles), ranges and colour pickers keep their own
    treatment (excluded). ---- */
 .gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select, textarea) {
-    background: transparent; border: 1px solid transparent; border-radius: 5px;
+    background: transparent; border: unset; border-radius: 5px;
     padding: 0 4px; transition: background .12s ease, border-color .12s ease;
 }
 .gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select):hover {
     background: color-mix(in oklab, var(--nt) 6%, transparent);
-    border-color: color-mix(in oklab, var(--nt) 22%, var(--line));
+    outline-color: color-mix(in oklab, var(--nt) 22%, var(--line));
 }
 .gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select, textarea):focus {
-    background: var(--bg); border-color: color-mix(in oklab, var(--nt) 50%, var(--line)); outline: none;
+    background: var(--bg); 
+    outline-color: color-mix(in oklab, var(--nt) 50%, var(--line)); 
 }
 /* strip the native number-input spinner arrows (they crowd the tight blueprint fields) */
 .gnode input::-webkit-outer-spin-button,
@@ -217,7 +219,6 @@
 .gn-foot button:not(.danger):not(.btn-trash):not(.btn-icon) {
     background: color-mix(in oklab, var(--nt, var(--accent)) 9%, transparent);
     color: var(--nt, var(--accent));
-    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--nt, var(--accent)) 40%, var(--line));
 }
 .gnode .btn:hover:not(:disabled),
 .gn-foot button:not(.danger):not(.btn-trash):not(.btn-icon):hover:not(:disabled) {
@@ -231,7 +232,15 @@
    position: absolute;
 } */
 .gnode button.danger, .gnode .btn-trash {
-    background: transparent; color: var(--danger); min-height: unset; padding: 2px;
+    color: var(--danger);
+}
+.gnode .btn-trash {
+   min-height: unset;
+   background: transparent; 
+   padding: 2px;
+}
+.gnode button.danger {
+   background: color-mix(in oklab, var(--danger, var(--accent)) 9%, transparent);
 }
 .gnode button.danger:hover:not(:disabled), .gnode .btn-trash:hover:not(:disabled) {
     /* background: var(--danger); color: var(--on-danger); filter: none; */
@@ -443,11 +452,13 @@
 
 .gnode {
     position: absolute; width: 220px; pointer-events: auto;   /* re-enable on the card (the #gnodes layer is none) */
-    /* blueprint card: flat vertical wash (panel -> card-2), border TINTED by the type token
-       (--nt) so every card reads its type from the frame, not from a bespoke per-type rule */
-    background: linear-gradient(180deg, var(--panel), var(--card-2));
-    border-radius: 8px; padding: 6px 8px; font-size: var(--fs-base);
-    box-shadow: 0px 0px 0px 1px color-mix(in oklab, var(--nt) 34%, var(--line));
+    /* box-panel card: a FLAT surface with a crisp 1px frame TINTED by the type token (--nt) — every
+       card reads its type from the frame + header disc/tag, not from a bespoke per-type fill. A real
+       border (not a box-shadow ring) so the header islands can sit INSIDE the card and still cover /
+       interrupt the top border. box-sizing:border-box keeps the border inside the node's width. */
+    background: var(--panel);
+    border-radius: 6px; padding: 6px 8px; font-size: var(--fs-base);
+    border: 1px solid color-mix(in oklab, var(--nt) 20%, transparent);
     cursor: grab;                 /* whole card drags; the exceptions below override */
     user-select: none;            /* don't select text while dragging */
     /* each node is its OWN stacking context (z-index on a positioned box makes one). Without this,
@@ -457,6 +468,13 @@
        so a node in front (higher z / later DOM) fully covers one behind it. .selected bumps to 20. */
     z-index: 10;
 }
+
+.gn-h .line {
+    flex: 1 1 0;
+    width: 100%;
+    border: 1px solid var(--nt);
+}
+
 /* (game width is set with .window below at 520px — this earlier 340px rule was dead/overridden) */
 /* a field node with fallback rules needs room for the rule row (when + then + value + trash
    on one line); this is its natural width, so a size reset lands here instead of crushing them */
@@ -488,18 +506,26 @@
 .glab input { margin-top: 2px; }
 .modal-body h4 { margin: 0; color: var(--muted); font-weight: 500; font-size: var(--fs-base); text-transform: uppercase; letter-spacing: 0.05em;
     border-bottom: 1px solid var(--muted);  }
-.gnode .gn-h { font-weight: 600; cursor: grab; display: flex; align-items: center; 
-    flex: 0 0 auto;   /* in flex-column host nodes, the header must NOT shrink when content overflows */
-    margin: -6px -8px 6px; padding: 5px 8px; overflow: hidden; position: relative; z-index: 2;
-    /* header carries a faint accent wash of the type token over the card — the second half of
-       "flat body, accent header" (the body stays neutral; only the header + border are tinted) */
-    background: linear-gradient(180deg, color-mix(in oklab, var(--nt) 12%, transparent), transparent);
-    border-bottom: 1px solid var(--line-soft); border-radius: 7px 7px 0 0; }
-/* collapsed: header IS the whole node. Keep the same top/side margins + border-bottom WIDTH
-   as expanded (so toggling never changes its height), but pull the bottom margin to -7 too
-   (matching the top) so the header covers the node's bottom padding — no empty strip below.
-   Divider colour hidden, all four corners rounded. */
-.gnode.collapsed .gn-h { margin: -6px -8px; border-bottom-color: transparent; border-radius: 8px; }
+/* box-panel header: a normal in-flow row sitting INSIDE the fully-visible border (no straddle, no
+   border gap — the frame is a complete rectangle). The card's own padding gives the border->header
+   gap; the header's margin-bottom gives the equal header->body gap — ONE rhythm on every node.
+   Left island = disc + content-width title; right island = hover controls + type tag. */
+.gnode .gn-h { font-weight: 600; cursor: grab; flex: 0 0 auto;
+    position: relative; z-index: 3; margin: 0 0 6px 0; padding: 0;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    overflow: visible; background: transparent; border: none; border-bottom: 3px solid var(--nt); }
+.gn-hl, .gn-hr { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
+.gn-hl { flex: 0 1 auto; overflow: hidden; cursor: grab; }
+.gn-hr { flex: 0 0 auto; }
+.gn-hl::before { content:">"; }
+.gn-hl::before,
+.gn-hl::after {
+    color: var(--muted);
+}
+
+/* collapsed: header IS the whole node — drop its bottom margin so there's no empty strip under it
+   (the body is hidden); the card padding frames it into a tidy bar. */
+.gnode.collapsed .gn-h { margin: 0; }
 .gnode .gn-h.pulse { animation: pulse 1.2s ease-out; }
 /* node-type tag in the header, shown at rest and swapped for `.gn-hctl` (below) on hover — it
    stays in NORMAL FLOW throughout (only its opacity changes), so its box keeps reserving the
@@ -511,8 +537,10 @@
 .gn-h .gn-type {
     font-size: var(--fs-xs); font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
     color: var(--ntint); background: transparent;
-    pointer-events: none; opacity: .92; transition: opacity .12s ease; z-index: 0; }
-.gn-h.gn-has-ctl:hover .gn-type, .gn-h.gn-has-ctl:focus-within .gn-type { opacity: 0; }
+    pointer-events: none; opacity: .92; z-index: 0; }
+/* on hover the tag hides (display, not opacity) so the in-flow .gn-hctl takes its exact slot — the
+   two never show at once, and the title's flex:1 soaks up any width difference. */
+.gn-h.gn-has-ctl:hover .gn-type, .gn-h.gn-has-ctl:focus-within .gn-type { display: none; }
 /* vttable/atlas/scrollbar headers have no flex:1 title input to push the type tag over (their title
    is a plain text node), so pin it to the right edge instead of letting it sit next to the title */
 .gnode.vttable .gn-h .gn-type, .gnode.atlas .gn-h .gn-type, .gnode.scrollbar .gn-h .gn-type,
@@ -523,18 +551,32 @@
    contributes ZERO width to the header's flex flow at rest (title fills the full row — nothing
    reserves a hole for it), and it overlays the `.gn-type` slot on hover so revealing it never
    shifts a sibling either. New controls just render into it (main.js) — no per-button CSS. */
-.gn-hctl { position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-    display: flex; align-items: center; gap: 8px;
-    opacity: 0; pointer-events: none; transition: opacity .12s ease; z-index: 3; }
-.gn-h:hover .gn-hctl, .gn-hctl:focus-within { opacity: 1; pointer-events: auto; }
-.gn-hctl .gn-enable { width: 26px !important; }
+/* in-flow, revealed on hover: it sits in the header row just LEFT of the always-visible enable
+   rocker (main.js order), swapping in where the type tag was. display (not opacity) so a hidden
+   cluster takes no width — the title's flex:1 absorbs the width change, so nothing else shifts. */
+.gn-hctl { display: none; align-items: center; gap: 4px; flex: 0 0 auto; z-index: 3; }
+.gn-h:hover .gn-hctl, .gn-hctl:focus-within { display: flex; }
+/* [log] history toggle always rides rightmost in the cluster (flex order, so it wins even when a
+   node also carries a [box]/other button that sits after it in the DOM). */
+.gn-hctl .gn-log { order: 1; }
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
 .gnode input.gi { width: 100%; }
-.gnode input.gi-id { width: auto; flex: 1; min-width: 0; font-weight: 600; border: unset; background: transparent; margin-left: -35px; padding-left: 43px;
-    cursor: inherit; color: var(--nt); }   /* click-to-arm: it's a drag handle until the 2nd click focuses it, so don't show the text I-beam until editing */
+.gnode input.gi-id { width: auto; flex: 0 1 auto; min-width: 0; max-width: 100%; field-sizing: content;
+    font-weight: 600; border: unset; background: transparent; margin-left: 0; padding-left: 2px; padding-right: 0px;
+    cursor: inherit; color: var(--nt); }   /* field-sizing:content -> the input (and its island) shrink-wraps the id text; click-to-arm drag handle until the 2nd click focuses it */
 .gnode input.gi-id:focus { cursor: text; }
 input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gnode .big { font-size: var(--fs-xl); }
+
+.gnode .gn-h button {
+    background: unset;
+    width: unset;
+    gap: 0;
+}
+
+.gnode .gn-h button:before { content: "["; }
+.gnode .gn-h button:after { content: "]"; }
+
 /* labelled field controls — label + input in a 2-col grid so every input
    lines up and shares one width */
 /* blueprint k/v row: a FIXED narrow label column + the control fills the rest (like the preview's
@@ -645,7 +687,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    grid so an un-migrated builder still reads correctly. Deleted once every builder emits
    flat kv() children. (Not the end state — see the no-shortcut rule in the plan.) */
 .gn-grid > .flab, .gn-grid > .lab-grid { grid-column: 1 / -1; }
-.flab { display: grid; grid-template-columns: 80px 1fr; align-items: start; gap: 2px 10px;
+.flab { display: grid; grid-template-columns: 80px 1fr; align-items: start; gap: 3px 8px;   /* coherent row rhythm — same gap as .gn-grid / .lab-grid */
     margin: 1px 0 0; font-size: var(--fs-sm); color: var(--muted);   /* kill the global label{margin-bottom:6px} — that was the loose row gap */
     /* hold every row to the de-chromed control height so slide-toggle rows line up with text/select
        rows (the toggle is shorter) — kept just above the input's own box so rows sit tight like the
@@ -689,7 +731,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .frule-head .frule-n:hover .rulemv { opacity: 1; pointer-events: auto; }
 .frule-head .rule-op { color: var(--nt, var(--accent)); }
 .frule-head select, .frule-head .rule-val, .frule-head .rule-arg { flex: 1 1 0; min-width: 4ch; width: auto; }
-.frule-head select { max-width: 12ch; text-overflow: ellipsis; }
+.frule-head select { max-width: 12ch; text-overflow: ellipsis; box-sizing: content-box; }
 .frule-head .rule-arrow { flex: 0 0 auto; }
 .frule-head .rule-fuzzy { flex: 0 0 6ch; }
 .frule-head .rule-del { flex: 0 0 auto; padding: 0; margin-left: auto; }
@@ -703,16 +745,35 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .frule-empty { margin-top: 6px; font-size: var(--fs-sm); }
 .frule :is(input, select, textarea) { width: unset; }
 .flab select, .flab input[type="number"], .flab input[type="text"] { width: 100%; min-width: 0; }
+/* process node key mangler: one row per single-key input — [inputKey chip] -> [output-key field] [trash].
+   The input-key reuses the .sv-input chip (click pans to its source node); the output field renames
+   the key downstream (placeholder = the input key, so a blank field reads as "keep"). */
+.pr-inputs { display: flex; flex-direction: column; margin: 3px 0; }
+.pr-maprow { display: flex; align-items: center; gap: 6px; }
+.pr-maprow .pr-inkey { flex: 0 1 auto; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-maprow .rule-arrow { flex: 0 0 auto; }
+.pr-maprow .pr-out { flex: 1 1 0; min-width: 4ch; width: auto;
+    background: transparent; border: 0; border-bottom: 1px solid var(--line); color: var(--text); padding: 1px 2px; }
+.pr-maprow .pr-out:focus { outline: none; border-bottom-color: var(--nt, var(--accent)); }
+.pr-maprow .pr-out::placeholder { color: var(--dim); }
+.pr-maprow .pr-rmin { flex: 0 0 auto; padding: 0; margin-left: auto; }
+/* armed removal (two-stage — rule 2): first trash click turns the WHOLE row yellow (mirrors .sv-input.armed). */
+.gnode .pr-maprow.armed { background: var(--warn); color: var(--on-accent); border-radius: 4px; }
+.gnode .pr-maprow.armed .pr-inkey, .gnode .pr-maprow.armed .pr-rmin { color: var(--on-accent); }
+/* "+ input" rides the inputs subhead as an icon (like the rules .ruleadd): a transparent native
+   select overlaid on the PLUS glyph (the mb-add overlay technique) so it opens the candidate list. */
+.frule-btns .pr-inadd { position: relative; display: inline-flex; align-items: center; line-height: 1; font-size: var(--fs-xs); color: var(--nt, var(--accent)); cursor: pointer; }
+.frule-btns .pr-inadd .pr-addin { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 /* consensus (readout misfire gate): two narrow "N of M" boxes, not the full-width .gi input */
 .stab-consensus { display: flex; align-items: center; gap: 5px; }
-.stab-consensus input.stab-n { width: 3em; flex: 0 0 3em; min-width: 0; text-align: center; border-bottom: 1px solid var(--nt); border-radius: 0px; }
+.stab-consensus input.stab-n { width: 3em; flex: 0 0 3em; min-width: 0; text-align: center; border-bottom: 1px solid var(--nt); border-radius: 0px; height: 16.8px; }
 .stab-consensus .stab-of { font-size: var(--fs-sm); opacity: .7; }
 /* shared labelled grid (triggers, price node, view config): every label cell sizes to its own
    text in col 1 and the control fills col 2 — short labels (kind/source/join on/limit) no longer
    eat half the row like a 1fr/1fr .flab does. Built from dom.js `labCell`; the cell AFTER each
    .lab is its control. .lab-top pins a label to the top of a control that wraps to many lines. */
 .lab-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 8px;
-    margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
+   font-size: var(--fs-sm); color: var(--muted); }
 /* toast: app label + input row sits well clear of the images list above it */
 .tn-app-grid { margin-top: 16px; }
 .lab-grid > .lab { white-space: nowrap; }
@@ -728,7 +789,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    block (lab-top's job, which sits a hair high) nor the centre of all rows. A 22px inline-flex box
    (the pill's min-height) centres the label text on the pill text. `.sv-lab` is set by the srcRow
    primitive (dom.js) on every label that precedes a .sv-inputs list — no :has() needed. */
-.lab-grid > .lab.sv-lab { align-self: start; padding-top: 0; min-height: 22px;
+.lab-grid > .lab.sv-lab { align-self: start; padding-top: 0;
     display: inline-flex; align-items: center; }
 /* full-width cells inside the grid (e.g. the price node's source-pill list) span both columns */
 .lab-grid > .gspan { grid-column: 1 / -1; }
@@ -750,7 +811,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* on_register condition block: rows of [key][when][value(..value2)][trash] stacked in the content
    cell of their register's srcRow. The row is a horizontal flex; the two selects share the stretch,
    the value inputs stay narrow. `.armed` mirrors a chip's mid-remove highlight (rule 2). */
-.tg-regconds { display: flex; flex-direction: column; gap: 4px; padding-left: 4px; min-width: 0; box-sizing: border-box; }
+.tg-regconds { display: flex; flex-direction: column; gap: 4px; min-width: 0; box-sizing: border-box; }
 .tg-condrow { display: flex; align-items: center; gap: 4px; min-width: 0; border-radius: 3px; }
 .tg-condrow > select { flex: 1 1 auto; min-width: 0; }
 .tg-condrow > .tg-condval, .tg-condrow > .tg-condval2 { flex: 0 0 4.2em; width: 4.2em; min-width: 0; }
@@ -783,36 +844,34 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    .tg-secs / .tg-prog / .tg-last cells (above) are the only ones pinned to a control-row box. */
 /* checkboxes are slide-toggles now (base.css). Keep them at the start of their grid cell
    and never let a flex row stretch them — their size is fixed by the toggle. */
-/* The node's ENABLE switch (header, .gn-enable) stays a slide toggle — a prominent on/off reads
-   well as a switch. It adopts the form-input palette so it doesn't pop next to the text inputs:
-   --bg track like an input, --line border, on = the NODE's type colour (--nt), not global blue. */
-.gnode input.gn-enable {
-    background-color: var(--bg); border-color: var(--line);
-    background-image: radial-gradient(circle at center, var(--muted) 0 5px, transparent 5.5px);
-}
-.gnode input.gn-enable:checked {
-    background-color: color-mix(in srgb, var(--nt, var(--accent)) 20%, var(--bg)); border-color: var(--nt, var(--accent));
-    background-image: radial-gradient(circle at center, var(--nt, var(--accent)) 0 5px, transparent 5.5px);
-}
+/* The node's ENABLE toggle: a [1|0] BUTTON (enableBtn/node_parts.js) wearing .gn-cog, so it reads
+   "on/off only" and CSS wraps it in [ ] like the other header word buttons. Reads as "on/off only"
+   — the active digit lights by `aria-pressed`: on = "1" in the node's --nt, off = "0" in danger.
+   The brackets/pipe (.rk-b) stay muted chrome. Lives always-visible + rightmost in the header. */
+.gn-enable.gn-cog { user-select: none; }
+.gn-enable .rk { text-align: center; color: color-mix(in oklab, var(--nt) 20%, transparent);
+    transition: color .1s; }
+.gn-enable[aria-pressed="true"] .rk-1 { color: var(--nt, var(--accent)); }
+.gn-enable[aria-pressed="false"] .rk-0 { color: var(--danger); }
 /* BODY checkboxes (every node checkbox except the enable switch) are a compact square checkmark,
    not a slide toggle — the blueprint look: --line outline, and when on the node's type colour (--nt,
    falls back to --accent outside a .gnode, e.g. the group popover) fills the box with a dark on-accent
-   tick. Overrides base.css's global slide-toggle sizing. Shared by .gnode body checkboxes AND the group
-   options popover (.ggroup-pop) — same treatment, not a second copy. */
-.gnode input[type="checkbox"]:not(.gn-enable), .ggroup-pop input[type="checkbox"] {
-    width: 15px; height: 15px; border-radius: 4px; box-sizing: border-box;
-    background-color: color-mix(in srgb, var(--nt, var(--accent)) 12%, transparent); border: unset;
-    background-image: none; background-repeat: no-repeat;
-    background-position: center; background-size: 11px 11px;
-    transition: background-color .15s ease, border-color .15s ease;
-    margin-left: 4px;
+   tick. Overrides base.css's global slide-toggle sizing. .gnode body checkboxes only — the group
+   options popover (.ggroup-pop) keeps base.css's slide-toggle look. */
+.gnode input[type="checkbox"]:not(.gn-enable) {
+    -webkit-appearance: none; appearance: none;
+    width: unset; height: unset; border-radius: 0; box-sizing: border-box; border: unset;
+    background: none;
+    white-space: pre;
+    color: var(--nt, var(--accent));
+    margin: 1px 0px 1px 4px;
     padding: 0;
 }
-.gnode input[type="checkbox"]:not(.gn-enable):hover:not(:disabled), .ggroup-pop input[type="checkbox"]:hover:not(:disabled) { border-color: var(--nt, var(--accent)); }
-.gnode input[type="checkbox"]:not(.gn-enable):checked, .ggroup-pop input[type="checkbox"]:checked {
-    background-color: var(--nt, var(--accent)); border-color: var(--nt, var(--accent));
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%2308121d' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.4l3 3 6-7'/%3E%3C/svg%3E");
-}
+.gnode input[type="checkbox"]:not(.gn-enable)::before { content: "[ ]"; }
+.gnode input[type="checkbox"]:not(.gn-enable):hover:not(:disabled) { filter: brightness(1.3); }
+.gnode input[type="checkbox"]:not(.gn-enable):checked { opacity: 1; }
+.gnode input[type="checkbox"]:not(.gn-enable):checked::before { content: "[x]"; }
+.gnode input[type="checkbox"]:not(.gn-enable):checked:hover:not(:disabled) { opacity: 1; }
 .flab input[type="checkbox"] { justify-self: start; align-self: center; margin-top: 1px; margin-left: 4px; margin-right: 0; }
 .gnode .gn-row input:not([type="checkbox"]) { flex: 1 1 0; min-width: 0; }
 .detect-status { margin-top: 4px; font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1012,7 +1071,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .img-pages { display: inline-flex; align-items: center; gap: 4px; }
 .img-pages[hidden] { display: none; }
 /* draw-layer toggles under the canvas: one .flab checkbox per row */
-.img-layers { display: grid; grid-template-columns: 1fr 1fr; column-gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.img-layers { display: grid; grid-template-columns: 1fr 1fr; column-gap: 6px; margin: 6px 9px 9px 9px; }
 .img-layers .flab { font-size: var(--fs-sm); grid-template-columns: 1fr 2fr; }
 .img-pageind { font-size: var(--fs-sm); color: var(--muted); min-width: 28px; text-align: center; }
 .imgpg { padding: 2px 8px; }
@@ -1020,7 +1079,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* item node: frozen cutout canvas + tells/fields lists.
    The NODE is resizable; the canvas fills it (so the cutout grows with the node
    and tiny text stays legible). The canvas has no separate resize handle. */
-.gnode.item { width: 380px; min-width: 280px; max-width: 80vw; resize: none; overflow: hidden; }
+.gnode.item { width: 380px; min-width: 280px; max-width: 80vw; resize: none; overflow: visible; }
+.gnode.item > .gn-body { overflow: hidden; }   /* card visible so the header island shows; body clips the canvas */
 .item-img:empty { display: none; }
 .item-img canvas { display: block; width: 100%; height: 100%; image-rendering: auto; }
 /* cell-size inputs (own flab rows): the static grid's pitch (item.box w/h) */
@@ -1079,8 +1139,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    Fills the space between key and meta; the cell's overflow:hidden clips a very deep ring. */
 .mb-vstack { flex: 1; min-height: 0; overflow: hidden;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
-.mb-vstack.mb-start { justify-content: flex-start; }   /* multi-value stack reads top-down (agg first) */
-.mb-v { max-width: 100%; line-height: 1.15; color: var(--nt); text-align: center;
+.mb-vstack.mb-start { align-items: flex-end; }
+.mb-v { max-width: 100%; line-height: 1.15; color: var(--nt); text-align: right;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mb-v-latest { font-size: var(--fs-sm); font-weight: 600; }   /* latest (ring tail) */
 .mb-v-old { font-size: 9px; font-weight: 400; color: var(--dim); }   /* retained history */
@@ -1088,12 +1148,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    tail reads as "this is what the register exposes", not just another dim history sample */
 .mb-v-old.mb-v-live { color: var(--nt); font-weight: 600; }
 /* aggregate fold summary: sits below the raw ring, set off with a hairline + accent tint */
-.mb-v-agg { font-size: 9px; font-weight: 600; color: var(--nt); opacity: .85;
-    margin-top: 1px; padding-top: 1px; border-top: 1px solid var(--line); letter-spacing: .02em; }
+.mb-v-agg { font-size: 12px; color: var(--nt); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;}
 /* last-written ring slot: a small arrow in the left gutter (stretch the line full-width so the
    value stays centred; the arrow sits absolute -> no reflow when it moves between slots) */
 .mb-v-cur { position: relative; align-self: stretch; }
-.mb-v-cur::before { content: "\2192"; position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+.mb-v-cur::before { content: "\2192"; margin-right: 4px; 
     font-size: 9px; line-height: 1; color: var(--nt); pointer-events: none; }
 .mb-meta { display: flex; align-items: center; justify-content: space-between; gap: 4px;
     visibility: hidden; }   /* seen + conf only on hover (visibility keeps the slot -> no reflow) */
@@ -1111,25 +1170,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .mb-cell.void .mb-v { align-self: center; margin: auto 0; font-size: 16px; font-weight: 400;
     color: var(--dim); letter-spacing: .05em; }
 .mb-cell.void .mb-conf { color: var(--dim); }
-/* per-slot remove: bare hover-only trash glyph, same size/look as the source-chip trash (default
-   1em .ic-trash; hidden-until-hover is the shared node rule `.gnode *:not(:hover) > .btn-trash`).
-   Absolutely placed so it never shifts the slot. Armed two-click (rule 2, no confirm dialog). */
-.mb-cell:not(:hover) > .mb-rmsrc:not(.armed) { visibility: hidden;}
-.mb-rmsrc { position: absolute; top: 2px; right: 2px; padding: 0; border: 0; box-shadow: none;
-    min-height: 0; z-index: 2; }
-.mb-cell.armed { --cc: var(--danger); }
-.mb-cell.armed .mb-rmsrc { visibility: visible; color: var(--danger); }
-/* trailing "+" slot: adds a readout source. A native select is overlaid invisibly so a click opens
-   the picker; hidden when nothing is left to add. */
-.mb-add { position: relative; display: flex; align-items: center; justify-content: center;
-    aspect-ratio: 1 / 1; border: 1px dashed var(--line); border-radius: 5px; color: var(--muted);
-    cursor: pointer; }
-.mb-add:hover { border-color: var(--nt); color: var(--nt);
-    background: color-mix(in oklab, var(--nt) 8%, transparent); }
-.mb-add.mb-add-empty { display: none; }
-.mb-plus { font-size: 20px; line-height: 1; font-family: var(--font-mono); pointer-events: none; }
-.mb-addsel { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer;
-    border: 0; padding: 0; -webkit-appearance: none; appearance: none; }
 .item-lists { margin-top: 6px; }
 .item-lists .il-h { margin-top: 16px; margin-bottom: 4px; }   /* look = shared .gnode subheading rule */
 .ti-row, .key-row { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: var(--fs-sm); }
@@ -1275,7 +1315,7 @@ html.desktop .seltoolbar { top: 76px; }   /* clear the 30px desktop titlebar + 4
    this the fixed-width number/colour inputs add padding+border on top of their width (widths drift) */
 .ggroup-pop input, .ggroup-pop select, .ggroup-pop button { box-sizing: border-box; }
 .ggroup-pop input, .ggroup-pop select { min-height: 28px; }
-.ggroup-pop input[type="checkbox"] { min-height: 0; }   /* not a 28px-tall text field — fixed 15px checkmark box */
+.ggroup-pop input[type="checkbox"] { min-height: 0; }   /* not a 28px-tall text field — base.css slide-toggle sizes itself */
 /* outline width + offset: small fixed number inputs leading the outline row (before style + colour) */
 /* pin width via flex-basis (NOT just `width`): the base `input{width:100%}` in controls.css loads
    after this, and on a flex item a 100% width can still stretch it — a fixed grow:0 shrink:0 basis can't */
@@ -1301,6 +1341,8 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
     align-items: center; justify-content: center; color: #e0503f; background: var(--panel);
     border-bottom-left-radius: 4px; cursor: pointer; z-index: 2; }
 .gp-scheme.sel:hover .gp-sw-rm { display: flex; }
+/* armed (rule 2): stay visible after the pointer leaves so the 2nd click is reachable */
+.gp-sw-rm.armed { display: flex; background: var(--danger); color: var(--on-danger); border-radius: 3px; }
 .gp-sw-rm:hover { color: #ff6b5a; }
 .gp-sw-rm .ic-trash { width: 11px; height: 11px; display: block; }
 .gp-sw-lab { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; font-weight: 600; }

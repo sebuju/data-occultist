@@ -95,6 +95,13 @@ async function createRegisterNode(at = null, group = null) {
     if (group) groups.addToGroup(group, [`register:${id}`]);
     autosave(null); if (!at) panTo(`register:${id}`);   // new node changes nothing open windows OCR
 }
+async function createProcessNode(at = null, group = null) {
+    const id = model.addProcess();   // one rules pipeline applied to wired inputs, key-preserved (wired after)
+    if (!id) return;
+    await placeNewNode(`process:${id}`, "process", null, at); render();
+    if (group) groups.addToGroup(group, [`process:${id}`]);
+    autosave(null); if (!at) panTo(`process:${id}`);   // new node changes nothing open windows OCR
+}
 function createDictionaryNode(at = null, group = null) {
     const place = async (id) => {
         await placeNewNode(`dict:${id}`, "dictionary", null, at); render();
@@ -321,5 +328,5 @@ function svgToPngBlob(svg, W, H) {
 export {
     tb, tbState, createWindowNode, createProducerNode, createTriggerNode,
     createDictionaryNode, createDatasetNode, createSubsetNode, createFileSourceNode,
-    createToastNode, createSoundNode, createActionNode, createRegisterNode, buildToolbox, runCollisionCheck,
+    createToastNode, createSoundNode, createActionNode, createRegisterNode, createProcessNode, buildToolbox, runCollisionCheck,
 };

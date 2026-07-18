@@ -18,10 +18,10 @@ import * as api from "../api.js";
 import { boot, model, nodeEls, readoutPreview } from "./state.js";
 import { sinceShort } from "../datefmt.js";
 import { confTier } from "./conf.js";
-import { makeArmed } from "./armbtn.js";
 import { panZoomTo } from "./camera.js";
-import { h, frag, kv, trashBtn, observeResize } from "../dom.js";
+import { h, frag, kv, srcRow, observeResize } from "../dom.js";
 import { slideToggle } from "./node_parts.js";
+import { sourcesInput } from "./sources_input.js";
 import { liveCollecting } from "./panels/livewin.js";
 
 // The register's own ring-aggregate vocabulary (its exposed/persisted value = this fold over the
@@ -56,14 +56,14 @@ function fmtAgg(v, mode, ringVals) {
 // trailing "+" cell), so the poll-driven refreshRegister reconciles in place — zero DOM churn in
 // steady state (rule 1). Keyed on the host via a WeakMap: a node re-render swaps the host, drops
 // the entry, rebuilds.
-const _banks = new WeakMap();   // data-host el -> { grid, cells: Map<key, rec>, addCell, addSel, freeKey }
+const _banks = new WeakMap();   // data-host el -> { grid, cells: Map<key, rec> }
 
 function bankFor(host) {
     let b = _banks.get(host);
     if (b && host.firstChild === b.grid) return b;
     const grid = h("div", { class: "membank" });
     host.replaceChildren(grid);
-    b = { grid, cells: new Map(), addCell: null, addSel: null, freeKey: null, cols: 0 };
+    b = { grid, cells: new Map(), cols: 0 };
     _banks.set(host, b);
     observeResize(host, () => layout(b, host), { coalesce: true });   // regrow slots as the node resizes
     return b;
@@ -111,27 +111,17 @@ function layout(b, host) {
 }
 
 // Build a slot once; its child nodes are cached on the record and mutated in place by applyCell.
-// The slot IS the source control: armed-remove trash (rule 2, no confirm dialog) + click-to-pan.
+// The slot is DISPLAY-ONLY now (the sources input owns add/remove); a click still pans to the
+// readout node it holds (kept — a handy jump from a value to its source).
 function makeCell(id, key) {
     const ref = `readout:${key}`;
     const kEl = h("div", { class: "mb-k" });
     const vstack = h("div", { class: "mb-vstack" });   // one .mb-v line per ring value (latest first)
     const seenEl = h("span", { class: "mb-seen" });
     const confEl = h("span", { class: "mb-conf" });
-    const trash = trashBtn({ cls: "mb-rmsrc", title: "remove source" });
     const row = h("div", { class: "mb-cell", dataset: { k: key, ref } },
-        kEl, vstack, h("div", { class: "mb-meta" }, seenEl, confEl), trash);
-    const armed = makeArmed({
-        onArm: () => row.classList.add("armed"),
-        onTimeout: () => row.classList.remove("armed"),
-        onFire: () => {
-            row.classList.remove("armed");
-            row.dispatchEvent(new CustomEvent("reg-remove-source", { bubbles: true, detail: { id, ref } }));
-        },
-    });
-    trash.addEventListener("click", (e) => { e.stopPropagation(); armed.trigger(); });   // not a pan
-    row.addEventListener("click", (e) => {
-        if (e.target.closest(".mb-rmsrc")) return;   // clicking the trash isn't a pan
+        kEl, vstack, h("div", { class: "mb-meta" }, seenEl, confEl));
+    row.addEventListener("click", () => {
         const nodeId = model.refNode(ref);
         if (nodeId) panZoomTo(nodeId);
     });
@@ -222,34 +212,9 @@ function applyCell(rec, r) {
     if (confTxt !== rec.conf) { rec.confEl.textContent = confTxt; rec.conf = confTxt; }
 }
 
-// The trailing "+" slot: a native select (invisible, overlaid on the cell) whose options are the
-// readouts not yet wired. Picking one dispatches an add intent. Options rebuilt only when the free
-// set changes; hidden when nothing is left to add.
-function updateAddCell(b, id) {
-    if (!b.addCell) {
-        const sel = h("select", { class: "mb-addsel", title: "add a readout source" });
-        sel.addEventListener("change", () => {
-            const ref = sel.value;
-            if (!ref) return;
-            sel.value = "";
-            sel.dispatchEvent(new CustomEvent("reg-add-source", { bubbles: true, detail: { id, ref } }));
-        });
-        b.addSel = sel;
-        b.addCell = h("div", { class: "mb-add", title: "add readout source" }, sel, h("span", { class: "mb-plus" }, "+"));
-    }
-    const have = new Set(model.registerSources(id).filter((s) => s.kind === "readout").map((s) => s.id));
-    const free = model.readouts().map((v) => v.id).filter((rid) => !have.has(rid));
-    const key = free.join("|");
-    if (key !== b.freeKey) {
-        b.addSel.replaceChildren(h("option", { value: "" }, "+"),
-            ...free.map((rid) => h("option", { value: `readout:${rid}` }, rid)));
-        b.addCell.classList.toggle("mb-add-empty", !free.length);
-        b.freeKey = key;
-    }
-}
-
 // Reconcile the bank against `rows` (ordered): reuse slots by key, place each at its index only if
-// not already there (no detach/reattach churn), drop slots whose key vanished, keep "+" last.
+// not already there (no detach/reattach churn), drop slots whose key vanished. Adding/removing a
+// source lives in the node's sources input (registerParts), not here.
 function renderBank(id, host, rows) {
     const b = bankFor(host);
     const liveKeys = new Set();
@@ -266,13 +231,18 @@ function renderBank(id, host, rows) {
     for (const [k, rec] of b.cells) {
         if (!liveKeys.has(k)) { rec.row.remove(); b.cells.delete(k); }
     }
-    updateAddCell(b, id);
-    const at = b.grid.children[i];
-    if (at !== b.addCell) b.grid.insertBefore(b.addCell, at || null);
     layout(b, host);
 }
 
-export function registerParts(x) {
+export function registerParts(x, model) {
+    // sources input (FIRST): the readouts + processes wired into this register — removable chips +
+    // an add-select. The ONE sources widget (rule 7); candidates come from the shared source truth
+    // (SOURCE_KINDS.register = readouts + processes, already-wired excluded).
+    const wired = model ? model.registerSources(x.id) : [];
+    const free = model ? model.sourceCandidates("register", x.id).map((c) => ({ value: c.ref, label: c.label })) : [];
+    const sourcesRow = srcRow("sources", "readouts and processes wired into this register — remove here, or drag a node's out-port onto it",
+        sourcesInput({ chips: wired.map((s) => ({ value: s.ref, node: model && model.refNode(s.ref) })),
+                       free, addinCls: "sv-addin reg-addsrc", rmCls: "sv-rmin reg-rmsrc" }));
     return {
         title: h("input", { class: "gi gi-id regrename", value: x.id, title: "rename register" }),
         ports: frag(
@@ -285,11 +255,12 @@ export function registerParts(x) {
             h("span", { class: "port out", title: "drag to a dataset to also mirror the held map there" })),
         // "recent values" = ring depth per key (RegisterDef.capacity): how many recent values each
         // key holds. Pulls/persist/membank always show the LATEST (ring tail); N>1 just retains
-        // history. Below it, the body IS the memory bank: slots for the held map + wired sources,
-        // the trailing "+" adds one. .nodehost overflow:auto — a wheel scrolls when the list
+        // history. Below the settings, the body IS the memory bank: display-only value-slots for the
+        // held map (one per wired readout). .nodehost overflow:auto — a wheel scrolls when the list
         // overflows, else zooms the graph (camera.js scrollableUnder).
         body: frag(
             h("div", { class: "lab-grid" },
+                sourcesRow,
                 kv("recent values", h("input", { class: "gi reg-cap", type: "number", min: "1", step: "1",
                     value: x.capacity ?? 1, title: "how many recent values to hold per key" })),
                 // aggregate: collapse the ring to the ONE value the register exposes/persists — only
@@ -307,52 +278,76 @@ export function registerParts(x) {
     };
 }
 
+// Ordered keys a register scaffolds a slot for, from its WIRING alone (no data): each wired readout's
+// id, plus each wired process's declared output keys. The register's own view onto the shared SSOT
+// `model.registerKeys` (rule 7) — the stable slot order both populate + the refresh fallback pin to.
+const scaffoldKeys = (id) => model.registerKeys(id);
+
+// Populate the SCAFFOLD only — one empty ∅ value-slot per wired key (readout ids + process output
+// keys), NO server fetch and NO preview borrow. Used on boot and on a source add/remove: the register
+// shows which sources are wired without pulling any data into the cells (values arrive only while
+// live collection runs, via the heartbeat's refreshRegister). No-op when the node isn't in the DOM.
+export function populateRegister(id) {
+    const host = nodeEls.get(`register:${id}`)?.querySelector(".data-host");
+    if (!host) return;
+    const cap = model.registerNode(id)?.capacity ?? 1;
+    const multi = cap > 1;
+    const aggMode = model.registerNode(id)?.aggregate || "";
+    const rows = scaffoldKeys(id).map((k) => ({
+        key: k, value: null, values: [null], writes: null, cap,
+        agg: null, aggMode, multi, conf: null, seen: "",
+    }));
+    renderBank(id, host, rows);
+}
+
 // Fetch + render a register's held map into its node body. No-op when the node isn't in the DOM.
-// renderBank reconciles the slots in place (rule 1). Every wired readout is a slot even before it
-// holds a value, so an added source shows at once; with live mode OFF a wired source with no server
-// row borrows the readout's /api/preview read (readoutPreview.all — the FULL, empty-inclusive
-// per-window read a readout node's `.ro-live` uses), else it shows as a pending ∅ slot. A
-// "readout-preview" event (imaging.js) repaints every open register too.
+// renderBank reconciles the slots in place (rule 1). The rendered slots are EXACTLY the current
+// scaffold keys (wired readout ids + process output keys) — NOT whatever the server still holds: the
+// live session's held map accumulates keys and is only wiped by "clear data", so a readout that got
+// unwired or a process output key that got renamed lingers there. Showing only the scaffold keys
+// drops those stale slots (the renamed/old key vanishes) instead of piling them up. A scaffold key
+// with no matching server row shows ∅, borrowing the readout's /api/preview read when live mode is
+// OFF (process keys have no preview). A "readout-preview" event (imaging.js) repaints every register.
 export function refreshRegister(id) {
     const host = nodeEls.get(`register:${id}`)?.querySelector(".data-host");
     if (!host) return;
-    const wired = model.registerSources(id).filter((s) => s.kind === "readout").map((s) => s.id);
+    // the register's full wired key set (readout ids + process output keys), in stable wiring order.
+    const wired = scaffoldKeys(id);
     // pass the node's LIVE fold selection: the server folds the ring with it right away (its own
     // profile is frozen mid-run, so the stored mode lags the select). The fold itself is server-side.
     const aggMode = model.registerNode(id)?.aggregate || "";
     api.registerDetail(model.profile.name, id, aggMode)
         .then((r) => {
             const byKey = new Map((r.records || []).map((e) => [e.key, e]));
-            for (const rid of wired) {
-                if (byKey.has(rid)) continue;
-                const usePrev = !liveCollecting() && Object.prototype.hasOwnProperty.call(readoutPreview.all, rid);
-                byKey.set(rid, {
-                    key: rid,
-                    value: usePrev ? readoutPreview.all[rid] : null,
-                    conf: usePrev ? readoutPreview.allConfs[rid] : null,
-                    last_seen: null,
-                });
-            }
             const cap = model.registerNode(id)?.capacity ?? 1;
             const multi = cap > 1;   // the "recent values" setting drives the stack styling
-            const rows = [...byKey.values()].map((e) => ({
-                key: e.key,
-                value: e.value,                                  // raw: null / "" -> dead slot; else shown
-                values: Array.isArray(e.values) ? e.values : [e.value],   // full ring (oldest->newest); preview fallback = [value]
-                writes: e.writes ?? null,                        // total writes -> circular cursor; null on /api/preview (no live ring)
-                cap,
-                agg: e.agg == null ? null : e.agg,               // aggregated value (server fold) or null (no aggregate / preview)
-                aggMode,
-                multi,
-                conf: e.conf == null ? null : +e.conf,           // raw: classified into a tier in applyCell
-                seen: e.last_seen == null ? "preview" : sinceShort(e.last_seen * 1000),   // server sends epoch SECONDS
-            }));
-            // STABLE slot order = the wired-source order (matches the readouts' layout). The server
-            // sorts records by last_seen, which shifts every tick now that every read touches it —
-            // that would reshuffle the grid and thrash cells (detach/reattach) on every refresh. Pin
-            // the order to the wiring so a slot never moves; keys held but no longer wired trail after.
-            const order = new Map(wired.map((rid, idx) => [rid, idx]));
-            rows.sort((a, b) => (order.get(a.key) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.key) ?? Number.MAX_SAFE_INTEGER));
+            // iterate the SCAFFOLD keys (not the server records) — this both pins the slot order to the
+            // wiring and drops any stale key the server still holds but nothing feeds anymore.
+            const rows = wired.map((k) => {
+                const e = byKey.get(k);
+                if (e) return {
+                    key: e.key,
+                    value: e.value,                                  // raw: null / "" -> dead slot; else shown
+                    values: Array.isArray(e.values) ? e.values : [e.value],   // full ring (oldest->newest); preview fallback = [value]
+                    writes: e.writes ?? null,                        // total writes -> circular cursor; null on /api/preview (no live ring)
+                    cap,
+                    agg: e.agg == null ? null : e.agg,               // aggregated value (server fold) or null (no aggregate / preview)
+                    aggMode,
+                    multi,
+                    conf: e.conf == null ? null : +e.conf,           // raw: classified into a tier in applyCell
+                    seen: e.last_seen == null ? "preview" : sinceShort(e.last_seen * 1000),   // server sends epoch SECONDS
+                };
+                // no server row for this scaffold key -> ∅ slot, borrowing the /api/preview read for a
+                // readout key when live mode is off (process keys have no preview -> stay ∅).
+                const usePrev = !liveCollecting() && Object.prototype.hasOwnProperty.call(readoutPreview.all, k);
+                return {
+                    key: k, value: usePrev ? readoutPreview.all[k] : null,
+                    values: [usePrev ? readoutPreview.all[k] : null], writes: null, cap,
+                    agg: null, aggMode, multi,
+                    conf: usePrev ? readoutPreview.allConfs[k] : null,
+                    seen: usePrev ? "preview" : "",
+                };
+            });
             renderBank(id, host, rows);
         })
         .catch(() => { /* transient fetch error -> leave the last-rendered slots */ });

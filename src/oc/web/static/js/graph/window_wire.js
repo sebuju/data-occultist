@@ -1,14 +1,13 @@
 // Window node wiring: rename/live/static-grid/preprocess/item-priority controls, the game
 // node's window-priority list, the detects section (mode + per-detector polarity), and the
 // readout + scrollbar node bodies (incl. scroll-cutout capture/drag-reorder). Split out of
-// main.js; render/rebuildNode/autosave/nodeEdit/onValueEdit/rulesEdit/wireFieldRules stay in
-// main and are imported back.
+// main.js; render/rebuildNode/autosave/nodeEdit/onValueEdit stay in main and are imported back.
 import * as api from "../api.js";
 import * as nodeTxn from "./node_txn.js";
 import { model, openImages, imageCanvases, clearGrid, setStatus } from "./state.js";
 import {
     closeImage, openImage, refreshImageBoxes, armPreprocessPick, openReadoutColorPick,
-    refreshGridPreview, refreshReadoutValues, refreshRuleTrace, scheduleWindowRead,
+    refreshGridPreview, refreshReadoutValues, scheduleWindowRead,
     mountMatchPreview, refreshMatchPreviews,
 } from "./imaging.js";
 import { markColorCollisions } from "./node_parts.js";
@@ -17,7 +16,7 @@ import { renderReadoutHistory } from "./readout_history_node.js";
 import { panZoomTo } from "./camera.js";
 import { renderLiveWindow, syncWpDots, liveCollecting } from "./panels/livewin.js";
 import {
-    render, rebuildNode, autosave, nodeEdit, onValueEdit, rulesEdit, wireFieldRules,
+    render, rebuildNode, autosave, nodeEdit, onValueEdit,
     armConfirm,
 } from "./main.js";
 
@@ -86,7 +85,11 @@ export function wireWindowControls(div, n) {
     div.querySelector(".gi-id").addEventListener("change", async (e) => {
         const oldId = n.ref.id, newId = e.target.value.trim();
         const oldDs = model.datasetOf(n.ref);   // explicit dataset (if any) is independent of the window id
-        if (!model.renameWindow(oldId, newId)) { e.target.value = oldId; return; }
+        if (!model.renameWindow(oldId, newId)) {
+            e.target.value = oldId;
+            if (newId && newId !== oldId) setStatus(`Window "${newId}" already exists — rename skipped`, "warn");
+            return;
+        }
         // The capture binding + open image are keyed by window id — carry them across so the
         // image canvas doesn't blank on rename. Move the binding (server), drop the old-keyed
         // canvas, then re-open under the new id (which loads from the moved binding). winPage rides
@@ -226,19 +229,14 @@ export function wireReadout(div, n) {
         if (!fld) return;
         const k = e.target.dataset.k;
         nodeEdit(n.id, "read", () => {
-            if (k === "type") { fld.type = e.target.value; if (!live) rebuildNode(n.id); }  // re-filters the rule menus
-            else if (k === "isolate") fld.isolate = e.target.checked;
+            if (k === "isolate") fld.isolate = e.target.checked;
             else if (k === "glyph_check") fld.glyph_check = e.target.checked;
             else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
             else if (k === "stab_reads") fld.stability_reads = Math.max(0, Math.trunc(+e.target.value) || 0);
             else if (k === "stab_min") fld.stability_min = Math.max(0, Math.trunc(+e.target.value) || 0);
         }, () => { autosave(winId); scheduleRefetch(); });   // read config changed -> re-read the value off the current image
     }));
-    if (fld) wireFieldRules(div, fld, {
-        edit: rulesEdit(n.id, () => { autosave(winId); scheduleRefetch(); }),
-        retrace: (el) => refreshRuleTrace(winId, fld.id, n.id, el),
-    });
-    // per-readout preprocess override (Text appearance): same shared controls as the window,
+    // per-readout preprocess override: same shared controls as the window,
     // sunk into THIS readout's FieldDef (rule 7). Changes what OCR sees -> re-read on commit.
     if (fld) wirePreprocess(div, fld, {
         nodeId: n.id, winId, pick: () => openReadoutColorPick(winId, vid),   // modal: zoomed box cutout

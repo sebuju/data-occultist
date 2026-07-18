@@ -71,6 +71,17 @@ const INNER = {
         svg("line", { x1: "12.5", y1: "12", x2: "17", y2: "12" }),
         svg("line", { x1: "12.5", y1: "15", x2: "17", y2: "15" }),
     ],
+    // process: a value piped THROUGH a rules box (stacked rule lines) — arrow in, arrow out.
+    process: () => [
+        svg("line", { x1: "2", y1: "12", x2: "6", y2: "12" }),
+        P("M4 10l2 2-2 2"),
+        svg("rect", { x: "7", y: "5.5", width: "10", height: "13", rx: "2" }),
+        svg("line", { x1: "9.5", y1: "9", x2: "14.5", y2: "9" }),
+        svg("line", { x1: "9.5", y1: "12", x2: "14.5", y2: "12" }),
+        svg("line", { x1: "9.5", y1: "15", x2: "12.5", y2: "15" }),
+        svg("line", { x1: "18", y1: "12", x2: "22", y2: "12" }),
+        P("M20 10l2 2-2 2"),
+    ],
     dataset: () => [
         svg("ellipse", { cx: "12", cy: "6", rx: "7", ry: "2.6" }),
         P("M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6"),

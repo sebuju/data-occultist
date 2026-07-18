@@ -1,6 +1,6 @@
-// e2e: a register node's "+ readout" add-select must pick up a readout created AFTER the
-// register node is already open on screen — without a page reload. Regression test for the
-// rule-7 gap where rebuildReadoutConsumers() swept toasts + triggers but not registers.
+// e2e: a register node's sources add-select must pick up a readout created AFTER the register
+// node is already open on screen — without a page reload. The unified consumer sweep
+// (rebuildRefConsumers, gated on render()'s _refKey) rebuilds the register body's free list.
 //
 // Run:  node tests/e2e/register-readout-select.mjs   (server must be up: data-occultist serve)
 import { chromium } from "playwright";
@@ -41,19 +41,19 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
     ok(!!regId, `register node created (id=${regId})`);
 
     // Sanity: the add-select should exist and NOT yet contain a readout we haven't made yet.
-    const selSel = `#gnodes [data-id="register:${regId}"] select.mb-addsel`;
+    const selSel = `#gnodes [data-id="register:${regId}"] select.reg-addsrc`;
     await page.waitForSelector(selSel, { timeout: 5000 });
     const optsBefore = await page.$$eval(`${selSel} option`, (os) => os.map((o) => o.value));
     console.log(`   register's add-select options before: ${JSON.stringify(optsBefore)}`);
 
     // 2) Create a NEW readout on an existing window, exactly like imaging.js's draw-readout path:
     //    model.addReadout(winId, box) then rebuildReadoutConsumers()-equivalent refresh.
-    const readoutId = await page.evaluate(async (winId) => {
-        const { model, rebuildNode } = window.__t;
+    const readoutId = await page.evaluate((winId) => {
+        const { model, render, rebuildNode } = window.__t;
         const id = model.addReadout(winId, { x: 0.1, y: 0.1, w: 0.05, h: 0.05 });
-        // exercise the exact fixed helper (imported fresh so we test the real code path)
-        const { rebuildReadoutConsumers } = await import("/js/graph/main.js");
-        rebuildReadoutConsumers();
+        // the unified consumer sweep runs off render()'s _refKey gate (adding a readout flips it),
+        // rebuilding every consumer body — including the register's sources-input free list.
+        render();
         rebuildNode(`win:${winId}`);
         return id;
     }, setup.winId);
@@ -77,12 +77,11 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
     const chipCount = await page.$$eval(chipSel, (c) => c.length).catch(() => 0);
     ok(chipCount >= 1, `wired source shows as a chip on the register node (found ${chipCount})`);
 
-    await page.evaluate(async (a) => {
-        const { model } = window.__t;
+    await page.evaluate((a) => {
+        const { model, render, rebuildNode } = window.__t;
         model.removeRegisterSource(a.regId, `readout:${a.readoutId}`);
         model.removeReadout(a.winId, a.readoutId);
-        const { rebuildReadoutConsumers, rebuildNode } = await import("/js/graph/main.js");
-        rebuildReadoutConsumers();
+        render();
         rebuildNode(`win:${a.winId}`);
     }, { regId, readoutId, winId: setup.winId });
     const optsFinal = await page.$$eval(`${selSel} option`, (os) => os.map((o) => o.value));

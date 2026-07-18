@@ -434,7 +434,7 @@ function renderReadoutValues() {
         else found = false;
         let txt, tint = null;   // "ok"=green, "reject"=red, "hold"=yellow-green (value fine, gate blocking)
         if (!found) txt = "—";
-        else if (val === "") txt = "";
+        else if (val === "") txt = "(none)";   // read happened but produced nothing -> dim (none)
         else {
             const pct = conf == null ? "" : ` ${Math.round(+conf * 100)}%`;
             // consensus status when the gate is in use; else a plain ✓ for a high-confidence read.
@@ -457,7 +457,8 @@ function renderReadoutValues() {
             txt = `${val}${pct}${status}`;
         }
         if (el.textContent !== txt) el.textContent = txt;
-        if (el.classList.contains("muted") === found) el.classList.toggle("muted", !found);
+        const dim = !found || val === "";   // never-evaluated (—) or empty read ((none)) both show dim
+        if (el.classList.contains("muted") !== dim) el.classList.toggle("muted", dim);
         el.classList.toggle("ro-accept", tint === "ok");      // green (var --ok)
         el.classList.toggle("ro-reject", tint === "reject");  // red   (var --danger)
         el.classList.toggle("ro-hold", tint === "hold");      // yellow-green: value fine, gate blocking

@@ -10,7 +10,7 @@ import { log } from "../log.js";
 import { GraphModel } from "./model.js";
 
 export const $ = (id) => document.getElementById(id);
-export const setStatus = (m) => log(m);   // #status is gone — the log bar shows messages now
+export const setStatus = (m, level) => log(m, level);   // #status is gone — the log bar shows messages now
 
 export const model = new GraphModel();
 

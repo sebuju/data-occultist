@@ -7,7 +7,7 @@
 // THE invariant: every per-node-id store is wired into BOTH remapNodeState (rename) and
 // forgetNodeState (delete) here — add a new per-id store in these two functions and nowhere else,
 // so a rename can never "do something else" (reset size/tab/columns) and a delete can never leak.
-import { pos, nodeSizes, collapsed, busy, winPage, dsTab, model } from "./state.js";
+import { pos, nodeSizes, collapsed, busy, winPage, dsTab, model, setStatus } from "./state.js";
 import * as groups from "./groups.js";
 
 // EVERY per-node-id live state store is keyed by node id, so any rename that changes a node id
@@ -90,7 +90,15 @@ export function forgetNodeState(id) {
 // data move), window (image/binding move) and dictionary (name→id derivation) stay bespoke —
 // genuinely different flows, not copies of this one.
 export function renameNode(input, oldId, doRename, move, post) {
-    if (!doRename()) { input.value = oldId; return; }   // collision/empty -> restore the field, no-op
+    const newId = (input.value || "").trim();
+    if (!doRename()) {   // collision/empty/unchanged -> restore the field, no-op
+        input.value = oldId;
+        // Empty/unchanged are benign no-ops (silent). A nonempty, changed id that still failed
+        // can only be a name collision (the model guard is `!newId || newId===oldId || exists`) —
+        // surface it so the rename doesn't look like it silently vanished.
+        if (newId && newId !== oldId) setStatus(`Rename to "${newId}" rejected — name already in use`, "warn");
+        return;
+    }
     move();
     post();
 }

@@ -136,6 +136,13 @@ export function panZoomToRect(box, { fit = true, onlyIn = false } = {}) {
 // continuous factor) so every zoom lands on a known, repeatable scale.
 export const ZOOM_LEVELS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 15];
 
+// The three furthest-out rungs (0.05 / 0.1 / 0.25) are a DRAG-ONLY regime: at that scale a node
+// is too small to aim inside, so ANY press on it drags the whole node — never selects an input,
+// never reaches a canvas-interior box. Both the node press gate (main.js) and the overlay canvas
+// stopPropagation (overlay.js) consult this so they bypass in lockstep. eps admits continuous
+// zooms landing a hair above the rung.
+export const dragOnlyZoom = () => view.zoom <= ZOOM_LEVELS[2] * 1.001;
+
 // Step one rung along the ladder (dir>0 = in, dir<0 = out), keeping the world point at (cx,cy)
 // graph-local px fixed — the cursor for a wheel tick, the viewport centre for a key. Snaps
 // instantly (no animation). Steps are NOT queued: within one frame the LATEST request overwrites

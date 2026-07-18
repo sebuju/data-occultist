@@ -15,6 +15,7 @@ import { renderTriggerHistory } from "../history_node.js";
 import { renderReadoutHistory } from "../readout_history_node.js";
 import { renderProducerHistory } from "../producer_history_node.js";
 import { renderRegisterHistory } from "../register_history_node.js";
+import { renderProcessHistory } from "../process_history_node.js";
 import { refreshRegister } from "../register_node.js";
 import { liveCollecting } from "./livewin.js";
 import { panZoomTo } from "../camera.js";
@@ -287,6 +288,11 @@ function updateTriggerNodes(data) {
     // paint each OPEN one (no-op / no host when hidden). VTable reconciles in place (rule 1).
     const prHist = data.producer_history || {};
     for (const pid in prHist) renderProducerHistory(pid, prHist[pid]);
+    // process input/output-history satellites ride the same beat (process_history, keyed by process
+    // id); TOP-LEVEL (not under `live`) so a test feed updates them with the collector stopped too.
+    // paint each OPEN one (no-op / no host when hidden). VTable reconciles in place (rule 1).
+    const procHist = data.process_history || {};
+    for (const pid in procHist) renderProcessHistory(pid, procHist[pid]);
     // register push-history satellites ride the same beat (register_history, keyed by register id);
     // TOP-LEVEL (not under `live`) so a test feed updates them with the collector stopped too.
     // paint each OPEN one (no-op / no host when hidden). VTable reconciles in place (rule 1).

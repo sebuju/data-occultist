@@ -17,13 +17,14 @@ import { since } from "../datefmt.js";
 import { log, timed } from "../log.js";
 import { wireProducerNode, mapRow } from "./producer_node.js";
 import { renderTriggerHistory } from "./history_node.js";
-import { refreshRegister } from "./register_node.js";
+import { refreshRegister, populateRegister } from "./register_node.js";
+import { renderProcessHistory } from "./process_history_node.js";
 import { wireSlotRows } from "./reg_slots.js";
 import { makeArmed } from "./armbtn.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 import {
     render, autosave, rebuildNode, rebuildNodeEdges, refreshLive, wireArmedRemove,
-    withBusy, setNodeBusy, showSatellite, armConfirm,
+    withBusy, setNodeBusy, showSatellite, armConfirm, rulesEdit, wireFieldRules,
 } from "./main.js";
 
 // ---- producer node: fetches external data into its output dataset -----------
@@ -295,7 +296,7 @@ function wireAction(div, n) {
     // slot targeting: one row per register source (shared reg_slots primitive, rule 7) — each scoped
     // to its register via data-reg so the add/remove edits know which register's key set they narrow.
     wireSlotRows(div, {
-        keysFor: (regId) => model.registerSources(regId).filter((s) => s.kind === "readout").map((s) => s.id),
+        keysFor: (regId) => model.registerKeys(regId),
         get: (regId) => model.actionSlots(x.id, regId),
         set: (regId, keys) => model.setActionSlots(x.id, regId, keys),
         after: () => { rebuildNode(n.id); autosave(null); },
@@ -338,21 +339,17 @@ function wireRegister(div, n) {
                     .finally(() => refreshRegister(x.id));
             });
     });
-    // sources live IN the memory bank now: each held-value slot is a wired readout (trash to remove,
-    // click to pan to its node) and the trailing "+" slot adds one. The bank (register_node.js)
-    // dispatches those as bubbling intents on the `.data-host`; we own the model mutation + edge
-    // redraw + autosave, then repaint the bank (a newly wired readout appears as a pending slot at
-    // once, same path the out-port drag uses). Scoped to `.data-host` (rebuilt on every render) so the
-    // listeners never double up across rebuilds.
-    const bankHost = $(".data-host");
-    // membank grows/shrinks a slot async (its ResizeObserver -> layout settles next frame), so defer
-    // the edge redraw a frame — else the readout->register edge anchors on the register's stale size.
-    bankHost?.addEventListener("reg-add-source", (e) => {
-        if (model.addRegisterSource(e.detail.id, e.detail.ref)) { refreshRegister(e.detail.id); requestAnimationFrame(drawEdges); autosave(null); }
+    // sources live in the standard sources input now (registerParts): removable chips of the wired
+    // readouts + processes + an add-select — the ONE sources widget (rule 7), same wiring shape as
+    // wireProcess/wireAction. Adding/removing a source changes the chip list (body) AND the edges,
+    // so rebuild both; the rebuild re-runs this wireRegister, whose microtask re-populates the bank
+    // scaffold (no fetch). Out-port drag shares model.addRegisterSource + rebuilds the target too.
+    const rebuild = () => { rebuildNodeEdges(n.id); autosave(null); };
+    $(".reg-addsrc")?.addEventListener("change", (e) => {
+        const ref = e.target.value; e.target.value = "";
+        if (ref && model.addRegisterSource(x.id, ref)) rebuild();
     });
-    bankHost?.addEventListener("reg-remove-source", (e) => {
-        model.removeRegisterSource(e.detail.id, e.detail.ref); refreshRegister(e.detail.id); requestAnimationFrame(drawEdges); autosave(null);
-    });
+    wireArmedRemove(div, ".reg-rmsrc", (val) => { model.removeRegisterSource(x.id, val); rebuild(); });
     // ring depth per key: coerce (blank -> 1) then rebuild so the normalised value re-renders.
     $(".reg-cap")?.addEventListener("change", (e) => { model.setRegisterCapacity(x.id, e.target.value); rebuildNode(n.id); autosave(null); });
     // ring aggregate (shown only when capacity > 1): nothing structural changes — the native select
@@ -377,12 +374,62 @@ function wireRegister(div, n) {
             setStatus(`cleared ${x.id}`);
         } catch (e) { setStatus(String(e.message || e)); }
     });
-    // show the persisted map + wired-source slots. wireRegister runs INSIDE buildNode, before the
-    // node is mounted (added to nodeEls/layer), so refreshRegister would no-op if called here
-    // directly. queueMicrotask defers past the synchronous render()/buildNode chain -> the node is
-    // mounted by the time this fires, on initial boot, a post-boot rebuild, AND undo/redo restore
-    // (afterBoot alone missed the restore case: it runs synchronously once boot.phase is false).
-    queueMicrotask(() => refreshRegister(x.id));
+    // populate the SCAFFOLD only (empty ∅ slot per wired readout) — no data fetch on boot / rebuild /
+    // undo-redo restore / a source add-remove. Live values fill in only while collecting, via the
+    // heartbeat's refreshRegister (activity.js). wireRegister runs INSIDE buildNode before the node
+    // is mounted, so populateRegister would no-op if called directly; queueMicrotask defers past the
+    // synchronous render()/buildNode chain -> the node is mounted by the time this fires.
+    queueMicrotask(() => populateRegister(x.id));
+}
+
+// ---- process node: apply one rules pipeline to wired inputs, key-preserved (see ProcessDef) --------
+
+function wireProcess(div, n) {
+    const x = n.ref;
+    const $ = (sel) => div.querySelector(sel);
+    $(".prrename")?.addEventListener("change", (e) => {
+        const oldId = x.id;
+        renameNode(e.target, oldId,
+            () => model.renameProcess(oldId, (e.target.value || "").trim()),
+            () => movePos(`process:${oldId}`, `process:${x.id}`),
+            () => {
+                render(); autosave(null);
+                // the live output + history live server-side keyed by the OLD id (LiveSession) — carry
+                // them to the new id, then repaint the satellite; without this the renamed node's
+                // history is blank until the next collector tick repopulates it.
+                api.renameProcess(model.profile.name, oldId, x.id)
+                    .catch(() => {})
+                    .finally(() => renderProcessHistory(x.id));
+            });
+    });
+    // value type — re-filters the rule menus (a number-only rule greys out for text) -> rebuild body.
+    $(".pr-type")?.addEventListener("change", (e) => { model.setProcessType(x.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    // add an input (a readout or a register slot) via the "+ input" select — candidates come from
+    // model.sourceCandidates (the shared truth).
+    // add/remove an input, or rename an output key, changes what this process EMITS — so a consuming
+    // register must re-scaffold its cells. render() runs the unified _refKey consumer sweep (processes
+    // are in the key), which rebuilds the register body; a bare rebuildNodeEdges would miss it.
+    // render()'s sweep SKIPS the focused node (rule: never yank the input being edited) — and the
+    // add-select / armed-remove button live INSIDE this node, so this node is the focused one and the
+    // sweep won't rebuild its own body (the new/removed row wouldn't show until reload). Rebuild it
+    // explicitly here, like every other in-body source-add handler does with rebuildNodeEdges.
+    $(".pr-addin")?.addEventListener("change", (e) => {
+        const ref = e.target.value; e.target.value = "";
+        if (ref && model.addProcessSource(x.id, ref)) { render(); rebuildNode(n.id); autosave(null); }
+    });
+    // the trash lives in the .pr-maprow (sibling of the input-key chip, not inside a .sv-input) — arm the whole row.
+    wireArmedRemove(div, ".pr-rmin", (val) => { model.removeProcessSource(x.id, val); render(); rebuildNode(n.id); autosave(null); }, { pill: ".pr-maprow" });
+    // the key mangler: each input's output-key field renames its key downstream. Commit re-scaffolds
+    // any consuming register (render() -> _refKey sweep); blank keeps the input key (the placeholder).
+    div.querySelectorAll(".pr-out").forEach((inp) => inp.addEventListener("change", (e) => {
+        model.setProcessSourceOut(x.id, e.target.dataset.ref, e.target.value); render(); autosave(null);
+    }));
+    // the rules pipeline — the SAME editor the readout/region nodes use, bound to the ProcessDef
+    // (which carries its own `.rules`). No inline live trace here; the "raw" satellite shows real ones.
+    wireFieldRules(div, x, { edit: rulesEdit(n.id, () => autosave(null)) });
+    // paint the input/output-history satellite from the last heartbeat (no-op when hidden), so a
+    // just-opened satellite shows at once instead of waiting for the next beat.
+    renderProcessHistory(x.id);
 }
 
 // ---- file-source node: parse a game log/config file into its dataset --------
@@ -627,6 +674,6 @@ function renderPreview(host, rows) {
 }
 
 export {
-    wireProducer, wireProducerPreview, wireTrigger, wireAction, wireRegister, wireSource,
+    wireProducer, wireProducerPreview, wireTrigger, wireAction, wireRegister, wireProcess, wireSource,
     refreshSourcePreview,
 };

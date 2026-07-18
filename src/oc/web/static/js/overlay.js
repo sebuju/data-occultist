@@ -8,6 +8,7 @@
 
 import { observeResize } from "./dom.js";
 import { boot } from "./graph/state.js";
+import { dragOnlyZoom } from "./graph/camera.js";
 
 // Fallback hues for roles that DON'T map to a graph node type (data_area/search/state are
 // window-internal boxes, not their own node). Node-backed roles resolve their colour from the
@@ -256,7 +257,9 @@ export class Overlay {
     _bind() {
         // stop propagation only for the LEFT (drawing) button, so right-drag still
         // reaches the graph's pan handler over the canvas
-        this.canvas.addEventListener("mousedown", (ev) => { if (ev.button === 0) ev.stopPropagation(); this._onDown(ev); });
+        // DRAG-ONLY zoom (three furthest-out rungs): let the press bubble to the node's drag
+        // handler instead of swallowing it here, so a far-out press over a canvas drags the node.
+        this.canvas.addEventListener("mousedown", (ev) => { if (dragOnlyZoom()) return; if (ev.button === 0) ev.stopPropagation(); this._onDown(ev); });
         this.canvas.addEventListener("mousemove", (ev) => this._onMove(ev));
         window.addEventListener("mouseup", () => this._onUp());
     }
