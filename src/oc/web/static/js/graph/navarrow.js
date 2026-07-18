@@ -32,15 +32,16 @@ function w2s(p) { return { x: p.x * view.zoom + view.panX, y: p.y * view.zoom + 
 // Smooth path threading all points via a Catmull-Rom -> cubic-bezier conversion (curve passes
 // THROUGH every point). Returns the SVG `d` string plus the unit end-tangent `tan` (direction the
 // curve arrives at the last point, for orienting the arrowhead). `pts` are screen px, length >= 2.
+const SMOOTH = 0.09;   // Catmull-Rom handle scale: smaller = shorter handles = sharper turns (1/6 = round)
 function smoothPath(pts) {
     const n = pts.length;
     let d = `M ${pts[0].x} ${pts[0].y}`;
     let c2x = pts[0].x, c2y = pts[0].y;   // last control handle before the end point
     for (let i = 0; i < n - 1; i++) {
         const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || pts[i + 1];
-        // Catmull-Rom (tension 0) -> bezier control points
-        const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
-        c2x = p2.x - (p3.x - p1.x) / 6; c2y = p2.y - (p3.y - p1.y) / 6;
+        // Catmull-Rom -> bezier control points; SMOOTH tunes handle length (turn sharpness)
+        const c1x = p1.x + (p2.x - p0.x) * SMOOTH, c1y = p1.y + (p2.y - p0.y) * SMOOTH;
+        c2x = p2.x - (p3.x - p1.x) * SMOOTH; c2y = p2.y - (p3.y - p1.y) * SMOOTH;
         d += ` C ${c1x} ${c1y} ${c2x} ${c2y} ${p2.x} ${p2.y}`;
     }
     const end = pts[n - 1];
@@ -73,11 +74,13 @@ export function renderNavArrows() {
     if (!active) return;
     const L = ensureLayer();
     const pts = (live ? [...chain, live] : chain).map((p) => ({ ...w2s(p), c: p.c }));
-    const { d, tan } = smoothPath(pts);
     const end = pts[pts.length - 1];
-    // pull the head back so its base sits on the curve; base + two wings from the end tangent
+    // end tangent (from the full curve) orients the head; base sits HEAD px back along it
+    const { tan } = smoothPath(pts);
     const bx = end.x - tan.x * HEAD, by = end.y - tan.y * HEAD;   // base of the head
     const px = -tan.y, py = tan.x;                                // unit perpendicular
+    // draw the SHAFT stopping at the head base (not the tip) so it doesn't poke through the head
+    const { d } = smoothPath([...pts.slice(0, -1), { x: bx, y: by, c: end.c }]);
     const gid = "navGrad0";
     L.appendChild(svg("g", { class: "nav-arrow" },
         svg("defs", null, mkGradient(pts, 0)),
