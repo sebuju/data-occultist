@@ -1,21 +1,24 @@
-// The big directional arrows drawn over the canvas during keyboard node-nav. While an arrow key is
-// HELD, ONE "live" arrow tracks from the current anchor to the candidate target; each committed hop
-// LOCKS its arrow in place and a fresh live one stacks on top, so chaining across several nodes
-// leaves a breadcrumb of every hop until the run settles and all clear.
+// The big directional arrow drawn over the canvas during keyboard node-nav. While an arrow key is
+// HELD, ONE "live" endpoint tracks from the current anchor to the candidate target; each committed
+// hop APPENDS its node to the chain, so walking across several nodes grows a SINGLE continuous
+// smooth (Catmull-Rom -> bezier) curve threading every landed node, tipped by one arrowhead at the
+// leading end. The whole curve survives the run then fades on ONE shared timer.
 //
 // Endpoints are stored in WORLD coords and re-projected to screen on every applyView (camera.js),
-// so the arrows stay BOUND to their nodes — they pan/zoom WITH the camera instead of detaching. The
+// so the curve stays BOUND to its nodes — it pans/zooms WITH the camera instead of detaching. The
 // layer itself is a viewport-fixed sibling of #gpan (not inside the transformed world), so the
 // stroke/head keep a constant on-screen size at any zoom; only the endpoints move. Rebuilt on key
 // events AND on camera moves, never on a steady-state poll/tick.
 import { $, view } from "./state.js";
 import { svg } from "../dom.js";
 
-const ARROW_TTL = 900;   // ms a committed arrow survives before dying on its OWN timer
+const ARROW_TTL = 900;   // ms the whole curve survives (after the last hop) before it dies
+const HEAD = 54, HALF = 26;   // arrowhead length + half-width, in constant screen px
 
 let layer = null;
-const locked = [];   // committed hops: {from:{x,y}, to:{x,y}, timer} — each dies independently
-let live = null;     // the in-progress preview segment (world space), or null
+const chain = [];        // committed walk points: {x, y, c} in WORLD coords (+ endpoint colour)
+let live = null;         // in-progress preview endpoint {x, y, c} (world space), or null
+let chainTimer = null;   // ONE death timer for the whole curve (restarted each hop)
 
 function ensureLayer() {
     if (layer && layer.isConnected) return layer;
@@ -26,64 +29,86 @@ function ensureLayer() {
 // world point -> graph-local screen px (pan = translate on #gpan, zoom = scale on #gworld)
 function w2s(p) { return { x: p.x * view.zoom + view.panX, y: p.y * view.zoom + view.panY }; }
 
-// One arrow at constant screen size: shaft stopping at the head's base + a filled triangle head at
-// `to`. Endpoints are {x,y} in screen px. The stroke/fill are a linear gradient running along the
-// arrow from the anchor node's colour (`c1`) to the target node's colour (`c2`); `idx` keys a unique
-// gradient id per arrow. The gradient is userSpaceOnUse so its axis matches the on-screen endpoints,
-// and set via inline style so it beats the CSS class colour. Returns null when the points coincide.
-function mkArrow(from, to, c1, c2, idx) {
-    const dx = to.x - from.x, dy = to.y - from.y, len = Math.hypot(dx, dy);
-    if (len < 1) return null;
-    const ux = dx / len, uy = dy / len;   // unit along
-    const px = -uy, py = ux;              // unit perpendicular
-    const HEAD = 54, HALF = 26;           // big + clearly visible
-    const bx = to.x - ux * HEAD, by = to.y - uy * HEAD;   // base of the head
-    const gid = `navGrad${idx}`;
-    return svg("g", { class: "nav-arrow" },
-        svg("defs", null,
-            svg("linearGradient", { id: gid, gradientUnits: "userSpaceOnUse", x1: from.x, y1: from.y, x2: to.x, y2: to.y },
-                svg("stop", { offset: "0", "stop-color": c1 }),
-                svg("stop", { offset: "1", "stop-color": c2 }))),
-        svg("line", { class: "nav-arrow-shaft", x1: from.x, y1: from.y, x2: bx, y2: by, style: `stroke:url(#${gid})` }),
+// Smooth path threading all points via a Catmull-Rom -> cubic-bezier conversion (curve passes
+// THROUGH every point). Returns the SVG `d` string plus the unit end-tangent `tan` (direction the
+// curve arrives at the last point, for orienting the arrowhead). `pts` are screen px, length >= 2.
+function smoothPath(pts) {
+    const n = pts.length;
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    let c2x = pts[0].x, c2y = pts[0].y;   // last control handle before the end point
+    for (let i = 0; i < n - 1; i++) {
+        const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || pts[i + 1];
+        // Catmull-Rom (tension 0) -> bezier control points
+        const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+        c2x = p2.x - (p3.x - p1.x) / 6; c2y = p2.y - (p3.y - p1.y) / 6;
+        d += ` C ${c1x} ${c1y} ${c2x} ${c2y} ${p2.x} ${p2.y}`;
+    }
+    const end = pts[n - 1];
+    let tx = end.x - c2x, ty = end.y - c2y, tl = Math.hypot(tx, ty);
+    if (tl < 1e-3) { tx = end.x - pts[n - 2].x; ty = end.y - pts[n - 2].y; tl = Math.hypot(tx, ty) || 1; }
+    return { d, tan: { x: tx / tl, y: ty / tl } };
+}
+
+// A per-point colour gradient running along the whole curve (userSpaceOnUse so its axis matches the
+// on-screen endpoints), stops placed at each point's cumulative arc-length fraction. Set via inline
+// style on the path/head so it beats the CSS class colour. `pts` are screen px, length >= 2.
+function mkGradient(pts, idx) {
+    const first = pts[0], last = pts[pts.length - 1];
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+    const total = cum[cum.length - 1] || 1;
+    const stops = pts.map((p, i) => svg("stop", { offset: `${cum[i] / total}`, "stop-color": p.c }));
+    return svg("linearGradient",
+        { id: `navGrad${idx}`, gradientUnits: "userSpaceOnUse", x1: first.x, y1: first.y, x2: last.x, y2: last.y },
+        ...stops);
+}
+
+export function navArrowsActive() { return chain.length > 1 || !!(chain.length && live); }
+
+// Re-project the whole chain against the CURRENT camera and redraw ONE continuous curved arrow.
+// Called on key events and on every camera move (applyView) so the curve stays glued to its nodes.
+export function renderNavArrows() {
+    const active = navArrowsActive();
+    if (layer) while (layer.firstChild) layer.removeChild(layer.firstChild);
+    if (!active) return;
+    const L = ensureLayer();
+    const pts = (live ? [...chain, live] : chain).map((p) => ({ ...w2s(p), c: p.c }));
+    const { d, tan } = smoothPath(pts);
+    const end = pts[pts.length - 1];
+    // pull the head back so its base sits on the curve; base + two wings from the end tangent
+    const bx = end.x - tan.x * HEAD, by = end.y - tan.y * HEAD;   // base of the head
+    const px = -tan.y, py = tan.x;                                // unit perpendicular
+    const gid = "navGrad0";
+    L.appendChild(svg("g", { class: "nav-arrow" },
+        svg("defs", null, mkGradient(pts, 0)),
+        svg("path", { class: "nav-arrow-shaft", d, style: `stroke:url(#${gid});fill:none` }),
         svg("polygon", {
             class: "nav-arrow-head", style: `fill:url(#${gid})`,
-            points: `${to.x},${to.y} ${bx + px * HALF},${by + py * HALF} ${bx - px * HALF},${by - py * HALF}`,
-        }));
+            points: `${end.x},${end.y} ${bx + px * HALF},${by + py * HALF} ${bx - px * HALF},${by - py * HALF}`,
+        })));
 }
 
-export function navArrowsActive() { return !!(live || locked.length); }
-
-// Re-project every stored arrow against the CURRENT camera and redraw. Called on key events and on
-// every camera move (applyView) so the arrows stay glued to their nodes.
-export function renderNavArrows() {
-    if (!navArrowsActive()) { if (layer) while (layer.firstChild) layer.removeChild(layer.firstChild); return; }
-    const L = ensureLayer();
-    while (L.firstChild) L.removeChild(L.firstChild);
-    const segs = live ? [...locked, live] : locked;
-    segs.forEach((s, i) => { const g = mkArrow(w2s(s.from), w2s(s.to), s.c1, s.c2, i); if (g) L.appendChild(g); });
+// Set/replace the live preview endpoint (WORLD {x,y}); on the first hop of a run the anchor `from`
+// seeds chain[0]. c1/c2 tint the anchor/target ends. `to` null clears just the live endpoint,
+// leaving the committed chain in place. The live endpoint has no timer — it persists while held.
+export function drawLive(from, to, c1, c2) {
+    if (from && !chain.length) chain.push({ x: from.x, y: from.y, c: c1 });
+    live = to ? { x: to.x, y: to.y, c: c2 } : null;
+    renderNavArrows();
 }
 
-// Set/replace the live preview to the WORLD segment from->to (both {x,y}), tinted as a gradient from
-// the anchor colour c1 to the target colour c2; null clears just the live one, leaving locked
-// breadcrumbs. The live arrow has no timer — it persists while the key is held.
-export function drawLive(from, to, c1, c2) { live = (from && to) ? { from, to, c1, c2 } : null; renderNavArrows(); }
-
-// Freeze the live arrow as a locked hop with its OWN death timer, so each breadcrumb fades out on
-// its own clock (independent of the others) rather than all clearing together.
+// Freeze the live endpoint as a committed chain point and restart the ONE shared death timer, so the
+// whole curve survives the run and fades ARROW_TTL after the LAST hop (not per-segment).
 export function lockLive() {
     if (!live) return;
-    const seg = { from: live.from, to: live.to, c1: live.c1, c2: live.c2, timer: null };
-    seg.timer = setTimeout(() => {
-        const i = locked.indexOf(seg);
-        if (i !== -1) locked.splice(i, 1);
-        renderNavArrows();
-    }, ARROW_TTL);
-    locked.push(seg);
+    chain.push(live);
     live = null;
+    if (chainTimer) clearTimeout(chainTimer);
+    chainTimer = setTimeout(() => { chain.length = 0; chainTimer = null; renderNavArrows(); }, ARROW_TTL);
 }
 
-// Kill every arrow at once (blur / reset), cancelling each pending death timer.
+// Kill the whole curve at once (blur / reset), cancelling the pending death timer.
 export function clearNavArrow() {
-    for (const s of locked) clearTimeout(s.timer);
-    locked.length = 0; live = null; renderNavArrows();
+    if (chainTimer) { clearTimeout(chainTimer); chainTimer = null; }
+    chain.length = 0; live = null; renderNavArrows();
 }
