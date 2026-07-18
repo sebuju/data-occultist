@@ -364,8 +364,9 @@ class LiveSession:
         """Collapse a key's ring of recent values to the ONE value the register exposes, per
         ``RegisterDef.aggregate``. ``""``/``"latest"`` (or an unknown mode) -> the ring TAIL
         unchanged. A numeric fold (min/max/avg/sum/median/stable) coerces each member to ``float``
-        and skips non-numeric ones; with no numeric members (or an empty ring) it falls back to the
-        tail too. So a non-numeric register never breaks — it just keeps showing its latest.
+        and skips non-numeric ones -- including a dropped read's ``None`` (a ring ``[6, None, 8]``
+        sums to ``14``); with no numeric members (or an empty ring, or an all-dropped ring) it falls
+        back to the tail too, so an all-``None`` ring exposes ``None``. A non-numeric register never breaks — it just keeps showing its latest.
 
         ``common`` is the one NON-numeric fold: it does not coerce — it exposes the most frequent ring
         member by text form (ties -> newest of the tied), so a register of item names/states/labels
@@ -386,10 +387,15 @@ class LiveSession:
         if mode == "common":
             # Non-numeric fold: expose the most frequent ring member by TEXT form; return the
             # original value (a numeric ring still exposes a number). Tie -> newest of the tied.
-            counts = collections.Counter(str(v) for v in values)
+            # Dropped reads (None / "") are excluded so a run of blanks can't win; an all-blank
+            # ring exposes None.
+            members = [v for v in values if v is not None and v != ""]
+            if not members:
+                return None
+            counts = collections.Counter(str(v) for v in members)
             top = max(counts.values())
             winners = {k for k, c in counts.items() if c == top}
-            return next((v for v in reversed(values) if str(v) in winners), tail)
+            return next((v for v in reversed(members) if str(v) in winners), members[-1])
         nums = []
         for v in values:
             try:
@@ -418,6 +424,8 @@ class LiveSession:
                 return tail
         except statistics.StatisticsError:
             return tail
+        if r is None:   # stable found nothing within threshold and the ring tail is a drop
+            return None
         # min/max/sum kept an existing value / total -> stay int when whole, else round like a fold
         return int(r) if float(r).is_integer() else round(r, prec)
 
@@ -515,9 +523,11 @@ class LiveSession:
         last reported it, not only when its own window is next read. Each key holds a ROLLING RING
         of the last ``capacity`` values: EVERY read is appended (even one identical to the current
         tail) and the ring truncated to the newest N, so a rolling window / moving aggregate sees
-        every sample. Latest = ring tail. A source never seen this session is simply skipped. With
-        ``ignore_empty`` set, a null / empty read is dropped (never written to a keyslot) so a
-        momentary blank can't displace a good value. Every write is logged to the non-persisted
+        every sample. Latest = ring tail. A source never seen this session is simply skipped. A
+        dropped read (null / empty ``""``) is written to the ring as an explicit ``None`` so the
+        rolling window RECORDS the gap (aggregates skip it — see :meth:`_aggregate_ring`); with
+        ``ignore_empty`` set it is instead skipped entirely (never written to a keyslot) so a
+        momentary blank can't displace a good held value. Every write is logged to the non-persisted
         push-history ring ([[register_history]]) for the push-history satellite. A register with
         ``persist`` set flushes its held map to that dataset only when a key's EXPOSED value (the
         aggregate, or the tail when no aggregate) actually changed this tick — so a static
@@ -542,8 +552,10 @@ class LiveSession:
                 if rid is None or rid not in readouts:
                     continue
                 val = readouts[rid]
-                if ignore_empty and (val is None or val == ""):
-                    continue   # ignore the empty read — don't write it to a keyslot
+                if val is None or val == "":
+                    if ignore_empty:
+                        continue   # ignore the empty read — don't write it to a keyslot
+                    val = None     # record the drop as an explicit null (not "") in the ring
                 m = self._registers.setdefault(reg.id, {})
                 prev = m.get(rid)
                 prev_vals = prev["values"] if prev else []

@@ -116,12 +116,14 @@ def test_ignore_empty_drops_null_and_empty_reads():
     assert s._registers["hp"]["health"]["values"] == [10, 20]
 
 
-def test_ignore_empty_off_writes_empty():
-    # default (off) writes whatever the readout yields, including a blank
+def test_ignore_empty_off_writes_none_on_drop():
+    # default (off): a dropped read (null / empty "") is recorded in the ring as an explicit
+    # None so the rolling window keeps the gap; a real value still writes through.
     s = _session(cap=3)   # ignore_empty defaults False
     s._feed_registers({"health": 10}, {})
-    s._feed_registers({"health": ""}, {})
-    assert s._registers["hp"]["health"]["values"] == [10, ""]
+    s._feed_registers({"health": ""}, {})     # empty -> None sample
+    s._feed_registers({"health": None}, {})   # null  -> None sample
+    assert s._registers["hp"]["health"]["values"] == [10, None, None]
 
 
 # ---- aggregate ---------------------------------------------------------------
@@ -239,6 +241,48 @@ def test_aggregate_common_tie_breaks_to_newest():
         s._feed_registers({"health": v}, {})
     # both appear once -> newest of the tied wins
     assert s.register_latest("hp", "health") == "b"
+
+
+# ---- None / dropped-read handling in the folds -------------------------------
+
+def test_aggregate_skips_none_members():
+    # a dropped read (None in the ring) must not break a numeric fold: sum/avg/min/max fold
+    # over the surviving numbers as if the None weren't there.
+    for mode, want in [("sum", 14), ("avg", 7.0), ("min", 6), ("max", 8), ("median", 7.0)]:
+        s = _agg_session(mode, cap=3)
+        s._feed_registers({"health": 6}, {})
+        s._feed_registers({"health": ""}, {})    # drop -> None in the ring
+        s._feed_registers({"health": 8}, {})
+        assert s._registers["hp"]["health"]["values"] == [6, None, 8]
+        assert s.register_latest("hp", "health") == want, mode
+
+
+def test_aggregate_all_none_ring_exposes_none():
+    # every held sample is a drop -> no numeric members -> the fold exposes None, never raises
+    for mode in ("sum", "avg", "min", "max", "median", "stable", "common"):
+        s = _agg_session(mode, cap=2)
+        s._feed_registers({"health": ""}, {})
+        s._feed_registers({"health": None}, {})
+        assert s._registers["hp"]["health"]["values"] == [None, None]
+        assert s.register_latest("hp", "health") is None, mode
+
+
+def test_aggregate_common_ignores_none():
+    # None samples don't count as a text value ("None") that could win the common fold
+    s = _agg_session("common", cap=4)
+    for v in ("a", "", None, "a"):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == "a"
+
+
+def test_aggregate_stable_over_none_gap():
+    # stable folds over the numbers around a dropped read without tripping on the None
+    s = _agg_session("stable", cap=3)
+    s._feed_registers({"health": 10}, {})
+    s._feed_registers({"health": ""}, {})   # drop
+    s._feed_registers({"health": 10}, {})
+    got = s.register_latest("hp", "health")
+    assert got == 10 and isinstance(got, int)
 
 
 def test_persist_flushes_aggregate_when_set(monkeypatch, tmp_path):

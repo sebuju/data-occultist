@@ -119,12 +119,12 @@ def test_rename_missing_register_is_a_no_op():
 def test_feed_holds_empty_value():
     # a readout that read empty (or dropped below confidence) must still push an entry, not be
     # skipped -- the full map hands "" for it (see TickResult.readouts_all), and the register
-    # holds "" like any other value, overwriting a stale prior reading.
+    # records the drop as an explicit None (not ""), overwriting a stale prior reading.
     s = _session()
     s._feed_registers({"health": 100, "shield": 50}, {"health": 0.9, "shield": 0.9})
     s._feed_registers({"health": "", "shield": 50}, {"health": None, "shield": 0.9})
     rows = {r["key"]: r for r in s.register_records("hp")}
-    assert rows["health"]["value"] == ""
+    assert rows["health"]["value"] is None
 
 
 def test_persist_flushes_only_when_a_value_changes(monkeypatch, tmp_path):
@@ -250,5 +250,5 @@ def test_on_tick_routes_gated_vs_full_readout_maps():
     s._on_tick(result)
     assert s._readouts == {"shield": 50}               # gated map never sees "health"
     rows = {r["key"]: r for r in s.register_records("hp")}
-    assert rows["health"]["value"] == ""                # register still got the empty entry
+    assert rows["health"]["value"] is None              # drop recorded as an explicit None
     assert rows["shield"]["value"] == 50
