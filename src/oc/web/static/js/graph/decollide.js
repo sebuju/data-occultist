@@ -34,7 +34,26 @@ function alleyOf(axis, coord, lo, hi, walls) {
     return { lb, rb, straddled };
 }
 
-const spanOverlap = (a, b) => Math.min(a.hi, b.hi) - Math.max(a.lo, b.lo) > 5;
+const spanOverlap = (a, b) => Math.min(a.hi, b.hi) - Math.max(a.lo, b.lo) > 1;
+
+const FACE_M = 8;   // keep a slid port this far inside its node face (off the corners)
+// The node face a port stub attaches to, as its slidable perp span (an H stub rides an L/R face, slides
+// in Y; a V stub rides a T/B face, slides in X). Returns {lo,hi} or null (free/gate end — leave pinned).
+function faceSpanFor(port, axis, walls) {
+    const T = 8;
+    if (axis === "H") { for (const w of walls) if (port[1] > w.y - 1 && port[1] < w.y + w.h + 1 && (Math.abs(port[0] - w.x) < T || Math.abs(port[0] - (w.x + w.w)) < T)) return { lo: w.y, hi: w.y + w.h }; }
+    else { for (const w of walls) if (port[0] > w.x - 1 && port[0] < w.x + w.w + 1 && (Math.abs(port[1] - w.y) < T || Math.abs(port[1] - (w.y + w.h)) < T)) return { lo: w.x, hi: w.x + w.w }; }
+    return null;
+}
+// would a run on `axis` at coord `c` spanning [lo,hi] pierce any node interior?
+function stubHitsNode(axis, c, lo, hi, walls) {
+    for (const w of walls) {
+        const e0 = axis === "V" ? w.x : w.y, e1 = axis === "V" ? w.x + w.w : w.y + w.h;
+        const o0 = axis === "V" ? w.y : w.x, o1 = axis === "V" ? w.y + w.h : w.x + w.w;
+        if (c > e0 + 1 && c < e1 - 1 && hi > o0 + 1 && lo < o1 - 1) return true;
+    }
+    return false;
+}
 
 // Group-box CONTAINERS (not obstacles): a box the run lives INSIDE only clamps how far it may
 // travel (it must stay in the box), never freezes it — unlike a straddling wall. A box entirely to
@@ -65,6 +84,9 @@ export function deCollide(routes, walls, config = {}) {
     const laneGap = config.laneGap || 12;
     walls = walls || [];
     const containers = config.containers || [];   // group boxes: clamp travel, never freeze (see containerBounds)
+    const bnow = () => (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
+    const bt0 = config.bench ? bnow() : 0;
+    const blog = () => { if (config.bench) console.log(`[decollide] ${(bnow() - bt0).toFixed(0)}ms | ${routes.size} routes`); };
 
     // ---- decompose every route into axis-aligned segments (read-only over the originals) ----
     // `cur` is the run's live coord (updated as we displace); `movable` gates whether it may move at all.
@@ -82,6 +104,8 @@ export function deCollide(routes, walls, config = {}) {
             else if (Math.abs(a[1] - b[1]) < 0.5 && Math.abs(a[0] - b[0]) > 0.5)
                 s = { key, axis: "H", coord: a[1], cur: a[1], lo: Math.min(a[0], b[0]), hi: Math.max(a[0], b[0]), i0: i, i1: i + 1 };
             if (!s) continue;
+            s.isEnd = endpoint;
+            if (endpoint) s.face = faceSpanFor(i === 0 ? pts[0] : pts[last], s.axis, walls);
             const al = endpoint ? null : alleyOf(s.axis, s.coord, s.lo, s.hi, walls);
             s.movable = !endpoint && !(al && al.straddled);
             let lb = al ? al.lb : -Infinity, rb = al ? al.rb : Infinity;
@@ -133,6 +157,35 @@ export function deCollide(routes, walls, config = {}) {
         if (!moved) break;
     }
 
+    // ---- endpoint de-dup: fanFaceEnds / evict can stack two port stubs on ONE face coord (the Lloyd
+    // relaxation above skips endpoints — moving one would detach it). But a stub may SLIDE along its own
+    // node face (perp coord) without detaching. For each end-stub still colliding, slide it to the
+    // nearest face coord that is (a) >laneGap from every other run sharing its span AND (b) leaves the
+    // stub clear of every node — so separating a stub can never manufacture a through-node.
+    const OVL = 1;   // px of span overlap that counts as a collision (catch sub-laneGap near-misses too)
+    const collides = (seg, c) => {
+        for (const s2 of segs) { if (s2 === seg || s2.axis !== seg.axis) continue; if (Math.abs(s2.cur - c) < laneGap - 0.5 && Math.min(seg.hi, s2.hi) - Math.max(seg.lo, s2.lo) > OVL) return true; }
+        return false;
+    };
+    for (let iter = 0; iter < 30; iter++) {
+        let fixed = false;
+        for (const seg of segs) {
+            if (!seg.isEnd || !seg.face || seg.face.hi - seg.face.lo <= 2 * FACE_M) continue;
+            // resolve an end-stub that either collides with another run OR pierces a node (a long stub
+            // nudge shoved through a node row) — both fix by sliding along the face to a clear coord.
+            if (!collides(seg, seg.cur) && !stubHitsNode(seg.axis, seg.cur, seg.lo, seg.hi, walls)) continue;
+            const lo = seg.face.lo + FACE_M, hi = seg.face.hi - FACE_M;
+            let best = null, bestd = 1e9;
+            for (let c = lo; c <= hi; c += 2) {
+                if (stubHitsNode(seg.axis, c, seg.lo, seg.hi, walls)) continue;
+                if (collides(seg, c)) continue;
+                const d = Math.abs(c - seg.cur); if (d < bestd) { bestd = d; best = c; }
+            }
+            if (best != null && Math.abs(best - seg.cur) > 0.5) { seg.cur = best; fixed = true; }
+        }
+        if (!fixed) break;
+    }
+
     // ---- apply: clone each displaced wire's pts once, shift its vertices, re-simplify ----
     const moved = new Map();   // key -> [{i0,i1,axis,off}]
     for (const s of segs) {
@@ -140,7 +193,7 @@ export function deCollide(routes, walls, config = {}) {
         if (Math.abs(off) < 0.5) continue;
         (moved.get(s.key) || moved.set(s.key, []).get(s.key)).push({ i0: s.i0, i1: s.i1, axis: s.axis, off });
     }
-    if (!moved.size) return routes;                            // nothing displaced — hand back the input untouched
+    if (!moved.size) { blog(); return routes; }                // nothing displaced — hand back the input untouched
     const out = new Map(routes);
     for (const [key, list] of moved) {
         const r = routes.get(key);
@@ -153,5 +206,6 @@ export function deCollide(routes, walls, config = {}) {
         const np = simplify(pts);
         out.set(key, { pts: np, p1: np[0].slice(), d1: r.d1, p2: np[np.length - 1].slice(), d2: r.d2 });
     }
+    blog();
     return out;
 }
