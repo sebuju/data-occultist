@@ -19,6 +19,7 @@ import { $, view, selected, nodeEls } from "./state.js";
 import { selectedNodeId } from "./main.js";
 import * as groups from "./groups.js";
 import { ctrlToggleNode, ctrlToggleGroupMembers } from "./selection.js";
+import { suppressNextClick } from "./dragresize.js";
 
 function toWorld(ev) {
     const r = $("graph").getBoundingClientRect();
@@ -34,7 +35,9 @@ export function wireCtrlSelect() {
         const nodeEl = ev.target.closest(".gnode");
         const groupMode = groups.selectedGroupIds().length > 0;
         const nodeActive = selected.size > 0 || (selectedNodeId && nodeEls.has(selectedNodeId));
-        const consume = () => { ev.preventDefault(); ev.stopPropagation(); };
+        // consume the mousedown AND swallow the trailing click on mouseup — else the control
+        // under the cursor (button/checkbox/link/custom-click widget) still fires on a ctrl-select.
+        const consume = () => { ev.preventDefault(); ev.stopPropagation(); suppressNextClick(nodeEl || titleEl || $("graph")); };
 
         if (titleEl) {
             consume();

@@ -142,6 +142,20 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
     }
 }
 
+// ---- trailing-click suppression --------------------------------------------
+
+// After a mousedown was consumed as a GESTURE (ctrl-select toggle / far-zoom drag / handle
+// drag), the browser still fires the trailing `click` on mouseup — which would run the
+// underlying button/checkbox/link/custom-click handler. preventDefault+stopPropagation on the
+// mousedown blocks native focus and downstream *mousedown* handlers, but NOT that click. Swallow
+// exactly that one click (capture phase, on `el`), self-removing next tick so a later genuine
+// click is untouched. One primitive for every gesture site (rule 7).
+export function suppressNextClick(el) {
+    const kill = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+    el.addEventListener("click", kill, true);
+    setTimeout(() => el.removeEventListener("click", kill, true), 0);
+}
+
 // ---- drag loop -------------------------------------------------------------
 
 // The one mousedown→track-mousemove→mouseup loop. Begin it imperatively from a pointer

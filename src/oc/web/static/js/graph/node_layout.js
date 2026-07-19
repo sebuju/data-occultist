@@ -3,7 +3,7 @@
 // unpositioned nodes, and the node-drag loop (single/shift-subtree/multi-select). Split out of
 // main.js; buildNode/positionNode/render/renderNodeViews stay in main and are imported back.
 import { $, model, pos, nodeEls, selected, view } from "./state.js";
-import { snap, beginDrag } from "./dragresize.js";
+import { snap, beginDrag, suppressNextClick } from "./dragresize.js";
 import { requestEdges, flushEdges, setDraggingNodes, nodeRect } from "./routing.js";
 import { showGuides, flashGuides } from "./guides.js";
 import { viewportCenterWorld, resizeCanvas } from "./camera.js";
@@ -226,12 +226,9 @@ export function dragFromHandle(id, ev, div, handle) {
         onStart: () => {
             stop();   // drop this gate loop; startMove begins its own drag loop from the same ev
             if (handle.tagName === "INPUT") { handle.blur(); window.getSelection()?.removeAllRanges(); }
-            // a drag must NOT also fire the control's click (collapse toggle / input focus). The
-            // trailing click fires synchronously on mouseup — catch it, then drop the guard on the
-            // next tick so a later genuine click isn't eaten.
-            const suppress = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
-            div.addEventListener("click", suppress, true);
-            setTimeout(() => div.removeEventListener("click", suppress, true), 0);
+            // a drag must NOT also fire the control's click (collapse toggle / input focus) — the
+            // trailing click fires synchronously on mouseup. Shared suppressor (dragresize.js).
+            suppressNextClick(div);
             startMove(id, ev);
         },
     });
