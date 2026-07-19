@@ -269,7 +269,10 @@ function wireGate(div, n) {
     // destination: the trigger(s) this gate applies to — the trigger owns the ref, so a full render
     // refreshes both this node and the trigger's own "gates" row.
     $(".gate-adddest")?.addEventListener("change", (e) => { if (model.addTriggerGate(e.target.value, g.id)) { render(); autosave(null); } });
-    wireArmedRemove(div, ".gate-rmdest", (tid) => { model.removeTriggerGate(tid, g.id); render(); autosave(null); });
+    // rebuildNode(n.id) FIRST: the armed trash button is the focused element and lives in THIS node,
+    // so render()'s consumer sweep (rebuildRefConsumers) would skip rebuilding the gate body and the
+    // removed chip would linger. Rebuild our own body directly, then render() for the trigger side.
+    wireArmedRemove(div, ".gate-rmdest", (tid) => { model.removeTriggerGate(tid, g.id); rebuildNode(n.id); render(); autosave(null); });
     // and/or slider — rebuild so its label re-renders (and it shows/hides at the >1-condition threshold).
     $(".gate-logic")?.addEventListener("change", (e) => { model.setGateLogic(g.id, e.target.checked ? "and" : "or"); rebuildNode(n.id); autosave(null); });
     // negate — a plain toggle (no structural change), so just save.
@@ -304,7 +307,9 @@ function wireRouter(div, n) {
     // fired by: the trigger(s) that drive this router — the trigger owns the ref (targets), so a full
     // render refreshes both this node and the trigger's own "fires" row.
     $(".router-adddest")?.addEventListener("change", (e) => { if (model.addTriggerTarget(e.target.value, r.id)) { render(); autosave(null); } });
-    wireArmedRemove(div, ".router-rmdest", (tid) => { model.removeTriggerTarget(tid, r.id); render(); autosave(null); });
+    // rebuildNode(n.id) FIRST — the focused armed trash button lives in THIS node, so render()'s
+    // consumer sweep would skip our own body and leave the removed chip visible (same as gate-rmdest).
+    wireArmedRemove(div, ".router-rmdest", (tid) => { model.removeTriggerTarget(tid, r.id); rebuildNode(n.id); render(); autosave(null); });
     // add/remove a branch — rebuild (a branch block appears/vanishes) + edges (its targets' wires).
     $(".router-addbranch")?.addEventListener("click", () => { model.addRouterBranch(r.id); rebuildNodeEdges(n.id); autosave(null); });
     // every per-branch control resolves its branch index off the wrapping [data-bi].

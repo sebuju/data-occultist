@@ -12,8 +12,8 @@ import { slideToggle } from "./node_parts.js";
 export const GATE_WHENS = [
     ["always", "always"], ["empty", "empty"], ["has_digit", "has digit"], ["all_digit", "is a number"],
     ["has_letter", "has letter"], ["all_letter", "is text"], ["equal", "equals"], ["not_equal", "not equal"],
-    ["contains", "contains"], ["in", "in list"], ["gte", "at least"], ["lte", "at most"], ["gt", "above"],
-    ["lt", "below"], ["eq", "= (number)"], ["ne", "!= (number)"], ["between", "between"],
+    ["contains", "contains"], ["in", "in list"], ["gte", "gte num"], ["lte", "lte num"], ["gt", "gt num"],
+    ["lt", "lt num"], ["eq", "eq num"], ["ne", "not eq"], ["between", "between"],
     ["crosses_up", "crosses up"], ["crosses_down", "crosses down"], ["changed", "changed"],
 ];
 // ops that take NO argument — the arg input is hidden for these.

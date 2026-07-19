@@ -3,7 +3,7 @@
 // match fires that branch's targets (producers/toasts/sounds/actions). See RouterDef (backend).
 // Rendering only — wiring lives in io_wire.js (wireRouter), like every other node body. The cond
 // rows reuse gate_node.js's shared condRow/GATE_WHENS (rule 7 — no duplicated cond-row markup).
-import { h, frag, labAdd, srcRow, trashBtn } from "../dom.js";
+import { h, frag, labAdd, labCell, srcRow } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
 import { slideToggle } from "./node_parts.js";
 import { condRow } from "./gate_node.js";
@@ -31,9 +31,9 @@ export function routerParts(r, model) {
         const andOn = (b.logic || "or") === "and";
         const have = new Set(b.targets || []);
         // cond rows are PER-BRANCH — scope with a wrapping [data-bi] so the wiring resolves the
-        // branch. The whole "branch N · if [+]" is ONE label line (labAdd), the add-condition button
-        // carrying the branch index like other nodes.
-        const branchLabel = labAdd(`branch ${bi + 1} · if`, "conditions for this branch (first matching branch wins)",
+        // branch. Branches are unnamed — the "if [+]" label heads each block, the add-condition
+        // button carrying the branch index; stack order IS the priority (first match wins).
+        const branchLabel = labAdd("if", "conditions for this branch (first matching branch wins)",
             "routerb-addcond", "add condition", true, { bi: String(bi) });
         const condsBox = h("div", { class: "routerb-conds", dataset: { bi: String(bi) } },
             ...conds.map((c, ci) => condRow("routerb", ci, c)));
@@ -43,16 +43,18 @@ export function routerParts(r, model) {
                 h("span", { class: "gn-slide-lbl" }, andOn ? "and" : "or"))
             : null;
         const targets = h("div", { class: "routerb-targets", dataset: { bi: String(bi) } },
+            labCell("then", "targets fired when this branch's conditions hold"),
             sourcesInput({
                 chips: (b.targets || []).map((p) => ({ value: p, node: model.refNode(p) })),
                 free: allTargets.filter((p) => !have.has(p)),
                 addLabel: "+ target", addinCls: "sv-addin routerb-addtarget", rmCls: "sv-rmin routerb-rmtarget" }));
-        // the whole branch is one [data-bi] block (cond rows + targets read their bi off it). The
-        // label line (branchLabel) sits in grid col 1, this body in col 2.
-        const branchBody = h("div", { class: "routerb", dataset: { bi: String(bi) } },
-            condsBox, logic, targets,
-            trashBtn({ cls: "router-rmbranch", dataset: { bi: String(bi) }, title: "remove branch" }));
-        return frag(branchLabel, branchBody);
+        // remove-branch: a bare red text button ("remove branch" IS the button), hugging the right edge.
+        const rmRow = h("div", { class: "routerb-rmrow" },
+            h("button", { class: "router-rmbranch routerb-rmbtn", dataset: { bi: String(bi) }, title: "remove this branch" }, "remove branch"));
+        // one full-width block per branch (spans both grid cols via .gspan): the label line heads
+        // it, then conds / logic / targets / remove, all reading their bi off the wrapping [data-bi].
+        return h("div", { class: "routerb gspan", dataset: { bi: String(bi) } },
+            branchLabel, condsBox, logic, targets, rmRow);
     });
 
     // fired by: the trigger(s) that drive this router (they name it in their targets). Shown as an

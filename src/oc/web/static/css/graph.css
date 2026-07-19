@@ -458,9 +458,8 @@
        card reads its type from the frame + header disc/tag, not from a bespoke per-type fill. A real
        border (not a box-shadow ring) so the header islands can sit INSIDE the card and still cover /
        interrupt the top border. box-sizing:border-box keeps the border inside the node's width. */
-    background: var(--panel);
+    background: color-mix(in lab, var(--nt) 5%, var(--panel));
     border-radius: 6px; padding: 6px 8px; font-size: var(--fs-base);
-    border: 1px solid color-mix(in oklab, var(--nt) 20%, transparent);
     cursor: grab;                 /* whole card drags; the exceptions below override */
     user-select: none;            /* don't select text while dragging */
     /* each node is its OWN stacking context (z-index on a positioned box makes one). Without this,
@@ -513,9 +512,9 @@
    gap; the header's margin-bottom gives the equal header->body gap — ONE rhythm on every node.
    Left island = disc + content-width title; right island = hover controls + type tag. */
 .gnode .gn-h { font-weight: 600; cursor: grab; flex: 0 0 auto;
-    position: relative; z-index: 3; margin: 0 0 6px 0; padding: 0;
+    position: relative; z-index: 3; margin: -6px -8px 6px -8px; padding: 6px 8px 6px 8px;
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    overflow: visible; background: transparent; border: none; border-bottom: 3px solid var(--nt); }
+    overflow: visible; background: color-mix(in lab, var(--nt) 15%, var(--panel)); border: none; border-top-left-radius: 5px; border-top-right-radius: 5px; }
 .gn-hl, .gn-hr { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
 .gn-hl { flex: 0 1 auto; overflow: hidden; cursor: grab; }
 .gn-hr { flex: 0 0 auto; }
@@ -564,7 +563,7 @@
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
 .gnode input.gi { width: 100%; }
 .gnode input.gi-id { width: auto; flex: 0 1 auto; min-width: 0; max-width: 100%; field-sizing: content;
-    font-weight: 600; border: unset; background: transparent; margin-left: 0; padding-left: 2px; padding-right: 0px;
+    font-weight: 600; border: unset; background: transparent; padding: 0;
     cursor: inherit; color: var(--nt); }   /* field-sizing:content -> the input (and its island) shrink-wraps the id text; click-to-arm drag handle until the 2nd click focuses it */
 .gnode input.gi-id:focus { cursor: text; }
 input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
@@ -680,7 +679,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    (240x150) reserves a stable placeholder so the node never resizes when the image loads;
    width:100% + height:auto keeps that aspect as the node resizes. */
 .mp-canvas { display: block; width: 100%; height: auto; background: #0b0d12;
-    border: 1px solid var(--line); border-radius: 3px; image-rendering: pixelated; }
+    image-rendering: pixelated; }
 /* a colliding colour input (same colour, or within another's tolerance) — the standard danger fill.
    Selector must out-specify the .gnode de-input rule (line ~178, 0,2,1) or the fill stays transparent. */
 .gnode .color-row input.color-collide { background: var(--danger); color: var(--on-danger); }
@@ -732,7 +731,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .frule-head .frule-n .rulemv[data-d="1"] { top: 10px; }
 .frule-head .frule-n:hover .rulemv { opacity: 1; pointer-events: auto; }
 .frule-head .rule-op { color: var(--nt, var(--accent)); }
-.frule-head select, .frule-head .rule-val, .frule-head .rule-arg { flex: 1 1 0; min-width: 4ch; width: auto; }
+.frule-head select, .frule-head .rule-val, .frule-head .rule-arg, .gate-condwhen { flex: 1 1 0; min-width: 4ch; width: auto; }
 .frule-head select { max-width: 12ch; text-overflow: ellipsis; box-sizing: content-box; }
 .frule-head .rule-arrow { flex: 0 0 auto; }
 .frule-head .rule-fuzzy { flex: 0 0 6ch; }
@@ -745,7 +744,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* a rule that doesn't fit the field's type: greyed and ignored by the executor */
 .frule-invalid { opacity: .45; }
 .frule-empty { margin-top: 6px; font-size: var(--fs-sm); }
-.frule :is(input, select, textarea) { width: unset; }
+.frule :is(input, select, textarea) { width: unset; field-sizing: content; }
 .flab select, .flab input[type="number"], .flab input[type="text"] { width: 100%; min-width: 0; }
 /* process node key mangler: one row per single-key input — [inputKey chip] -> [output-key field] [trash].
    The input-key reuses the .sv-input chip (click pans to its source node); the output field renames
@@ -818,7 +817,20 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .tg-condrow.armed { outline: 1px solid var(--warn); outline-offset: 1px; }
 /* gate / router condition rows: when-select + arg-input + remove on ONE line (mirrors tg-condrow).
    The "+ add" for a new condition lives in the row's label (labAdd), not a full-width button. */
-.routerb { margin-left: 4px; }
+/* each branch = one full-width tinted block: label heads it, then conds / logic / targets / remove
+   stack down the block. The faint node-tint wash sets it apart from the node body around it. */
+.routerb { display: flex; flex-direction: column; gap: 4px;
+   padding: 6px; border-radius: 4px; background: color-mix(in oklab, var(--nt) 3%, transparent); }
+.routerb + .routerb { margin-top: 6px; }
+.routerb.armed { outline: 1px solid var(--warn); outline-offset: 1px; }
+/* branch targets: the "then" label pins to the first pill line, pills fill the rest of the row */
+.routerb-targets { margin-left: 4px; display: flex; align-items: flex-start; gap: 6px; }
+.routerb-targets > .lab { display: inline-flex; align-items: center; white-space: nowrap; }
+.routerb-targets > .sv-inputs { flex: 1 1 auto; min-width: 0; }
+/* remove-branch row: a bare red text button hugging the branch's right edge */
+.routerb-rmrow { display: flex; justify-content: flex-end; margin-top: 4px; }
+.gnode .routerb-rmbtn { background: none; border: 0; padding: 0; color: var(--danger);
+   cursor: pointer; font: inherit; }
 .gate-conds, .routerb-conds { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .gate-condrow, .routerb-condrow { display: flex; align-items: center; gap: 4px; min-width: 0; border-radius: 3px; }
 .gate-condrow > select, .routerb-condrow > select { flex: 1 1 auto; min-width: 0; }
@@ -868,8 +880,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     background: none;
     white-space: pre;
     color: var(--nt, var(--accent));
-    margin: 1px 0px 1px 4px;
+    margin: 0px 0px 0px 4px;
     padding: 0;
+    font-size: var(--fs-sm);
 }
 .gnode input[type="checkbox"]:not(.gn-enable)::before { content: "[ ]"; }
 .gnode input[type="checkbox"]:not(.gn-enable):hover:not(:disabled) { filter: brightness(1.3); }
@@ -1240,6 +1253,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    selection, so the resting board stays flat). Falls back to white-ish when a card has no --nt. */
 .gnode.selected { border-color: var(--nt); box-shadow: 0 0 0 0px var(--nt), 0 10px 30px #000000; z-index: 20; }
 .gnode.multisel { border-color: var(--sel); box-shadow: 0 0 0 1px color-mix(in srgb, var(--sel) 60%, transparent); }
+/* armed for deletion (rule 2): the toolbar trash's first click rings the node(s) the confirm click
+   will remove, in the SAME yellow (--warn) the button turns — node + button read as one armed action.
+   Distinct from .selected (type hue) and .multisel (blue --sel). */
+.gnode.rm-armed { border-color: var(--warn); box-shadow: 0 0 0 2px var(--warn), 0 10px 30px #000000; z-index: 20; }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
 .seltoolbar { position: fixed; left: 50%; top: 46px; transform: translateX(-50%);
