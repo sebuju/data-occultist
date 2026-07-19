@@ -605,9 +605,10 @@ function flushEdges() {   // force the final frame now (drop on settle) — canc
 // signature, so a frame where nothing moved is a no-op and the loop idles.
 const ROUTE = {
     enabled: true,
-    hier: true,         // hierarchical routing: each group routed as its own sub-problem, its boundary
-                        // lines funnelled through fanned per-face GATES (hierRoute.js). Toggle off in the
-                        // console (window.__route.hier=false; __reroute()) to fall back to one global pass.
+    bench: false,       // console.log per-phase routing timings (window.__route.bench=true; __reroute())
+    hier: false,        // FLAT one global pass (routeGraph + a single deCollide) is the default — it routes
+                        // the whole graph together, far cleaner than the per-group GATE funnelling. Set
+                        // window.__route.hier=true; __reroute() to fall back to hierarchical gate routing.
     decollide: true,    // GLOBAL cross-pass de-collision (decollide.js): hier's isolated passes can each
                         // route a wire onto the same world coord (nudge only separates within a pass), so
                         // a final pass fans coincident runs apart. Toggle off: window.__route.decollide=false; __reroute()
@@ -625,6 +626,18 @@ if (typeof window !== "undefined") {
     // every node's world rect — lets a test assert no edge passes through a non-endpoint node.
     window.__routes = () => { const o = {}; for (const [k, c] of routeCache) o[k] = { pts: c.pts, d1: c.d1, d2: c.d2 }; return o; };
     window.__nodeRects = () => { const o = {}; for (const id of nodeEls.keys()) { const r = nodeRect(id); if (r) o[id] = r; } return o; };
+    // read-only snapshot for the routing lab (static/route_lab.html): the full geometry the router
+    // consumes — every node's world rect, the group/sub/super boxes, and the raw link list
+    // (endpoints + rects + kind). Capture once in the live console: copy(JSON.stringify(window.__graphDump())).
+    window.__graphDump = () => ({
+        nodeRects: window.__nodeRects(),
+        groupBoxes: [
+            ...groups.groupBoxes().map((g) => ({ ...g.box, tier: "group", title: g.title, outline: g.outline, bg: g.bg })),
+            ...groups.subGroupBoxes().map((g) => ({ ...g.box, tier: "sub", title: g.title, outline: g.outline, bg: g.bg })),
+            ...groups.superGroupBoxes().map((g) => ({ ...g.box, tier: "super", title: g.title, outline: g.outline, bg: g.bg })),
+        ],
+        links: buildLinks().map((l) => ({ key: l.key, aId: l.aId, bId: l.bId, kind: l.cls.split(" ")[1], cls: l.cls, ra: l.ra, rb: l.rb })),
+    });
     // __overlaps(): scan the RENDERED edge geometry (the canvas display records — their `pts` are the
     // clean orthogonal polyline, no bezier control points to strip, and their key carries the real
     // endpoint ids) and report the two ways a line reads as "drawn on top of" something:
@@ -811,7 +824,7 @@ function runRouting() {
         if (r) titleBands.push({ x0: r.x, y0: b.box.y + b.box.h - b.bandH, x1: r.x + r.w, y1: r.y + r.h });
         else if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
     }
-    const config = { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell };
+    const config = { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell, bench: ROUTE.bench };
     // hierarchical: collapse each group to a hard box and funnel its crossing lines through gates.
     // groupOf() returns the group RECORD; hierRoute/gates key off the group id. An ungated group
     // is left OUT of this map entirely: boxless to hierRoute/classifyAndGate means its members
@@ -853,7 +866,11 @@ function runRouting() {
         res = out.routes; gateFaces = out.faces; hierPassCache = out.passCache;
         if (ROUTE.decollide) res = deCollide(res, walls, { laneGap: ROUTE.cell, containers });
     } else {
-        res = routeGraph(nodes, grps, edges, { prevSides, outPorts, titleBands, config });
+        // FLAT one-go: whole graph in a single routeGraph pass (no soft group boxes — the lab testbed
+        // that this is tuned against passes none, and groups only render, they don't gate) + one
+        // deCollide to fan any coincident runs apart. Verified 0 through-nodes / 0 overlaps on fixture.
+        res = routeGraph(nodes, [], edges, { prevSides, outPorts, titleBands, config });
+        if (ROUTE.decollide) res = deCollide(res, walls, { laneGap: ROUTE.cell, containers: [], bench: ROUTE.bench });
     }
     applyRoutes(res);
     } catch (err) {

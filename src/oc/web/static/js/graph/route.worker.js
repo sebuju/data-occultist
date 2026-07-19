@@ -31,11 +31,15 @@ onmessage = (e) => {
                 config: m.config, laneGap: m.laneGap, prevFace: gateFaces, passCache: hierPassCache,
             });
             res = out.routes; gateFaces = out.faces; hierPassCache = out.passCache;
-            if (m.decollide) res = deCollide(res, m.walls, { laneGap: m.laneGap, containers: m.containers });
+            if (m.decollide) res = deCollide(res, m.walls, { laneGap: m.laneGap, containers: m.containers, bench: m.config && m.config.bench });
         } else {
-            res = routeGraph(m.nodes, m.grps, m.edges, {
+            res = routeGraph(m.nodes, [], m.edges, {
                 prevSides: m.prevSides, outPorts: m.outPorts, titleBands: m.titleBands, config: m.config,
             });
+            // one global pass leaves a few coincident runs (nudge separates within corridors, not across
+            // near-identical coords); a single de-collision pass fans them apart. containers=[] — flat has
+            // no hard group boxes, so a lane shift is bounded only by nodes+bands (m.walls).
+            if (m.decollide) res = deCollide(res, m.walls, { laneGap: m.laneGap, containers: [], bench: m.config && m.config.bench });
         }
         postMessage({ reqId, routes: res });   // Map structured-clones fine
     } catch (err) {
