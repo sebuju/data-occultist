@@ -731,7 +731,7 @@ function groupBoxColors(rec) {
     const themed = tint.toLowerCase() !== DEF_OUTLINE.toLowerCase();
     return { themed,
         outline: themed ? `color-mix(in oklab, ${tint} 50%, var(--line))` : "var(--line)",
-        fill: themed ? `color-mix(in oklab, ${tint} 5%, transparent)` : "transparent",
+        fill: themed ? `color-mix(in oklab, ${tint} 5%, var(--bg))` : "var(--bg)",
         label: themed ? `color-mix(in oklab, ${tint} 72%, var(--muted))` : "" };
 }
 function subBoxColors(rec) {
@@ -740,7 +740,7 @@ function subBoxColors(rec) {
     return { themed,
         ring: themed ? `color-mix(in oklab, ${tint} 20%, transparent)` : "var(--line)",
         shade: themed ? `color-mix(in oklab, ${tint} 16%, transparent)` : "color-mix(in oklab, var(--line) 60%, transparent)",
-        wash: themed ? `color-mix(in oklab, ${tint} 6%, transparent)` : "",
+        wash: themed ? `color-mix(in oklab, ${tint} 6%, var(--bg))` : "",
         label: themed ? `color-mix(in oklab, ${tint} 60%, var(--dim))` : "" };
 }
 function superBoxColors(rec) {
@@ -748,7 +748,7 @@ function superBoxColors(rec) {
     const themed = tint.toLowerCase() !== SUPER_DEF_OUTLINE.toLowerCase();
     return { themed,
         outline: themed ? `color-mix(in oklab, ${tint} 35%, var(--line-soft))` : "var(--line-soft)",
-        fill: themed ? `color-mix(in oklab, ${tint} 5%, transparent)` : SUPER_DEF_BG,
+        fill: themed ? `color-mix(in oklab, ${tint} 5%, var(--bg))` : SUPER_DEF_BG,
         label: themed ? `color-mix(in oklab, ${tint} 55%, var(--dim))` : "" };
 }
 
@@ -1061,7 +1061,25 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
         if (hasAlign) set(".gp-pos", t.titleAlign);
         if (sizable) { set(".gp-w", t.w > 0 ? Math.round(t.w) : ""); set(".gp-h", t.h > 0 ? Math.round(t.h) : ""); }
     };
-    const paint = () => { render(); mark(); };                    // visual only (no save)
+    // Multi-select fan-out: when this group is part of a ctrl-selection (>=2 groups), every style
+    // edit mirrors onto the other selected groups — the same "drag any selected item, the whole set
+    // follows" rule the title-drag already uses (selIds above). Only the LOOK copies (outline/fill/
+    // title colours/scheme/align/shadow); title text, size and gate stay per-group. Group tier only
+    // (sub/super have no ctrl-selection). Runs inside paint(), so it covers colour-drag, scheme apply
+    // and reset uniformly without wiring each site.
+    const STYLE_KEYS = ["bg", "titleBg", "titleColor", "schemeId", "titleAlign"];
+    const fanStyle = () => {
+        if (tier !== "group" || !selectedGroups.has(t.id) || selectedGroups.size < 2) return;
+        for (const id of selectedGroupIds()) {
+            if (id === t.id) continue;
+            const g = byId(id);
+            if (!g) continue;
+            g.outline = { ...t.outline };
+            g.shadow = cloneShadow(t.shadow);
+            for (const k of STYLE_KEYS) g[k] = t[k];
+        }
+    };
+    const paint = () => { fanStyle(); render(); mark(); };         // visual only (no save)
     const commit = () => { paint(); ctx.persist(); };             // visual + persist (records history)
     function mark() { markSchemeSel(pop, t); }
     // a clear-"×" resets a field to "" then resyncs the pickers + commits (like a scheme apply)
