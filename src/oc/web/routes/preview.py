@@ -79,12 +79,9 @@ def _feed_readouts_live(engine, profile, game, capture, registers=None):
     ro_trace: list[dict] = []
     with ocr_job(engine.ocr):   # one job: the readout read runs without interleaving another
         detailed = reader.read_readouts_detailed(frame, window, fields, trace_sink=ro_trace)
-    # readout id -> its resolved FieldDef (mirrors Collector.tick's ro_field), for the gate's
-    # expected-type / confidence-floor / stability params.
-    ro_field = {v.id: fields.get(v.field) for v in window.readouts if v.enabled}
     # pass the FRESH request profile so a process/register wired since the live session started is
     # fed + flow-animated without a live restart (mirrors the `registers=` fresh-wiring override).
-    sess.feed_readouts(detailed, ro_trace, ro_field, window, window.id, registers, profile)
+    sess.feed_readouts(detailed, ro_trace, window, window.id, registers, profile)
 
 
 def _frame_for(engine, profile, game, capture):

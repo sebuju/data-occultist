@@ -86,10 +86,11 @@ async def events(game: str, request: Request, after: int = 0):
         def on_log(ev: dict) -> None:
             if ev.get("game") in (None, game):
                 push(("log", ev))
-        def on_fire(g: str, trigger_id: str) -> None:
-            # a live, un-backfilled cue -> the browser plays this trigger's sound nodes at once
+        def on_fire(g: str, trigger_id: str, sounds: list) -> None:
+            # a live, un-backfilled cue -> the browser plays these sound nodes at once. ``sounds`` is
+            # the router-selected / direct sound ids; empty -> the client plays the trigger's own.
             if g == game:
-                push(("fire", {"trigger": trigger_id}))
+                push(("fire", {"trigger": trigger_id, "sounds": sounds}))
 
         # Activity is a POLLED aggregate (no event bus), so a per-connection task recomputes it and
         # pushes on change (+ an adaptive keepalive to refresh the countdown). This replaces the old

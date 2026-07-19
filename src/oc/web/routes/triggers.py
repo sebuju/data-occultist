@@ -39,12 +39,8 @@ def list_triggers(game: str):
                    for pid in t.targets if pid in by_id]
         out.append({"id": t.id, "kind": t.kind, "interval_s": t.interval_s,
                     "watch": t.watch, "enabled": t.enabled, "targets": targets,
-                    "readout_watch": t.readout_watch, "readout_op": t.readout_op,
-                    "readout_value": t.readout_value,
-                    "register_watch": t.register_watch, "register_logic": t.register_logic,
-                    "register_conds": {r: [c.model_dump() for c in cs]
-                                       for r, cs in t.register_conds.items()},
-                    "throttle_ms": t.throttle_ms})
+                    "readout_watch": t.readout_watch, "register_watch": t.register_watch,
+                    "gates": t.gates, "throttle_ms": t.throttle_ms})
     return {"game": game, "triggers": out}
 
 
@@ -61,14 +57,28 @@ def fire_trigger(game: str, trigger_id: str):
     by_toast = {x.id: x for x in profile.toasts}
     by_action = {x.id: x for x in profile.actions}
     by_sound = {x.id: x for x in profile.sounds}
+    by_router = {x.id: x for x in getattr(profile, "routers", [])}
     data_dir = get_settings().data_dir
+    # Expand any router target: a manual test fire has no live value to pick a branch by, so it
+    # exercises EVERY branch target (proves the whole wiring plays). The collector path does the
+    # real per-value branch selection (see TriggerRunner._resolve_fire).
+    effective_targets: list[str] = []
+    for pid in trig.targets:
+        r = by_router.get(pid)
+        if r is not None:
+            for b in r.branches:
+                for tid in b.targets:
+                    if tid not in effective_targets:
+                        effective_targets.append(tid)
+        elif pid not in effective_targets:
+            effective_targets.append(pid)
     # SAME funnels the collector uses (fire_target for producers, read_source_target for file
     # sources) so a manual fire behaves identically to an automatic one — no path drifts. A
     # producer already sweeping is reported in ``skipped`` (not an error) so the UI can say
     # "already sweeping" instead of a bare "0 sweeps" that reads as a broken button.
     started, skipped = [], []
     fired = False
-    for pid in trig.targets:
+    for pid in effective_targets:
         pn = by_producer.get(pid)
         if pn is not None:
             if sweep_status(game, pn.dataset).get("running"):
