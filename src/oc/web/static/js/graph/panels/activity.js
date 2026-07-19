@@ -19,6 +19,7 @@ import { renderProcessHistory } from "../process_history_node.js";
 import { refreshRegister } from "../register_node.js";
 import { liveCollecting } from "./livewin.js";
 import { panZoomTo } from "../camera.js";
+import { setGateStates } from "../routing.js";
 import { playCue } from "../sound.js";
 import * as dsevents from "../dsevents.js";
 import { svg } from "../../dom.js";
@@ -60,6 +61,9 @@ const _lastRegPush = new Map();
 // beat only ADDS/REMOVES the class that actually changed (reconcile in place, rule 1). Live-only:
 // the snapshot's `gated` is empty when the collector is idle, which clears every cue.
 let _gatedNodes = new Set();
+// last-pushed gate pass/block signature — the gate->trigger line tints ride the beat too, but a
+// canvas repaint only fires when a gate actually flips (rule 1: a steady beat repaints nothing).
+let _gateSig = "";
 
 function buildActivity() {
     if (act) return;
@@ -287,6 +291,11 @@ function updateTriggerNodes(data) {
     for (const id of _gatedNodes) if (!gatedSet.has(id)) nodeEls.get(`trigger:${id}`)?.classList.remove("node-gated");
     for (const id of gatedSet) if (!_gatedNodes.has(id)) nodeEls.get(`trigger:${id}`)?.classList.add("node-gated");
     _gatedNodes = gatedSet;
+    // gate->trigger line tint: push the per-gate pass/block only when it actually changed, so a
+    // steady beat triggers no canvas repaint (rule 1). Empty when idle -> lines fall back to grey.
+    const gs = data.gate_states || {};
+    const sig = Object.keys(gs).sort().map((k) => k + (gs[k] ? "1" : "0")).join(",");
+    if (sig !== _gateSig) { _gateSig = sig; setGateStates(new Map(Object.entries(gs))); }
     // (sound playback moved off this polled beat to the instant `fire` push — see playFire)
     // readout read-history satellites ride the same beat (readout_history, keyed "<win>:<ro>");
     // TOP-LEVEL (not under `live`) so a test feed updates them with the collector stopped too.

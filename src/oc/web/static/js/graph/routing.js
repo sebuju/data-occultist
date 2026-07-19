@@ -11,7 +11,7 @@ import { routeGraph } from "./route.js";
 import { hierRoute } from "./hierRoute.js";
 import { deCollide } from "./decollide.js";
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot } from "./state.js";
-import { selectedNodeId, wire, startWire, CAN_DISABLE, nodeTypeOf } from "./main.js";
+import { selectedNodeId, wire, startWire, canDisable, nodeTypeOf } from "./main.js";
 import { setEdges, invalidateEdges } from "./edgecanvas.js";
 import { typeColor, grayscale, cssVar } from "./colors.js";
 
@@ -179,6 +179,7 @@ function buildLinks() {
 // one GAP apart instead of all stacking on the side's midpoint.
 const GAP = () => ROUTE.cell * 2;   // preferred spacing: fanned endpoints AND parallel bundles (a line can still squeeze to 1 cell between two)
 const MIN_PORT_GAP = 11;   // hard floor between adjacent fanned port dots (dot is 8px) — never let them overlap
+const PORT_END_KEEP = 18;  // keep a fanned port off the rounded corner (> corner radius 14); mirrors route.js
 // both node ids belong to the same (non-null) group
 function sameGroup(aId, bId) { const g = groups.groupOf(aId); return !!g && g === groups.groupOf(bId); }
 function computePorts(links) {
@@ -236,12 +237,15 @@ function computePorts(links) {
         arr.forEach((it, i) => {
             const rect = it.end === "a" ? it.l.ra : it.l.rb;
             const lo = it.horiz ? rect.y : rect.x, span = it.horiz ? rect.h : rect.w;
-            // preferred = one GAP apart, kept just inside the edge; but never below the no-overlap
+            // keep the fan off the rounded corners; shrink the inset on a short face so it never inverts.
+            const keep = Math.min(PORT_END_KEEP, Math.max(0, (span - MIN_PORT_GAP) / 2));
+            // preferred = one GAP apart, kept inside the corner keep-out; but never below the no-overlap
             // floor — when the edge can't hold N dots at GAP, fall back to MIN_PORT_GAP (overflowing
             // the edge only if even that won't fit) instead of squeezing them on top of each other.
-            const pref = Math.min(span - MIN_PORT_GAP, (n - 1) * gap);
+            const pref = Math.min(span - 2 * keep, (n - 1) * gap);
             const spread = Math.max(0, pref, (n - 1) * MIN_PORT_GAP);
-            const coord = lo + span / 2 - spread / 2 + (i * spread) / (n - 1);
+            const raw = lo + span / 2 - spread / 2 + (i * spread) / (n - 1);
+            const coord = Math.max(lo + keep, Math.min(lo + span - keep, raw));
             const port = it.end === "a" ? it.l.p1 : it.l.p2;
             if (it.horiz) port[1] = coord; else port[0] = coord;
         });
@@ -414,7 +418,7 @@ function drawEdges() {
     }
     // node ids that are turned off — any line touching one is greyed (carries no live data)
     const disSet = new Set();
-    for (const n of model.nodes()) if (CAN_DISABLE.has(n.type) && n.ref && n.ref.enabled === false) disSet.add(n.id);
+    for (const n of model.nodes()) if (canDisable(n.type) && n.ref && n.ref.enabled === false) disSet.add(n.id);
 
     paintCanvas(links, disSet, anySel);
 
@@ -437,6 +441,18 @@ function drawEdges() {
     }
     tweenRoutes = false;
     scheduleRouting();   // pathfind to the 90° route; lines only ever paint a FINISHED route
+}
+
+// Live per-gate pass/block, pushed from the activity beat (setGateStates): id -> holds. `true` =
+// the gate PASSES (line tinted ok/green), `false` = it BLOCKS (danger/red). A gate ABSENT from the
+// map (live off, or the gate disabled) leaves its line grey — no live decision to show.
+let gateStates = new Map();
+// The colour a gate -> trigger line takes from its gate's live decision. Grey when unknown.
+function gateStateColor(l) {
+    const gk = l.aId.startsWith("gate:") ? l.aId : l.bId.startsWith("gate:") ? l.bId : null;
+    const st = gk ? gateStates.get(gk.slice(5)) : undefined;
+    if (st === undefined) return cssVar("--muted");   // live off / disabled -> grey
+    return cssVar(st ? "--ok" : "--danger");
 }
 
 // ---- canvas edge renderer -------------------------------------------------------------------
@@ -484,12 +500,15 @@ function applyEdgeStyle(rec, l, dis, anySel, selCol) {
     const cs = new Set(l.cls.split(" "));
     const sel = cs.has("sel"), stale = !!l._stale;
     const isFlow = cs.has("flow"), isWatch = cs.has("watch"), isWire = cs.has("wire");
-    const color = l.srcType ? typeColor(l.srcType) : kindColor(cs);
+    // A gate -> trigger line carries no flow blob: it's tinted ok/danger by the gate's live pass/
+    // block (grey when live is off), and drawn dashed to read as a guard, not a data path.
+    const isGate = cs.has("gate");
+    const color = isGate ? gateStateColor(l) : l.srcType ? typeColor(l.srcType) : kindColor(cs);
     const gray = dis || stale || (anySel && !sel);
     rec.stroke = gray ? grayscale(color) : color;
     rec.alpha = stale ? 0.3 : sel ? 1 : (anySel && !sel) ? 0.1 : dis ? 0.4 : 1;
     rec.width = 1.8;
-    rec.dash = cs.has("img") ? [2, 4] : isWatch ? [1, 5] : isWire ? [4, 4] : [];
+    rec.dash = cs.has("img") ? [2, 4] : isWatch ? [1, 5] : isWire ? [4, 4] : isGate ? [6, 4] : [];
     rec.lineCap = isWatch ? "round" : "butt";
     rec.selColor = selCol;
     let capEnd = "squarecap";
@@ -784,11 +803,12 @@ function runRouting() {
     // nodes, straight through its footprint) but its TITLE still reads as a heading — feed the band
     // in here the same way a subgroup's is, so lines still dodge it even though the box no longer does.
     for (const b of groups.groupBoxes()) if (b.gate === false && b.box && b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
-    // super-group: avoid only the watermark TEXT, not the whole bottom band — most of the band
-    // is empty canvas the lines should be free to cross.
+    // super-group: block the label's x-span from the group content down to the label — closing the
+    // gap between the group and its watermark entirely so no line can slot between them. Only the
+    // label's WIDTH is blocked (band sides stay open canvas the lines may cross).
     for (const b of groups.superGroupBoxes()) {
         const r = b.labelRect;
-        if (r) titleBands.push({ x0: r.x, y0: r.y, x1: r.x + r.w, y1: r.y + r.h });
+        if (r) titleBands.push({ x0: r.x, y0: b.box.y + b.box.h - b.bandH, x1: r.x + r.w, y1: r.y + r.h });
         else if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
     }
     const config = { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell };
@@ -884,5 +904,9 @@ export async function routesSettled(maxMs = 4000, quietMs = 250) {
         await new Promise((res) => setTimeout(res, 50));
     }
 }
+
+// Push the live per-gate pass/block map (id -> holds); repaint so gate->trigger lines re-tint.
+// The caller (activity beat) gates this on an actual change so a steady beat never repaints.
+export function setGateStates(m) { gateStates = m instanceof Map ? m : new Map(Object.entries(m || {})); requestEdges(); }
 
 export { drawEdges, requestEdges, flushEdges, buildLinks, nodeRect, freezeRouting, routeCache, ROUTE };

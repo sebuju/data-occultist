@@ -8,7 +8,14 @@ import { forgetNodeState } from "./node_lifecycle.js";
 import { itemChanged } from "./item_wire.js";
 import { render, autosave, rebuildNode, refreshLive, live } from "./main.js";
 
-export const CAN_DISABLE = new Set(["window", "item", "region", "detect", "scrollbar", "dictionary", "producer", "trigger", "filesource", "action", "readout", "process", "gate", "router"]);
+// Denylist, NOT allowlist (twin of isRemovable below, same reason): every FUNCTIONAL node type is
+// disableable EXCEPT these. Inverted on purpose so a new type gets the enable toggle by default —
+// the recurring bug was forgetting to add each new type to an allowlist (toast/sound/register were
+// the forgotten ones). Excluded: profile roots (game, atlas), satellites (preview, vttable — dismissed
+// via their own sat-toggle), and refs with no `enabled` field (dataset's ref is a bare string so
+// writing .enabled throws; subset/itemfield/itemtell carry no enabled).
+const CANNOT_DISABLE = new Set(["game", "atlas", "preview", "vttable", "dataset", "subset", "itemfield", "itemtell"]);
+export const canDisable = (type) => !!type && !CANNOT_DISABLE.has(type);
 // Denylist, NOT allowlist: every node type is removable EXCEPT these. Inverted on purpose so a new
 // functional node type is deletable by default — the recurring bug was forgetting to add each new
 // type to an allowlist. Only the profile-root nodes (game, atlas) and toggle-only satellites

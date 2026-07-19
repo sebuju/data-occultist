@@ -139,7 +139,9 @@ export function syncMultiSelect() {
     if (cln) cln.hidden = groupMode || !ids.some((id) => CLONEABLE.has(nodeTypeOf(id)));
     if (del) {
         del.hidden = groupMode || !ids.some((id) => isRemovable(nodeTypeOf(id)));
-        if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) setSelLbl(dl, del.dataset.label ?? dl.textContent); }   // label is legitimately "" now (icon-only) -> ?? not ||
+        // Force-disarm on any selection change. This bypasses armConfirm's own disarm(), so clear the
+        // node ring here too — else the armed highlight lingers on the nodes we just deselected.
+        if (del.dataset.armed === "1") { del.dataset.armed = "0"; const dl = del.querySelector(".sel-lbl"); if (dl) setSelLbl(dl, del.dataset.label ?? dl.textContent); setRmArmed(false); }   // label is legitimately "" now (icon-only) -> ?? not ||
     }
     // size copy shows for a single selected node; paste shows only once a size is copied and there's
     // a resizable target. (Both hidden in group-mode — those buttons act on the node selection.) Set
@@ -172,6 +174,17 @@ function collapseSeparators(bar) {
     }
 }
 
+// Ring the node(s) an armed delete would remove, so the confirm click's target is unambiguous (not
+// just the toolbar button turning yellow). Targets are exactly what deleteSelection hits. Tracks the
+// armed set so disarm clears precisely what was armed even if the selection changed meanwhile.
+let rmArmedIds = [];
+function rmArmTargets() { return selectionIds().filter((id) => isRemovable(nodeTypeOf(id))); }
+function setRmArmed(on) {
+    for (const id of rmArmedIds) nodeEls.get(id)?.classList.remove("rm-armed");
+    rmArmedIds = on ? rmArmTargets() : [];
+    for (const id of rmArmedIds) nodeEls.get(id)?.classList.add("rm-armed");
+}
+
 // Delete every removable node in the selection. Each goes through removeNode() so undo/redo
 // records it, same path the old per-node trash button used. SHARED by the armed toolbar button
 // and the Delete/Backspace hotkey so both behave identically (rule 7).
@@ -197,19 +210,39 @@ const CLONE = {
     dictionary: (n) => model.cloneDictionary(n.ref.id),
     toast: (n) => model.cloneToast(n.ref.id),
     sound: (n) => model.cloneSound(n.ref.id),
+    gate: (n) => model.cloneGate(n.ref.id),
+    router: (n) => model.cloneRouter(n.ref.id),
+    register: (n) => model.cloneRegister(n.ref.id),
+    process: (n) => model.cloneProcess(n.ref.id),
 };
 const CLONEABLE = new Set(Object.keys(CLONE));
 function cloneSelection() {
     const byId = new Map(model.nodes().map((n) => [n.id, n]));
     const targets = selectionIds().map((id) => byId.get(id)).filter((n) => n && CLONEABLE.has(n.type));
     if (!targets.length) return;
-    const newIds = targets.map((n) => { const id = CLONE[n.type](n); return id ? nodeIdOfType(n.type, id) : null; }).filter(Boolean);
-    render(); autosave(null);
+    // keep source->clone node-id pairs so the copy inherits the original card's box below
+    const pairs = targets.map((n) => { const id = CLONE[n.type](n); return id ? { src: n.id, dst: nodeIdOfType(n.type, id) } : null; }).filter(Boolean);
+    render();
+    for (const { src, dst } of pairs) cloneNodeSize(src, dst);   // stamp the source's saved w/h onto the clone
+    autosave(null);
+    const newIds = pairs.map((p) => p.dst);
     selected.clear();
     for (const id of newIds) if (nodeEls.has(id)) selected.add(id);
     syncMultiSelect();
     setStatus(`cloned ${targets.length} node${targets.length === 1 ? "" : "s"} — click to place`);
     carryClones(newIds);   // grab the fresh copies onto the cursor; next click/key drops them
+}
+// Copy a source node's saved box onto its fresh clone, through the SAME nodeSizes funnel a grip
+// resize / pasteSize uses. The stored size object already carries the right custW/custH flags
+// (incl. width-only nodes), so it's copied verbatim. No entry = source never resized -> clone
+// keeps the type default.
+function cloneNodeSize(srcId, dstId) {
+    const s = nodeSizes.get(srcId);
+    if (!s) return;
+    const copy = { ...s };
+    nodeSizes.set(dstId, copy);
+    const el = nodeEls.get(dstId);
+    if (el) { applySavedSize(el, copy); markNodeSized(el, dstId); }
 }
 // After a clone the fresh copies ride the cursor (keeping their relative offsets) until the
 // user's next mouse click OR key press, which drops them where they are. That terminating
@@ -380,7 +413,7 @@ export function wireSelectionToolbar() {
     });
     // Toolbar: armed two-click (rule 2) — a mis-click shouldn't nuke a node. Silent: the yellow
     // armed background is the confirm cue; no "confirm" label (keeps the button icon-only).
-    armConfirm($("selDeleteBtn"), deleteSelection, { silent: true });
+    armConfirm($("selDeleteBtn"), deleteSelection, { silent: true, onArm: () => setRmArmed(true), onDisarm: () => setRmArmed(false) });
     $("selCloneBtn").addEventListener("click", cloneSelection);
     $("selCopySizeBtn").addEventListener("click", copySize);
     $("selPasteSizeBtn").addEventListener("click", pasteSize);

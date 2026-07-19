@@ -11,7 +11,7 @@ import { since } from "../datefmt.js";
 import { log, timed, mirrorConsole } from "../log.js";
 
 mirrorConsole();   // surface uncaught errors + console.error/warn in the log bar (no devtools needed)
-import { snap, addResizeGrips } from "./dragresize.js";
+import { snap, addResizeGrips, suppressNextClick } from "./dragresize.js";
 import { wireSound } from "./sound_wire.js";
 import { wireToast } from "./toast_wire.js";
 import {
@@ -90,7 +90,7 @@ import {
 } from "./selection.js";
 import "./shortcuts.js";
 import { wireFieldRules, wireArmedRemove } from "./rules_editor.js";
-import { CAN_DISABLE, isRemovable, removeNode } from "./node_remove.js";
+import { canDisable, isRemovable, removeNode } from "./node_remove.js";
 import { initPanels } from "./panels_init.js";
 import {
     _bootDetails, collectLayout, hydrateNodeLayout, reconcileOpenImages,
@@ -357,7 +357,7 @@ groups.initGroups({
 
 function fillNode(div, n, wire = true) {
     const isCollapsed = collapsed.has(n.id);
-    const canToggle = CAN_DISABLE.has(n.type);
+    const canToggle = canDisable(n.type);
     const enabled = !(canToggle && n.ref && n.ref.enabled === false);
     // field nodes carrying fallback rules get a wider natural width (the rule row packs three
     // selects + a value + trash on one line) so a size RESET lands wide enough, not crushed.
@@ -385,8 +385,8 @@ function fillNode(div, n, wire = true) {
         : n.type === "itemtell" ? "tell"   // kind now lives in the node's own dropdown, not the tag
         : n.type;
     // whether .gn-hctl actually has anything in it (same three sources built below) — types with
-    // none (game, toast, sound, register, atlas, preview, vttable) get an empty cluster, so the
-    // type label must stay put on hover instead of fading into nothing (graph.css .gn-has-ctl).
+    // none (game, atlas, preview, vttable) get an empty cluster, so the type label must stay put on
+    // hover instead of fading into nothing (graph.css .gn-has-ctl).
     const hasHoverCtl = !!(parts.head || toggle || RECT_TYPES.has(n.type));   // any of these -> the tag fades to reveal .gn-hctl on hover
     div.replaceChildren(
         // box-panel header: TWO islands that straddle the card's top border (graph.css), each with
@@ -790,6 +790,7 @@ function wireNode(div, n) {
         // preventDefault so a press over an input never steals native focus/caret out here.
         if (dragOnlyZoom()) {
             ev.preventDefault();
+            suppressNextClick(div);   // a press-release (no drag) must not fire an internal control
             if (!selected.has(n.id)) clearMultiSelect();
             focusNode(n.id);
             startMove(n.id, ev);
@@ -1337,7 +1338,7 @@ initPanels();
 // `resetOnOutside`: disarm on ANY click that isn't this button, or on Escape (instead of the
 // default 2.5s auto-disarm) — for a delete sitting in a live list where a stray timeout is worse
 // than an explicit dismiss.
-function armConfirm(btn, run, { silent = false, resetOnOutside = false } = {}) {
+function armConfirm(btn, run, { silent = false, resetOnOutside = false, onArm, onDisarm } = {}) {
     if (!btn) return;
     // Buttons with an icon keep it in a `.sel-ic` span; only the `.sel-lbl` text arms/disarms so
     // the icon survives (a whole-button textContent swap would wipe the SVG). Plain buttons fall
@@ -1346,13 +1347,18 @@ function armConfirm(btn, run, { silent = false, resetOnOutside = false } = {}) {
     const get = () => (lbl ? lbl.textContent : btn.textContent);
     const set = (t) => { if (silent) return; if (lbl) setSelLbl(lbl, t); else btn.textContent = t; };
     let timer = null, offGlobal = null;
+    // onArm/onDisarm let a caller mirror the armed state onto something other than the button
+    // (e.g. ring the node(s) a delete would remove). disarm() runs on timeout, outside-dismiss,
+    // AND before the fire path's run(), so onDisarm covers every un-arm.
     const disarm = () => {
         if (btn.dataset.armed !== "1") return;
         btn.dataset.armed = "0"; set(btn.dataset.label ?? get());
         clearTimeout(timer); offGlobal?.(); offGlobal = null;
+        onDisarm?.();
     };
     const arm = () => {
         btn.dataset.armed = "1"; btn.dataset.label = get(); set("confirm");
+        onArm?.();
         if (!resetOnOutside) { timer = setTimeout(disarm, 2500); return; }
         // disarm on an outside press OR Escape — the one shared outside-dismiss primitive (capture,
         // so we disarm before the outside target handles its own click).
@@ -1437,6 +1443,6 @@ export {
     placeAt, showSatellite,    // used by port_wire.js / imaging.js
     deselectAll, setMultiSelect, selectionIds,   // used by canvas_input.js
     deleteSelection,   // used by shortcuts.js
-    CAN_DISABLE, isRemovable, removeNode,   // used by routing.js / selection.js
+    canDisable, isRemovable, removeNode,   // used by routing.js / selection.js
     createGame, _bootDetails,   // used by settings_modal.js / subset_wire.js
 };

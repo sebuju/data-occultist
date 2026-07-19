@@ -1786,6 +1786,10 @@ export class GraphModel {
     cloneDictionary(id) { this.profile.dictionaries = this.profile.dictionaries || []; return this._cloneById(this.profile.dictionaries, id, (x) => !!this.dictionary(x)); }
     cloneToast(id) { this.profile.toasts = this.profile.toasts || []; return this._cloneById(this.profile.toasts, id, (x) => !!this.toastNode(x)); }
     cloneSound(id) { this.profile.sounds = this.profile.sounds || []; return this._cloneById(this.profile.sounds, id, (x) => !!this.soundNode(x)); }
+    cloneGate(id) { this.profile.gates = this.profile.gates || []; return this._cloneById(this.profile.gates, id, (x) => !!this.gateNode(x)); }
+    cloneRouter(id) { this.profile.routers = this.profile.routers || []; return this._cloneById(this.profile.routers, id, (x) => !!this.routerNode(x)); }
+    cloneRegister(id) { this.profile.registers = this.profile.registers || []; return this._cloneById(this.profile.registers, id, (x) => !!this.registerNode(x)); }
+    cloneProcess(id) { this.profile.processes = this.profile.processes || []; return this._cloneById(this.profile.processes, id, (x) => !!this.processNode(x)); }
     removeDatasetDef(id) { this.profile.datasets = (this.profile.datasets || []).filter((d) => d.id !== id); }
 
     // Unwire every site holding a removed dataset/subset id (declarations AND references) and
