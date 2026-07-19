@@ -10,8 +10,8 @@ from oc.collect.triggers import TriggerRunner
 from oc.interfaces import OcrEngine
 from oc.profile.merge import merge_profiles
 from oc.profile.models import (
-    Box, FieldDef, FieldRule, FieldType, GameProfile, ReadoutDef, RuleThen, RuleWhen,
-    TriggerDef, WindowDef,
+    Box, FieldDef, FieldRule, FieldType, GameProfile, GateCond, GateDef, ReadoutDef, RuleThen,
+    RuleWhen, TriggerDef, WindowDef,
 )
 from oc.types import Frame, OcrLine, PixelBox
 
@@ -82,16 +82,22 @@ def test_disabled_readout_skipped():
 
 
 # ---- on_readout trigger firing --------------------------------
+# The trigger's kind supplies the PULSE (a watched readout moved this tick); the VALUE condition is
+# a gate over that readout (see GateDef). Fire = moved AND the gate holds — the edge behaviour the
+# old inline readout_op/readout_value carried, now expressed as a reusable gate node.
 
-def _runner(trigger):
-    p = GameProfile(name="g", windows=[WindowDef(id="w")], triggers=[trigger])
+def _runner(readout, when, arg, tid="low"):
+    gid = f"{tid}_g"
+    trig = TriggerDef(id=tid, kind="on_readout", readout_watch=[readout], gates=[gid])
+    gate = GateDef(id=gid, source=f"readout:{readout}", conds=[GateCond(when=when, arg=str(arg))])
+    p = GameProfile(name="g", windows=[WindowDef(id="w")], triggers=[trig], gates=[gate])
     return TriggerRunner(p, tempfile.gettempdir())
 
 
 def test_on_readout_comparison_fires_on_every_move_while_held():
-    # a comparison op (at-or-below) fires on ENTERING the condition and on every further move while
-    # it still holds; a static reading between ticks does NOT re-fire.
-    r = _runner(TriggerDef(id="low", kind="on_readout", readout_watch=["hp"], readout_op="lte", readout_value=3))
+    # a comparison gate (at-or-below) fires on ENTERING the condition and on every further move while
+    # it still holds; a static reading between ticks does NOT re-fire (no move = no pulse).
+    r = _runner("hp", "lte", 3)
     assert r.on_readout({"hp": 5}) == []        # above threshold -> no
     assert r.on_readout({"hp": 3}) == ["low"]    # enters at-or-below -> fire
     assert r.on_readout({"hp": 3}) == []        # same value, no move -> no re-fire
@@ -101,9 +107,9 @@ def test_on_readout_comparison_fires_on_every_move_while_held():
 
 
 def test_on_readout_crosses_down_is_edge_once():
-    # edge-once ("fire only on entering the band") is the crosses_down op: it fires only on the tick
-    # the value crosses down through the threshold, not on further moves while below.
-    r = _runner(TriggerDef(id="low", kind="on_readout", readout_watch=["hp"], readout_op="crosses_down", readout_value=3))
+    # edge-once ("fire only on entering the band") is the crosses_down gate op: it fires only on the
+    # tick the value crosses down through the threshold, not on further moves while below.
+    r = _runner("hp", "crosses_down", 3)
     assert r.on_readout({"hp": 5}) == []        # above, no prev crossing
     assert r.on_readout({"hp": 2}) == ["low"]    # 5 -> 2 crosses down through 3 -> fire once
     assert r.on_readout({"hp": 1}) == []        # still below, no crossing -> no re-fire
@@ -112,15 +118,15 @@ def test_on_readout_crosses_down_is_edge_once():
 
 
 def test_on_readout_crosses_up_uses_prev():
-    r = _runner(TriggerDef(id="cu", kind="on_readout", readout_watch=["x"], readout_op="crosses_up", readout_value=5))
+    r = _runner("x", "crosses_up", 5, tid="cu")
     assert r.on_readout({"x": 3}) == []        # no prev yet
     assert r.on_readout({"x": 8}) == ["cu"]     # 3 -> 8 crosses up through 5
     assert r.on_readout({"x": 9}) == []        # already above, no transition
 
 
 def test_on_readout_ignores_non_numeric_and_absent():
-    r = _runner(TriggerDef(id="low", kind="on_readout", readout_watch=["hp"], readout_op="lte", readout_value=30))
-    assert r.on_readout({"hp": "??"}) == []    # non-numeric -> never fires
+    r = _runner("hp", "lte", 30)
+    assert r.on_readout({"hp": "??"}) == []    # non-numeric -> no move pulse -> never fires
     assert r.on_readout({"other": 5}) == []    # watched readout absent -> never fires
 
 

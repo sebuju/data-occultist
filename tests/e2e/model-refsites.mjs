@@ -25,7 +25,8 @@ function build() {
         file_sources: [{ id: "src1", dataset: "ds_a", match: [], fields: [] }],
         triggers: [{ id: "trg1", kind: "on_register", targets: ["prod1", "act1"],
             watch: ["ds_a", "sub1"], readout_watch: ["ro_x"],
-            register_watch: ["reg1"], register_conds: { reg1: [{ key: "ro_x", when: "changed" }] } }],
+            register_watch: ["reg1"], gates: ["gate1"] }],
+        gates: [{ id: "gate1", source: "register:reg1#ro_x", conds: [{ when: "lt", arg: "3" }] }],
         actions: [{ id: "act1", sources: ["dataset:ds_a", "register:reg1"], slots: { reg1: ["ro_x"] }, dest: "ds_b" }],
         registers: [{ id: "reg1", sources: ["readout:ro_x"], persist: "ds_a" }],
         toasts: [{ id: "toast1", sources: ["dataset:ds_a", "subset:sub1", "readout:ro_x"],
@@ -38,6 +39,7 @@ function build() {
 const P = (m) => m.profile;
 const act = (m) => P(m).actions[0], trg = (m) => P(m).triggers[0], sub = (m) => P(m).subsets[0];
 const reg = (m) => P(m).registers[0], toast = (m) => P(m).toasts[0], dict = (m) => P(m).dictionaries[0];
+const gate = (m) => P(m).gates[0];
 
 // ---- rename dataset: every dataset ref moves, nothing else ----
 {
@@ -66,7 +68,7 @@ const reg = (m) => P(m).registers[0], toast = (m) => P(m).toasts[0], dict = (m) 
     ok(act(m).slots.reg9 && !act(m).slots.reg1, "action slots dict re-keyed reg1->reg9");
     eq(act(m).slots.reg9, ["ro_x"], "action slot keys preserved across register rename");
     eq(trg(m).register_watch, ["reg9"], "trigger register_watch repointed");
-    ok(trg(m).register_conds.reg9 && !trg(m).register_conds.reg1, "trigger register_conds re-keyed");
+    eq(gate(m).source, "register:reg9#ro_x", "gate source register repointed (#key preserved)");
 }
 
 // ---- rename subset: subset refs move, dataset-only sites untouched ----
@@ -116,7 +118,7 @@ const reg = (m) => P(m).registers[0], toast = (m) => P(m).toasts[0], dict = (m) 
     eq(act(m).sources, ["dataset:ds_a"], "register source pruned (no 'register:' ghost)");
     ok(!act(m).slots.reg1, "action slot dropped");
     eq(trg(m).register_watch, [], "trigger register_watch cleared");
-    ok(!trg(m).register_conds.reg1, "trigger register_conds dropped");
+    eq(gate(m).source, "", "gate source register pruned (no 'register:' ghost)");
 }
 
 // ---- delete readout: structured refs + toast token stripped ----

@@ -121,6 +121,24 @@ def test_drop_resolves_to_none_and_flags_dropped():
     assert coerce(f, "x 7") == 7          # a numeric read is unaffected
 
 
+def test_blank_resolves_to_none_but_not_dropped():
+    # `blank` early-returns None like `drop`, but leaves dropped=False -> the value is FORWARDED
+    # as a gap (a process emits key->None; the record is NOT failed). Distinct from `drop`.
+    f = _f([rule(when=RuleWhen.all_letter, then=RuleThen.blank)], FieldType.number)
+    res = run_rules(f, "Guard")
+    assert res.value is None and res.dropped is False
+    assert coerce(f, "x 7") == 7          # a numeric read is unaffected
+
+
+def test_blank_early_returns_before_later_rules():
+    f = _f([
+        rule(when=RuleWhen.empty, then=RuleThen.blank),
+        rule(when=RuleWhen.always, then=RuleThen.set, value="LATE"),
+    ])
+    res = run_rules(f, "")
+    assert res.value is None and res.dropped is False   # blank stopped the pipeline before `set`
+
+
 # ---- below / above (min/max replacement) ------------------------------------
 
 def test_below_above_drop_out_of_range():

@@ -88,6 +88,45 @@ def test_drop_rule_omits_key():
     assert s._process_values["f"] == {"b": "keep"}   # 'a' matched drop -> omitted
 
 
+def test_blank_rule_forwards_null_gap():
+    # distinct from `drop`: a `blank` rule keeps the key but forwards value=None (a gap), so a
+    # downstream register with ignore_empty=false can record the hole. Contrast test_drop_rule_omits_key.
+    p = GameProfile(name="g", processes=[
+        ProcessDef(id="f", sources=[{"ref": "readout:a"}, {"ref": "readout:b"}],
+                   rules=[FieldRule(when="equal", arg="x", then="blank")]),
+    ])
+    s = _session(p)
+    s._readouts_all = {"a": "x", "b": "keep"}
+    s._feed_processes()
+    assert s._process_values["f"] == {"a": None, "b": "keep"}   # 'a' blanked -> present as None, not omitted
+
+
+def test_blank_process_feeds_register_gap():
+    # end-to-end of the drops-not-forwarded fix: a process `blank` rule forwards a None gap to a
+    # register. ignore_empty=false records the gap in the ring; ignore_empty=true skips it.
+    def build(ignore_empty):
+        return GameProfile(name="g",
+            processes=[ProcessDef(id="p", type="number", sources=[{"ref": "readout:a"}],
+                                  rules=[FieldRule(when="no_digit", then="blank")])],
+            registers=[RegisterDef(id="r", sources=["process:p"], capacity=3,
+                                   ignore_empty=ignore_empty)])
+
+    def feed(s, raw):
+        s._readouts_all = {"a": raw}
+        s._feed_processes()                       # p: "12"->12, "xx"->blank->None
+        s._feed_registers(s._readouts_all, {})    # r reads process:p
+
+    s = _session(build(False))
+    feed(s, "12")
+    feed(s, "xx")
+    assert s._registers["r"]["a"]["values"] == [12, None]   # gap recorded
+
+    s = _session(build(True))
+    feed(s, "12")
+    feed(s, "xx")
+    assert s._registers["r"]["a"]["values"] == [12]         # gap skipped
+
+
 def test_confidence_never_read_from_inputs():
     p = GameProfile(name="g", processes=[ProcessDef(id="f", sources=[{"ref": "readout:a"}], rules=[])])
     s = _session(p)

@@ -301,7 +301,7 @@ def _readout_collector(monkeypatch, *, tuning=None):
         read_readouts_detailed=lambda f, w, vf, trace_sink=None: {"cd": (3, 0.9, "3", None)})
     c.save_recognized_frames = False
     c.on_frame = None
-    monkeypatch.setattr(mod, "gate_readouts", lambda *a, **k: set())
+    monkeypatch.setattr("oc.collect.readout_history.record_reads", lambda *a, **k: None)
     monkeypatch.setattr(stats_store, "record_timing", lambda *a, **k: None)
     return c
 

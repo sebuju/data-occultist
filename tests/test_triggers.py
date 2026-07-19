@@ -12,7 +12,8 @@ from oc import eventlog
 from oc.collect import trigger_history
 from oc.collect.triggers import TriggerRunner, read_subset_sigs
 from oc.enrich.http_producer import gather_source_names
-from oc.profile.models import GameProfile, JoinSource, ProducerDef, SoundDef, SubsetDef, TriggerDef
+from oc.profile.models import (
+    GameProfile, GateCond, GateDef, JoinSource, ProducerDef, SoundDef, SubsetDef, TriggerDef)
 from oc.store import DatasetStore, KeySpec, fire_events
 from oc.store.keys import KeyMap
 
@@ -247,7 +248,7 @@ def test_emit_fire_publishes_instant_cue_but_not_on_throttle(tmp_path):
     p = _profile()
     p.triggers[1].throttle_ms = 5000   # relicwatch: 5s between fires
     fires = []
-    off = fire_events.subscribe(lambda game, tid: fires.append((game, tid)))
+    off = fire_events.subscribe(lambda game, tid, sounds: fires.append((game, tid)))
     try:
         clock = [0.0]
         tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: clock[0])
@@ -520,17 +521,23 @@ def test_on_ready_honours_throttle(tmp_path):
     assert tr.on_sweep_done("px") == ["rdy"]     # window elapsed -> fires again
 
 
-# ---- on_register: per-key conditions over a watched register ---------------------
+# ---- on_register: a register key moving PULSES, gates supply the value predicate ------------
+# The trigger's kind is now the EVENT (a watched register's exposed key moved this tick); the per-key
+# condition lives in a GateDef over ``register:<reg>#<key>``. Fire = a watched key moved AND every
+# gate holds. A gate reads the CACHED register snapshot, so on_register calls set_registers itself.
 
-def _register_profile(conds, logic="or", **trig):
-    from oc.profile.models import RegKeyCond
-    watch = list(conds.keys())
-    rc = {r: [RegKeyCond(**c) for c in cs] for r, cs in conds.items()}
+def _register_profile(watch, gates=(), **trig):
+    """``watch`` = register ids the trigger watches (the pulse). ``gates`` = list of dicts
+    ``{id, source, conds:[(when, arg), ...], logic?, negate?}`` — the value predicate(s)."""
+    gdefs = [GateDef(id=g["id"], source=g["source"], logic=g.get("logic", "or"),
+                     negate=g.get("negate", False),
+                     conds=[GateCond(when=w, arg=str(a)) for w, a in g["conds"]]) for g in gates]
     return GameProfile(
         name="g",
         producers=[ProducerDef(id="px", dataset="prices", mode="orders", sources=["inv"])],
+        gates=gdefs,
         triggers=[TriggerDef(id="regwatch", kind="on_register", targets=["px"],
-                             register_watch=watch, register_conds=rc, register_logic=logic, **trig)],
+                             register_watch=watch, gates=[g["id"] for g in gates], **trig)],
     )
 
 
@@ -542,9 +549,10 @@ def _snap(**regs):
     return {r: dict(kv) for r, kv in regs.items()}
 
 
-def test_on_register_changed_fires_every_change(tmp_path):
+def test_on_register_pulse_fires_every_change(tmp_path):
+    # no gate: the event alone fires — a watched register key moving is the pulse. Re-fires each move.
     calls = []
-    tr = TriggerRunner(_register_profile({"loadout": [{"key": "hp", "when": "changed"}]}), tmp_path,
+    tr = TriggerRunner(_register_profile(["loadout"]), tmp_path,
                        fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
     assert tr.on_register([], _snap()) == []                                   # no events -> no fire
     assert tr.on_register([_ev("other", "hp")], _snap(other={"hp": 1})) == []  # different register
@@ -553,31 +561,27 @@ def test_on_register_changed_fires_every_change(tmp_path):
     assert calls == ["px", "px"]                                               # re-fires on each change
 
 
-def test_on_register_no_condition_never_fires(tmp_path):
-    tr = TriggerRunner(_register_profile({"loadout": []}), tmp_path,
-                       fire=lambda pn, items: None, clock=lambda: 0.0)
-    assert tr.on_register([_ev("loadout", "hp", 90)], _snap(loadout={"hp": 90})) == []
-
-
 def test_on_register_comparison_fires_on_every_move_while_held(tmp_path):
-    # a comparison (at-or-below) fires on ENTERING the band and on every further move while it holds,
-    # not once. Mirrors the ability-cooldown "fire on any move at or below the value" case.
+    # a comparison gate (at-or-below) holds while the value meets it; fire = a watched key moved AND
+    # the gate holds. Mirrors the ability-cooldown "fire on any move at or below the value" case.
     calls = []
-    tr = TriggerRunner(_register_profile({"cd": [{"key": "ability_1_cd", "when": "lte", "value": 3}]}),
-                       tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
-    assert tr.on_register([_ev("cd", "ability_1_cd", 5)], _snap(cd={"ability_1_cd": 5})) == []      # above -> no
+    tr = TriggerRunner(_register_profile(
+        ["cd"], gates=[{"id": "g", "source": "register:cd#ability_1_cd", "conds": [("lte", 3)]}]),
+        tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.on_register([_ev("cd", "ability_1_cd", 5)], _snap(cd={"ability_1_cd": 5})) == []      # above -> gated
     assert tr.on_register([_ev("cd", "ability_1_cd", 3)], _snap(cd={"ability_1_cd": 3})) == ["regwatch"]  # enters <=3
     assert tr.on_register([_ev("cd", "ability_1_cd", 2)], _snap(cd={"ability_1_cd": 2})) == ["regwatch"]  # moved, still <=3 -> re-fire
     assert tr.on_register([_ev("cd", "ability_1_cd", 1)], _snap(cd={"ability_1_cd": 1})) == ["regwatch"]  # moved again -> re-fire
-    assert tr.on_register([_ev("cd", "ability_1_cd", 6)], _snap(cd={"ability_1_cd": 6})) == []      # recovers -> no
+    assert tr.on_register([_ev("cd", "ability_1_cd", 6)], _snap(cd={"ability_1_cd": 6})) == []      # recovers -> gated
     assert calls == ["px", "px", "px"]
 
 
 def test_on_register_crosses_down_is_edge_once(tmp_path):
-    # edge-once ("fire only on entering the band") = the crosses_down op: it fires only on the tick
-    # the value crosses down through the threshold, not on further moves while below.
-    tr = TriggerRunner(_register_profile({"hp": [{"key": "health", "when": "crosses_down", "value": 30}]}),
-                       tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    # edge-once ("fire only on entering the band") = the crosses_down gate op: it holds only on the
+    # tick the value crosses down through the threshold, not on further moves while below.
+    tr = TriggerRunner(_register_profile(
+        ["hp"], gates=[{"id": "g", "source": "register:hp#health", "conds": [("crosses_down", 30)]}]),
+        tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
     assert tr.on_register([_ev("hp", "health", 50)], _snap(hp={"health": 50})) == []      # above, no prev crossing
     assert tr.on_register([_ev("hp", "health", 20)], _snap(hp={"health": 20})) == ["regwatch"]  # crosses down -> fire once
     assert tr.on_register([_ev("hp", "health", 15)], _snap(hp={"health": 15})) == []      # still below, no crossing -> no re-fire
@@ -587,7 +591,7 @@ def test_on_register_crosses_down_is_edge_once(tmp_path):
 
 def test_on_register_between_needs_two_bounds(tmp_path):
     tr = TriggerRunner(_register_profile(
-        {"hp": [{"key": "health", "when": "between", "value": 20, "value2": 40}]}),
+        ["hp"], gates=[{"id": "g", "source": "register:hp#health", "conds": [("between", "20,40")]}]),
         tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
     assert tr.on_register([_ev("hp", "health", 50)], _snap(hp={"health": 50})) == []      # outside band
     assert tr.on_register([_ev("hp", "health", 30)], _snap(hp={"health": 30})) == ["regwatch"]  # enters band -> fire
@@ -595,22 +599,19 @@ def test_on_register_between_needs_two_bounds(tmp_path):
     assert tr.on_register([_ev("hp", "health", 50)], _snap(hp={"health": 50})) == []      # leaves band -> no
 
 
-def test_on_register_or_fires_on_any_and_requires_all(tmp_path):
-    conds = {"hp": [{"key": "health", "when": "lt", "value": 30},
-                    {"key": "shield", "when": "lt", "value": 10}]}
-    # OR: either condition entering fires
-    tr = TriggerRunner(_register_profile(conds, logic="or"), tmp_path,
+def test_on_register_and_across_gates_requires_all(tmp_path):
+    # AND across DIFFERENT keys = two gates (gates always AND). Fires only when a watched key moves
+    # AND both gates hold. (OR across different keys is now two separate triggers, not one.)
+    gates = [{"id": "gh", "source": "register:hp#health", "conds": [("lt", 30)]},
+             {"id": "gs", "source": "register:hp#shield", "conds": [("lt", 10)]}]
+    tr = TriggerRunner(_register_profile(["hp"], gates=gates), tmp_path,
                        fire=lambda pn, items: None, clock=lambda: 0.0)
-    assert tr.on_register([_ev("hp", "health", 20)], _snap(hp={"health": 20, "shield": 50})) == ["regwatch"]
-    # AND: fires only when BOTH hold and one pulses this tick
-    tr2 = TriggerRunner(_register_profile(conds, logic="and"), tmp_path,
-                        fire=lambda pn, items: None, clock=lambda: 0.0)
-    assert tr2.on_register([_ev("hp", "health", 20)], _snap(hp={"health": 20, "shield": 50})) == []  # shield high
-    assert tr2.on_register([_ev("hp", "shield", 5)], _snap(hp={"health": 20, "shield": 5})) == ["regwatch"]  # both now
+    assert tr.on_register([_ev("hp", "health", 20)], _snap(hp={"health": 20, "shield": 50})) == []  # shield high -> gated
+    assert tr.on_register([_ev("hp", "shield", 5)], _snap(hp={"health": 20, "shield": 5})) == ["regwatch"]  # both hold now
 
 
 def test_on_register_ignores_disabled(tmp_path):
-    p = _register_profile({"loadout": [{"key": "hp", "when": "changed"}]})
+    p = _register_profile(["loadout"])
     p.triggers[0].enabled = False
     tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
     assert tr.on_register([_ev("loadout", "hp", 90)], _snap(loadout={"hp": 90})) == []
@@ -618,7 +619,7 @@ def test_on_register_ignores_disabled(tmp_path):
 
 def test_on_register_honours_throttle(tmp_path):
     trigger_history.clear("g")
-    p = _register_profile({"loadout": [{"key": "hp", "when": "changed"}]})
+    p = _register_profile(["loadout"])
     p.triggers[0].throttle_ms = 5000
     clock = [0.0]
     tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: clock[0])
