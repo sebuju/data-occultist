@@ -28,7 +28,6 @@ from ..store.flow_events import publish_flow
 from . import process_history, readout_history, register_history
 from .collector import Collector, TickStatus
 from .fields import run_rule_pipeline
-from .readout_stability import gate_readouts
 
 # How many recent debug entries the live session keeps for the panel's debug log. Bounded so a
 # long-running collector can't grow memory without limit; the UI polls incrementally by seq.
@@ -221,6 +220,7 @@ class LiveSession:
     def _on_tick(self, result) -> None:
         reg_events: list[dict] = []
         reg_snapshot: dict = {}
+        reg_rings: dict = {}
         with self._lock:
             self._frames += 1
             self._written += result.new
@@ -237,8 +237,10 @@ class LiveSession:
                 self._feed_processes()   # BEFORE registers -> a readout->process->register chain lands this tick
                 reg_events = self._feed_registers(self._readouts_all, self._readout_confs_all)
                 self._emit_register_process_flow()   # IN blobs: register-slot -> process (every held slot)
-                if reg_events:
-                    reg_snapshot = self._register_snapshot()
+                # Snapshot EVERY tick registers were fed (not only when a key moved) so a gate over a
+                # register key is fresh for triggers of any kind — see runner.set_registers below.
+                reg_snapshot = self._register_snapshot()
+                reg_rings = self._register_rings_snapshot()   # raw rings for count-facet sources
             self._last_status = result.status.value   # why we are / aren't reading right now
             # phase = we're in an OCR-worthy screen. A `saved` tick read it; a `throttled` tick
             # is the SAME screen between two-rate OCR slots (not re-read) — both count as "in a
@@ -296,11 +298,16 @@ class LiveSession:
                                 for c in (result.changed or [])],
                 })
         # on_register fires OUTSIDE the lock (a fired sweep/toast must not hold the session lock),
-        # mirroring the collector loop's post-tick on_readout evaluation.
-        if reg_events:
+        # mirroring the collector loop's post-tick on_readout evaluation. set_registers refreshes the
+        # gate cache every tick registers were fed (reg_snapshot non-empty), even with no key move.
+        if reg_events or reg_snapshot:
             runner = self._trigger_runner()
             if runner is not None:
-                runner.on_register(reg_events, reg_snapshot)
+                runner.set_registers(reg_snapshot)
+                runner.set_register_rings(reg_rings)
+                if reg_events:
+                    runner.on_register(reg_events, reg_snapshot)
+                runner.emit_gate_flow()   # animate any gate whose pass/block flipped this tick
 
     # ---- readout flow blobs ------------------------------------------------
 
@@ -455,34 +462,38 @@ class LiveSession:
                                            notifier=self._engine.notifier)
         return self._triggers
 
-    def feed_readouts(self, detailed: dict, ro_trace: list, ro_field: dict, window,
+    def gated_trigger_ids(self) -> list[str]:
+        """Trigger ids currently BLOCKED by their gates (evaluated against the runner's live caches).
+        A display hint for the activity snapshot — empty when no runner is built. Read-only; safe to
+        call from the activity thread while the collector tick thread updates the caches."""
+        r = self._trigger_runner()
+        return r.gated_ids() if r is not None else []
+
+    def feed_readouts(self, detailed: dict, ro_trace: list, window,
                       window_id: str, registers=None, profile=None) -> None:
         """Full live-like readout fold for a caller OUTSIDE the collector loop — the teach-UI
         ``test`` feed (``/api/preview?feed=1``). The readout twin of :meth:`feed_registers`:
-        runs the SAME consensus + history gate (:func:`gate_readouts`), folds the surviving
-        values into the accumulated readout maps, feeds registers, animates the readout ->
-        register/toast data blob (:meth:`_emit_readout_flow`), and fires ``on_readout`` watch
-        triggers through the session's shared runner (watch blob + side effects) — so feeding
-        stashed images reproduces exactly what a live tick does for readouts.
+        records each read to history, folds the values into the accumulated readout maps, feeds
+        registers, animates the readout -> register/toast data blob (:meth:`_emit_readout_flow`),
+        and fires ``on_readout`` watch triggers through the session's shared runner (watch blob +
+        side effects) — so feeding stashed images reproduces exactly what a live tick does for readouts.
 
         ``detailed`` is ``read_readouts_detailed``'s RETURN dict (``{id: (value, conf, raw, sub)}``,
         only the SURFACED reads — dropped/low-confidence ones already omitted, exactly as the
         collector builds ``readouts_now``); ``ro_trace`` is the parallel ``trace_sink`` list
-        (``{id, value, raw, dropped, conf, trace}`` for EVERY enabled readout) the gate scores +
-        records to history; ``ro_field`` maps readout id -> its resolved ``FieldDef``; ``window``
-        is the ``WindowDef``; ``registers`` is the FRESH request profile's register wiring."""
+        (``{id, value, raw, dropped, conf, trace}`` for EVERY enabled readout) recorded to history;
+        ``window`` is the ``WindowDef``; ``registers`` is the FRESH request profile's register wiring."""
         game = self._profile.name
         readouts_now = {k: value for k, (value, *_r) in detailed.items()}
         readout_confs_now = {k: conf for k, (_v, conf, *_r) in detailed.items()}
         ts = datetime.now().isoformat(timespec="milliseconds")
-        # Consensus + history (shared with the collector); pops suppressed ids in place.
-        suppressed = gate_readouts(game, window_id, ro_field, ro_trace,
-                                   readouts_now, readout_confs_now, ts)
-        # Full map: every ENABLED readout, empty-defaulted, suppressed excluded (mirrors the tick).
+        # Record every evaluated read to the history ring (shared with the collector, rule 7).
+        readout_history.record_reads(game, window_id, ro_trace, ts)
+        # Full map: every ENABLED readout, empty-defaulted (mirrors the collector tick).
         readouts_all_now = {v.id: readouts_now.get(v.id, "") for v in window.readouts
-                            if v.enabled and v.id not in suppressed}
+                            if v.enabled}
         readout_confs_all_now = {v.id: readout_confs_now.get(v.id) for v in window.readouts
-                                 if v.enabled and v.id not in suppressed}
+                                 if v.enabled}
         with self._lock:
             self._readouts.update(readouts_now)               # GATED map (triggers/toasts/.ro-live)
             self._readout_confs.update(readout_confs_now)
@@ -494,16 +505,21 @@ class LiveSession:
             self._feed_processes(processes=(profile.processes if profile is not None else None), profile=profile)
             reg_events = self._feed_registers(self._readouts_all, self._readout_confs_all, registers)
             self._emit_register_process_flow(profile)   # IN blobs: register-slot -> process (every held slot)
-            reg_snapshot = self._register_snapshot() if reg_events else {}
+            reg_snapshot = self._register_snapshot()   # every tick, so register-source gates stay fresh
+            reg_rings = self._register_rings_snapshot()   # raw rings for count-facet sources
             self._emit_readout_flow(window_id, readouts_now, profile)   # readout -> register/toast/process
         # on_readout / on_register fire OUTSIDE the lock (a fired sweep/toast must not hold the
         # session lock), mirroring the collector loop's post-tick trigger evaluation.
         runner = self._trigger_runner()
-        if runner is not None and readouts_now:
-            runner.set_readouts(readouts_now)
-            runner.on_readout(readouts_now)
-        if runner is not None and reg_events:
-            runner.on_register(reg_events, reg_snapshot)
+        if runner is not None:
+            if readouts_now:
+                runner.set_readouts(readouts_now)
+                runner.on_readout(readouts_now)
+            runner.set_registers(reg_snapshot)
+            runner.set_register_rings(reg_rings)
+            if reg_events:
+                runner.on_register(reg_events, reg_snapshot)
+            runner.emit_gate_flow()   # animate any gate whose pass/block flipped this tick
 
     def feed_registers(self, readouts: dict, confs: dict, registers=None) -> None:
         """Public, thread-safe twin of :meth:`_feed_registers` for a caller OUTSIDE the
@@ -526,12 +542,15 @@ class LiveSession:
             self._feed_processes()   # BEFORE registers -> a readout->process->register chain lands this tick
             reg_events = self._feed_registers(self._readouts_all, self._readout_confs_all, registers)
             self._emit_register_process_flow()   # IN blobs: register-slot -> process (every held slot)
-            reg_snapshot = self._register_snapshot() if reg_events else {}
+            reg_snapshot = self._register_snapshot()   # every tick, so register-source gates stay fresh
+            reg_rings = self._register_rings_snapshot()   # raw rings for count-facet sources
         # on_register fires OUTSIDE the lock (mirrors feed_readouts) so a preview-fed register write
         # drives its watch triggers too, not only a live collector tick.
-        if reg_events:
-            runner = self._trigger_runner()
-            if runner is not None:
+        runner = self._trigger_runner()
+        if runner is not None:
+            runner.set_registers(reg_snapshot)
+            runner.set_register_rings(reg_rings)
+            if reg_events:
                 runner.on_register(reg_events, reg_snapshot)
 
     def _feed_registers(self, readouts: dict, confs: dict, registers=None) -> list[dict]:
@@ -619,6 +638,13 @@ class LiveSession:
             mode = getattr(rd, "aggregate", "") or "" if rd else ""
             snap[reg_id] = {k: self._aggregate_ring(e["values"], mode) for k, e in m.items()}
         return snap
+
+    def _register_rings_snapshot(self) -> dict:
+        """``{register id -> {key -> [ring members oldest->newest]}}`` for every held key — the raw
+        recent-value rings a COUNT-facet gate/router source (``register:<id>#<key>@count``) counts
+        over. Twin of :meth:`_register_snapshot` (exposed values); caller holds ``self._lock``."""
+        return {reg_id: {k: list(e["values"]) for k, e in m.items()}
+                for reg_id, m in self._registers.items()}
 
     def _reg_def(self, reg_id: str):
         """The RegisterDef for ``reg_id`` in the current profile, or None."""

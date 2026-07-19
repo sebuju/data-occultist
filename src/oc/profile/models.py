@@ -111,14 +111,18 @@ class RuleWhen(str, Enum):
     equal = "equal"            # value == arg
     not_equal = "not_equal"    # value != arg
     contains = "contains"      # arg is a substring of value
+    in_list = "in"             # value is one of arg's comma-separated members (case-insensitive)
 
 
 class RuleThen(str, Enum):
     """What a matched :class:`FieldRule` does. ``drop`` early-returns (the whole record is
-    dropped for that cell); every other action rewrites the running value and the pipeline
-    CONTINUES to the next rule."""
+    dropped for that cell); ``blank`` early-returns with ``None`` — the value is FORWARDED
+    downstream as an explicit null gap (a process emits ``key -> None``; a register's
+    ``ignore_empty`` decides whether to record it), NOT a dropped record. Every other action
+    rewrites the running value and the pipeline CONTINUES to the next rule."""
 
     drop = "drop"              # early-return: drop the record for this cell
+    blank = "blank"            # early-return with value=None: forward a null gap (NOT a failure)
     set = "set"                # substitute ``value`` (authored, not OCR), continue
     lowercase = "lowercase"    # value.lower()
     uppercase = "uppercase"    # value.upper()
@@ -148,7 +152,8 @@ class FieldRule(BaseModel):
     dict_id: str = ""                        # for ``dictionary``: which DictionaryDef (blank = pooled)
     fuzzy: float = 0.82                      # for ``dictionary``: fuzzy-snap similarity threshold
 
-    _ARG_WHENS = (RuleWhen.below, RuleWhen.above, RuleWhen.equal, RuleWhen.not_equal, RuleWhen.contains)
+    _ARG_WHENS = (RuleWhen.below, RuleWhen.above, RuleWhen.equal, RuleWhen.not_equal,
+                  RuleWhen.contains, RuleWhen.in_list)
 
     @model_serializer
     def _ser(self) -> dict:
@@ -222,17 +227,6 @@ class FieldDef(BaseModel):
     # taught glyph out-scores the OCR's own. Fixes systematic single-glyph confusions the
     # dictionary cannot (e.g. "Q3" vs "G3"). Runs BEFORE the rule pipeline; a capture-time toggle.
     glyph_check: bool = False
-    # LIVE-READOUT temporal consensus gate (opt-in, default off) — kills the misfire bursts a
-    # fast/animating action screen produces. Each OCR-due tick the read is scored for QUALITY
-    # (not value): does it match the field's expected type (number/pips/diamonds -> numeric;
-    # text/symbol -> non-empty) and clear the confidence floor. The current read is surfaced
-    # only when at least ``stability_min`` of the last ``stability_reads`` reads (this one
-    # included) were that-quality; otherwise the readout goes quiet (held) until the stream
-    # recovers. Keys on TYPE not equality, so a legitimately fast-changing number (always
-    # numeric) never lags. Applies ONLY on the live readout path; the dataset/record path has
-    # its own temporal Confirmer (stability.py) and ignores these. 0 window = gate disabled.
-    stability_reads: int = 0    # consensus window M (0 disables)
-    stability_min: int = 0      # min expected-quality reads within the window to accept (clamped 1..M)
     # LIVE-READOUT crop cleanup (opt-in) — a per-readout override of the window's preprocess,
     # applied to THIS readout's isolated crop before OCR. White/whitish HUD digits over an
     # animating coloured background OCR to confident garbage (a thin decimal in "4.00" gets
@@ -952,17 +946,96 @@ class ProducerDef(BaseModel):
     key: KeyDef | None = None
 
 
-class RegKeyCond(BaseModel):
-    """One per-key condition of an ``on_register`` trigger: watch register key ``key`` and consider
-    it satisfied when ``when`` holds. ``when="changed"`` is satisfied the tick the key's exposed
-    value moves (``value`` unused); the comparison ops (``gte|lte|gt|lt|eq|ne|crosses_up|
-    crosses_down``) test the exposed value against ``value`` (``crosses_*`` compare to the previous
-    reading). A trigger's conditions are combined by :attr:`TriggerDef.register_logic`."""
+class GateWhen(str, Enum):
+    """How a :class:`GateCond` tests its source's current value. The op union that lets a gate
+    express every predicate a trigger used to carry inline, plus the shape/text ops from the field
+    pipeline. Three families (see :func:`oc.collect.triggers.TriggerRunner._cond_holds`):
 
-    key: str
-    when: str = "changed"                     # changed | gte|lte|gt|lt|eq|ne|crosses_up|crosses_down | between
-    value: float = 0.0                        # threshold for the comparison `when`s (lower bound for `between`)
-    value2: float = 0.0                       # upper bound for `when="between"` (ignored otherwise)
+    * shape/text (evaluated by :func:`oc.collect.fields._matches`): ``always`` / ``empty`` /
+      ``no_digit`` / ``all_digit`` / ``has_digit`` / ``no_letter`` / ``all_letter`` / ``has_letter``
+      / ``equal`` / ``not_equal`` / ``contains`` / ``in`` (comma-list membership) — ``arg`` is text;
+    * numeric level: ``gte`` / ``lte`` / ``gt`` / ``lt`` / ``eq`` / ``ne`` — ``arg`` is a number;
+    * numeric window / edge: ``between`` (``arg`` = ``"lo,hi"``), ``crosses_up`` / ``crosses_down``
+      (compare against the previous reading), ``changed`` (source moved this tick).
+    """
+
+    always = "always"
+    empty = "empty"
+    no_digit = "no_digit"
+    all_digit = "all_digit"
+    has_digit = "has_digit"
+    no_letter = "no_letter"
+    all_letter = "all_letter"
+    has_letter = "has_letter"
+    equal = "equal"
+    not_equal = "not_equal"
+    contains = "contains"
+    in_list = "in"
+    gte = "gte"
+    lte = "lte"
+    gt = "gt"
+    lt = "lt"
+    eq = "eq"
+    ne = "ne"
+    between = "between"
+    crosses_up = "crosses_up"
+    crosses_down = "crosses_down"
+    changed = "changed"
+
+
+class GateCond(BaseModel):
+    """One condition tested against a gate/router's source value. ``arg`` is the operand — a number
+    for the numeric ops, ``"lo,hi"`` for ``between``, a comma-separated list for ``in``, text for the
+    shape/text ops, unused for ``always`` / ``changed`` / the shape predicates."""
+
+    when: GateWhen = GateWhen.always
+    arg: str = ""
+
+
+class GateDef(BaseModel):
+    """A reusable boolean PREDICATE over one live value — the trigger's condition, lifted out of the
+    trigger into its own node so the trigger carries only its event (see :class:`TriggerDef`). A
+    trigger names gate ids in :attr:`TriggerDef.gates`; the trigger fires only when EVERY named gate
+    passes (AND across gates), so a gate is an upstream allow/block on the fire.
+
+    ``source`` is a ref to the live value the gate tests — ``readout:<id>`` or
+    ``register:<id>#<key>`` (the same grammar registers/processes source from). ``conds`` are the
+    conditions; ``logic`` (``or`` = any holds | ``and`` = all hold) combines them; ``negate`` flips
+    the result (a block-list: pass when the conds do NOT hold), so a short list can exclude a few
+    values rather than enumerate the rest. Evaluated server-side against the runner's live caches —
+    game-dumb, no capture knowledge. Reusable: one gate can gate many triggers."""
+
+    id: str
+    source: str = ""                          # readout:<id> | register:<id>#<key>
+    conds: list[GateCond] = Field(default_factory=list)
+    logic: str = "or"                         # or (any holds) | and (all hold)
+    negate: bool = False                      # flip the combined result (block-list)
+    enabled: bool = True
+
+
+class RouterBranch(BaseModel):
+    """One branch of a :class:`RouterDef`: when its ``conds`` hold (combined by ``logic``), the
+    router forwards the fire to ``targets``. A branch with no ``conds`` matches ALWAYS (the ``else``)
+    — place it last. Empty ``targets`` = drop (match, forward nothing)."""
+
+    conds: list[GateCond] = Field(default_factory=list)
+    logic: str = "or"
+    targets: list[str] = Field(default_factory=list)
+
+
+class RouterDef(BaseModel):
+    """A downstream fan-out node: a trigger fires it (named in ``targets``), and the router forwards
+    the fire to a branch's targets chosen by a live value — ``octavia -> sound_A``, ``volt ->
+    sound_B``, ``else -> drop``. ``source`` is the tested value (same grammar as :class:`GateDef`);
+    ``branches`` are tried in order, FIRST match wins. Where a gate answers "fire at all?", a router
+    answers "given a fire, which targets?" — so a router's targets may be any target kind (producer /
+    file-source / toast / sound / action). Sound targets are still client-played (the fire cue names
+    the chosen sound ids); the rest fire server-side exactly like a trigger's own targets."""
+
+    id: str
+    source: str = ""
+    branches: list[RouterBranch] = Field(default_factory=list)
+    enabled: bool = True
 
 
 class TriggerDef(BaseModel):
@@ -988,20 +1061,13 @@ class TriggerDef(BaseModel):
     * ``on_capture``     — fire when a capture session starts (live OR precapture).
     * ``on_live_start``  — fire when the server live-collection session starts (armed collection).
     * ``on_live_stop``   — fire when the server live-collection session stops.
-    * ``on_readout``    — fire when a watched live readout (``readout_watch``) meets ``readout_op``
-      ``readout_value``. A comparison op fires on entering the condition and on every further move
-      while it holds; the ``crosses_*`` ops fire once on the transition tick. See ReadoutDef.
-    * ``on_register``   — fire on a per-key CONDITION over a watched register's live keys.
-      ``register_watch`` holds the register id(s); ``register_conds`` maps each register id to a list
-      of ``RegKeyCond`` (``{key, when, value, value2}``) — one condition per wired-readout key.
-      ``when`` is ``changed`` (fires when that key's exposed value moves, no ``value``), a comparison
-      (``gte|lte|gt|lt|eq|ne|crosses_up|crosses_down``) against ``value``, or ``between``
-      (``value <= v <= value2``). ``register_logic``
-      (``or`` default | ``and``) combines a trigger's conditions: ``or`` fires when ANY holds,
-      ``and`` only when ALL hold. A comparison fires on every move while it holds; the ``crosses_*``
-      ops fire once on the transition tick. A register is fed every tick on the EXPOSED value
-      (aggregate fold, or ring tail).
-      See :class:`RegisterDef` / :class:`RegKeyCond`.
+    * ``on_readout``    — pulse when a watched live readout (``readout_watch``) is read this tick.
+      The VALUE condition is not on the trigger any more — attach a :class:`GateDef` over that
+      readout (``source: readout:<id>``). Fire = pulse AND every gate holds. See ReadoutDef.
+    * ``on_register``   — pulse when a watched register's (``register_watch``) exposed key moves this
+      tick. The per-key conditions moved to gates (``source: register:<id>#<key>``); ``crosses_*`` /
+      ``changed`` / ``between`` and the level ops all live on the gate now. A register is fed every
+      tick on the EXPOSED value (aggregate fold, or ring tail). See :class:`RegisterDef`.
     * ``on_ready``       — fire once when a watched PRODUCER's sweep FINISHES. ``watch`` holds the
       producer id(s); the trigger fires from the sweep's reap (its output is already written), so it
       is deterministic — the fire is CAUSED by completion and can never precede the data. Fires even
@@ -1011,8 +1077,13 @@ class TriggerDef(BaseModel):
     * ``manual``         — never auto-fires; just declares the wiring (the sweep button drives it).
 
     A trigger's ``targets`` are producer ids (sweep/refresh), file-source ids (read), toast/sound
-    ids (notify/play), or ACTION ids (clear/clone/move a dataset — see :class:`ActionDef`). A
-    dataset action is its own node fired via ``targets``, exactly like a toast or sound.
+    ids (notify/play), ACTION ids (clear/clone/move a dataset — see :class:`ActionDef`), or ROUTER
+    ids (fan-out by a live value — see :class:`RouterDef`). Each is its own node fired via
+    ``targets``, exactly like a toast or sound.
+
+    The trigger carries only its EVENT (``kind`` + the watch lists that declare what it watches). The
+    VALUE predicate — "fire only when this reading meets this condition" — lives in :attr:`gates`
+    (see :class:`GateDef`): the trigger fires when its event pulses this tick AND every gate holds.
     """
 
     id: str
@@ -1021,19 +1092,16 @@ class TriggerDef(BaseModel):
     kind: str = "interval"
     interval_s: float = 300.0               # for kind="interval"/"true_interval": seconds between fires
     watch: list[str] = Field(default_factory=list)    # for kind="on_change"/"on_any_change"/"on_new_batch": datasets to watch
-    # for kind="on_readout": the readout ids this trigger watches, and the condition its value
-    # must meet to fire. readout_op ∈ gte|lte|gt|lt|eq|ne|crosses_up|crosses_down (crosses_* compare
-    # against the previous reading). Edge-triggered — fires once when the condition becomes true.
+    # for kind="on_readout": the readout ids this trigger watches — a read of any of them pulses the
+    # trigger this tick. The VALUE condition is a gate over the readout, not a field here.
     readout_watch: list[str] = Field(default_factory=list)
-    readout_op: str = "gte"
-    readout_value: float = 0.0
-    # for kind="on_register": the register ids this trigger watches (chips + edges), the per-key
-    # conditions over each (``{register id -> [RegKeyCond, ...]}``), and how a trigger's conditions
-    # combine (``or`` = any holds, ``and`` = all hold). See the ``on_register`` kind above.
+    # for kind="on_register": the register ids this trigger watches (chips + edges) — an exposed key
+    # moving in any of them pulses the trigger this tick. The per-key conditions are gates now.
     register_watch: list[str] = Field(default_factory=list)
-    register_conds: dict[str, list[RegKeyCond]] = Field(default_factory=dict)
-    register_logic: str = "or"                # or | and — combine this trigger's key conditions
-    targets: list[str] = Field(default_factory=list)  # producer / file-source / toast / sound / action ids this trigger fires
+    # gate ids (see GateDef) — the trigger's value predicate. Fires only when EVERY named gate holds
+    # (AND across gates). Empty = no predicate: the event alone fires it.
+    gates: list[str] = Field(default_factory=list)
+    targets: list[str] = Field(default_factory=list)  # producer / file-source / toast / sound / action / router ids this trigger fires
     enabled: bool = True
     # minimum time (milliseconds) between actual fires — a global rate limit across ALL kinds.
     # None = no throttle. A fire suppressed inside the window is recorded in the trigger's
@@ -1690,6 +1758,10 @@ class GameProfile(BaseModel):
     producers: list[ProducerDef] = Field(default_factory=list)
     file_sources: list[FileSourceDef] = Field(default_factory=list)
     triggers: list[TriggerDef] = Field(default_factory=list)
+    # Reusable value predicates a trigger references by id (see GateDef) — the trigger's condition,
+    # lifted out of the trigger. And downstream fan-out nodes (see RouterDef).
+    gates: list[GateDef] = Field(default_factory=list)
+    routers: list[RouterDef] = Field(default_factory=list)
     toasts: list[ToastDef] = Field(default_factory=list)
     sounds: list[SoundDef] = Field(default_factory=list)
     actions: list[ActionDef] = Field(default_factory=list)

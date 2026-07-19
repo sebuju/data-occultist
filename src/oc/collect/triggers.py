@@ -136,20 +136,27 @@ class TriggerRunner:
         # its text. Readouts are ephemeral (never stored) — the collector pushes them each tick
         # via set_readouts(); other fire paths (web routes) supply their own values to fire_toast.
         self._readouts_latest: dict = {}
+        # Latest {register id -> {key -> exposed value}} pushed each tick (set_registers), so a gate
+        # over a register key can be evaluated at fire time on ANY trigger kind (not just the tick a
+        # key moved). Mirror of _readouts_latest for the register side.
+        self._reg_latest: dict = {}
+        # Latest {register id -> {key -> [ring members oldest->newest]}} pushed each tick
+        # (set_register_rings), so a COUNT-facet source (register:<id>#<key>@count|@nonblank|@distinct)
+        # can count over a key's ring of recent values instead of testing its single exposed value.
+        self._reg_rings: dict = {}
+        # Previous NUMERIC value per source ref ("readout:<id>" / "register:<reg>#<key>") — the one
+        # store the gate edge ops (crosses_up/crosses_down/changed) and the on_readout move-pulse
+        # compare against. Updated at the end of on_readout / on_register (mirrors the old
+        # _readout_prev / _register_prev, unified by source string).
+        self._source_prev: dict[str, float] = {}
+        # Previous pass/block result per gate id — so emit_gate_flow animates a blob only when a
+        # gate's decision FLIPS (a steady value never spams the flow layer). Seeded on first sight.
+        self._gate_prev: dict[str, bool] = {}
         # last-fire time per interval trigger; seed to "now" so the first fire waits a
         # full interval rather than firing immediately on startup.
         now = clock()
         self._last: dict[str, float] = {
             t.id: now for t in profile.triggers if t.kind == "interval"}
-        # on_readout state: whether each trigger's condition was true last evaluation (so it fires on
-        # ENTERING the condition, then on every further move while held) + the previous value per
-        # watched readout (for crosses_up/crosses_down, which compare against the prior reading).
-        self._readout_state: dict[str, bool] = {}
-        self._readout_prev: dict[str, float] = {}
-        # on_register state: the previous exposed value per (reg, key) — for crosses_up/crosses_down,
-        # which compare against the prior reading. (A comparison fires on every move while it holds,
-        # so it needs no held-state; the upstream value-gate already proves the value moved.)
-        self._register_prev: dict[tuple, float] = {}
         # monotonic time of each trigger's LAST actual fire (any kind) — the throttle clock. A
         # fire within throttle_ms of this is suppressed (recorded as throttled, not fired).
         self._last_fire_any: dict[str, float] = {}
@@ -195,13 +202,17 @@ class TriggerRunner:
             return False
         logev(f"trigger {t.id} fired ({why})", level="run", game=self._profile.name)
         slog(f"trigger {t.id} fired ({why})", game=self._profile.name)
-        self._fire_targets(t, items=items)
+        # Resolve targets THROUGH any router (fan-out by a live value): server targets fire here,
+        # the chosen sound ids ride the fire cue (sounds are client-played).
+        fire_ids, sound_ids = self._resolve_fire(t)
+        self._fire_targets(t, fire_ids, items=items)
         record_fire(self._data_dir, self._profile.name, t.id)
         # Instant live cue for the browser: sounds are client-played, and the polled activity
         # snapshot (disk sidecar + ~1s SSE pump) is too slow. Push the fire the moment it happens
         # so the sound tracks the trigger, not the poll. A fire with no sound target still
-        # publishes (client no-ops) -- the server stays game-dumb about target kinds.
-        publish_fire(self._profile.name, t.id)
+        # publishes (client no-ops) -- the server stays game-dumb about target kinds. ``sound_ids``
+        # names the sounds a router selected (empty -> the client plays the trigger's own sounds).
+        publish_fire(self._profile.name, t.id, sound_ids)
         record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),
                     throttled=False, ts=ts, node=node, value=value)
         self._last_fire_any[t.id] = self._clock()
@@ -217,6 +228,13 @@ class TriggerRunner:
         data goes quiet (or ``settle_max_ms`` elapses). Returns True only for a SYNCHRONOUS fire; a
         deferred fire returns False and lands later via ``_settle_flush``. Manual "fire now" does not
         route here — it bypasses settle exactly as it bypasses throttle."""
+        if not self._gates_pass(t):
+            from .trigger_history import record as record_hist
+            logev(f"trigger {t.id} gated ({why})", level="info", game=self._profile.name)
+            record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),
+                        throttled=True, ts=self._wall().isoformat(timespec="milliseconds"),
+                        node=node, value=value)
+            return False
         settle_ms = getattr(t, "settle_ms", None)
         if not settle_ms or settle_ms <= 0:
             return self._emit_fire(t, why, items, node, value)
@@ -506,17 +524,222 @@ class TriggerRunner:
 
     def set_readouts(self, values: dict) -> None:
         """Cache the latest ``{readout_id: value}`` readings so a toast fired by ANY trigger
-        (interval / lifecycle / readout) can interpolate ``{{ro_1}}`` tokens with live values.
-        Called by the collector each tick before it evaluates triggers."""
+        (interval / lifecycle / readout) can interpolate ``{{ro_1}}`` tokens with live values, and a
+        gate over a readout can be evaluated at fire time. Called by the collector each tick before
+        it evaluates triggers."""
         if values:
             self._readouts_latest.update(values)
 
-    def on_readout(self, values: dict) -> list[str]:
-        """Fire ``on_readout`` triggers whose watched readout(s) meet their condition.
+    def set_registers(self, snapshot: dict) -> None:
+        """Cache the latest ``{register id -> {key -> exposed value}}`` so a gate over a register key
+        can be evaluated at fire time on ANY trigger kind. Called by the live session each tick (see
+        :meth:`oc.collect.live.LiveSession._feed_registers`). Mirror of :meth:`set_readouts`."""
+        if snapshot:
+            self._reg_latest = snapshot
 
-        Edge-triggered: a trigger fires the instant its condition becomes true (false->true),
-        not every tick while it holds. ``values`` is ``{readout_id: value}`` read this tick.
-        Returns fired trigger ids. Variables are ephemeral — nothing here touches a store."""
+    def set_register_rings(self, rings: dict) -> None:
+        """Cache each register key's full ring of recent values (``{reg -> {key -> [members
+        oldest->newest]}}``) so a COUNT-facet source — ``register:<id>#<key>@count`` (how many held) /
+        ``@nonblank`` (how many are not blank, i.e. the ACTUAL values) / ``@distinct`` (how many
+        distinct) — can be evaluated at fire time. Pushed each tick alongside :meth:`set_registers` by
+        the live session. Guards truthiness like :meth:`set_registers` (an empty push keeps the last)."""
+        if rings:
+            self._reg_rings = rings
+
+    @staticmethod
+    def _split_facet(key: str) -> tuple[str, str]:
+        """Split a register key ref into ``(key, facet)``. A trailing ``@<facet>`` selects a COUNT
+        over the key's ring of recent values instead of its exposed value; no ``@`` -> ``(key, "")``."""
+        k, at, facet = key.partition("@")
+        return k, facet if at else ""
+
+    @staticmethod
+    def _facet_count(ring, facet: str):
+        """How many values a register key's ring holds, per ``facet``. ``None`` when no ring is cached
+        (e.g. a headless collector never pushed rings) so a count source simply doesn't hold. ``count``
+        = ring depth (every held read, blanks included); ``nonblank`` = members that aren't ``None``/``""``
+        (the "actual values"); ``distinct`` = unique non-blank members by text form. Unknown facet ->
+        ``None``."""
+        if ring is None:
+            return None
+        if facet == "count":
+            return len(ring)
+        real = [v for v in ring if v is not None and str(v) != ""]
+        if facet == "nonblank":
+            return len(real)
+        if facet == "distinct":
+            return len({str(v) for v in real})
+        return None
+
+    # ---- gates: the trigger's value predicate, lifted into reusable nodes -----------------
+    # A trigger's ``kind`` supplies the PULSE (when to evaluate); a gate supplies the LEVEL (whether
+    # the pulsed value satisfies a condition). Fire = pulse AND every gate holds (checked in
+    # _route_fire). Edge ops (crosses_*/changed) compare against _source_prev, which the on_readout /
+    # on_register pulse-detectors refresh each tick for the sources they watch — so crosses/changed
+    # gates are meant for a source the trigger's own event watches (the common case).
+
+    def _source_value(self, source: str):
+        """The current live value a gate/router ``source`` ref points at, or None. ``readout:<id>``
+        reads the cached readouts; ``register:<id>#<key>`` reads the cached register snapshot; a bare
+        id is treated as a readout (mirrors LiveSession._resolve_source's grammar)."""
+        if not source:
+            return None
+        kind, _, rest = source.partition(":")
+        if kind == "readout":
+            return self._readouts_latest.get(rest)
+        if kind == "register":
+            reg, _, key = rest.partition("#")
+            if not key:
+                return None
+            key, facet = self._split_facet(key)
+            if facet:   # a count over the key's ring of recent values, not its exposed value
+                return self._facet_count((self._reg_rings.get(reg) or {}).get(key), facet)
+            return (self._reg_latest.get(reg) or {}).get(key)
+        return self._readouts_latest.get(source)
+
+    def _cond_holds(self, cond, value, prev) -> bool:
+        """Does one :class:`~oc.profile.models.GateCond` hold for ``value`` (``prev`` = its previous
+        reading, for the edge ops)? Numeric / edge ops reuse :meth:`_readout_meets` (+ between +
+        changed); text / shape ops defer to :func:`oc.collect.fields._matches` — one predicate set."""
+        when = getattr(cond.when, "value", cond.when)
+        arg = cond.arg or ""
+        if when == "always":
+            return True
+        if when == "changed":
+            v = self._num(value)
+            return v is not None and v != self._num(prev)
+        if when == "between":
+            v = self._num(value)
+            nums = [n for n in (self._num(x) for x in arg.split(",")) if n is not None]
+            if v is None or len(nums) < 2:
+                return False
+            lo, hi = sorted(nums[:2])
+            return lo <= v <= hi
+        if when in ("gte", "lte", "gt", "lt", "eq", "ne", "crosses_up", "crosses_down"):
+            thr = self._num(arg)
+            return thr is not None and self._readout_meets(when, value, thr, prev)
+        from ..profile.models import RuleWhen
+        from .fields import _matches
+        try:
+            rw = RuleWhen(when)
+        except ValueError:
+            return False
+        return _matches(rw, "" if value is None else str(value), arg)
+
+    def _condset_holds(self, source: str, conds, logic: str) -> bool:
+        """Evaluate a condition set (a gate, or one router branch) against ``source``'s live value.
+        Empty ``conds`` -> True (an always-match, e.g. a router's ``else`` branch)."""
+        if not conds:
+            return True
+        value = self._source_value(source)
+        prev = self._source_prev.get(source)
+        results = [self._cond_holds(c, value, prev) for c in conds]
+        return all(results) if (logic or "or") == "and" else any(results)
+
+    def _gate_holds(self, gate) -> bool:
+        """Does a gate pass? ``negate`` flips it (a block-list). A disabled gate is a no-op (passes)."""
+        if not getattr(gate, "enabled", True):
+            return True
+        held = self._condset_holds(gate.source, gate.conds, gate.logic)
+        return (not held) if getattr(gate, "negate", False) else held
+
+    def _gates_pass(self, t) -> bool:
+        """Do ALL gates a trigger references hold (AND across gates)? No gates -> pass. A missing gate
+        id is skipped (a dangling ref must not permanently wedge a trigger)."""
+        gate_ids = getattr(t, "gates", None)
+        if not gate_ids:
+            return True
+        by_gate = {g.id: g for g in getattr(self._profile, "gates", [])}
+        for gid in gate_ids:
+            g = by_gate.get(gid)
+            if g is not None and not self._gate_holds(g):
+                return False
+        return True
+
+    def _source_node(self, source: str) -> str | None:
+        """The GRAPH NODE id a gate/router ``source`` ref points at (for the flow animation), mirroring
+        the front-end model.refNode: ``readout:<id>`` -> ``ro:<win>:<id>``; ``register:<id>#<key>``
+        -> ``register:<id>``. None if unresolvable."""
+        if not source:
+            return None
+        kind, _, rest = source.partition(":")
+        if kind == "readout":
+            win = self._readout_window(rest)
+            return f"ro:{win}:{rest}" if win else None
+        if kind == "register":
+            return f"register:{rest.split('#')[0]}"
+        return None
+
+    def emit_gate_flow(self) -> None:
+        """Animate a gate's decision when its pass/block result FLIPS: a ``data`` blob source -> gate
+        (the value that changed it) and a ``watch`` blob gate -> each trigger it gates (the decision
+        propagating). Called each live tick; an unchanged result emits nothing, so a steady value
+        never spams the flow layer. First sight of a gate seeds its state without a blob."""
+        gates = getattr(self._profile, "gates", None)
+        if not gates:
+            return
+        game = self._profile.name
+        for g in gates:
+            if not getattr(g, "enabled", True):
+                continue
+            holds = self._gate_holds(g)
+            prev = self._gate_prev.get(g.id)
+            self._gate_prev[g.id] = holds
+            if prev is None or holds == prev:
+                continue   # seed, or no flip -> no animation
+            src = self._source_node(g.source)
+            if src:
+                publish_flow(game, "data", src, f"gate:{g.id}", 1)
+            for t in self._profile.triggers:
+                if g.id in (getattr(t, "gates", None) or []):
+                    publish_flow(game, "watch", f"gate:{g.id}", f"trigger:{t.id}", 1)
+
+    def gated_ids(self) -> list[str]:
+        """Ids of enabled, gated triggers whose gates currently BLOCK them (evaluated against the
+        live caches). A display hint: the activity snapshot flags these nodes as 'gated off' while
+        live is running, so a glance at the graph shows which cues are silenced right now."""
+        return [t.id for t in self._profile.triggers
+                if t.enabled and getattr(t, "gates", None) and not self._gates_pass(t)]
+
+    def _resolve_fire(self, t) -> tuple[list[str], list[str]]:
+        """Expand ``t.targets`` THROUGH any router into ``(fire_ids, sound_ids)``: server targets
+        (producer/file-source/toast/action) to fire now, and sound ids to name in the fire cue (the
+        browser plays those). A router forwards its FIRST matching branch's targets (a branch with no
+        conds matches always); a disabled router forwards nothing. Direct sound targets land in
+        ``sound_ids`` too, so the cue always carries the full set the client should play."""
+        by_router = {r.id: r for r in getattr(self._profile, "routers", [])}
+        sound_set = {s.id for s in getattr(self._profile, "sounds", [])}
+        fire_ids: list[str] = []
+        sound_ids: list[str] = []
+
+        def add(tid: str) -> None:
+            if tid in sound_set:
+                if tid not in sound_ids:
+                    sound_ids.append(tid)
+            elif tid not in fire_ids:
+                fire_ids.append(tid)
+
+        for tid in t.targets or []:
+            r = by_router.get(tid)
+            if r is None:
+                add(tid)
+                continue
+            if not getattr(r, "enabled", True):
+                continue
+            for b in r.branches or []:
+                if self._condset_holds(r.source, b.conds, b.logic):
+                    for x in b.targets or []:
+                        add(x)
+                    break   # first match wins
+        return fire_ids, sound_ids
+
+    def on_readout(self, values: dict) -> list[str]:
+        """Pulse every ``on_readout`` trigger whose watched readout MOVED this tick, then fire it if
+        its gates hold (:meth:`_route_fire`). ``values`` is ``{readout_id: value}`` read this tick.
+
+        A move (value differs from last tick) is the pulse — a static held reading never re-fires,
+        exactly as the old edge-triggering did; the VALUE condition is now a gate over the readout.
+        The first sighting (no prev) counts as a move, so a trigger fires on ENTERING a condition."""
         if not values:
             return []
         self.set_readouts(values)   # a readout-fired toast interpolates the freshest values
@@ -524,107 +747,73 @@ class TriggerRunner:
         for t in self._profile.triggers:
             if not t.enabled or t.kind != "on_readout":
                 continue
-            watched = [w for w in t.readout_watch if w in values]
-            hit = next((w for w in watched
-                        if self._readout_meets(t.readout_op, values[w], t.readout_value,
-                                               self._readout_prev.get(w))), None)
-            cond = hit is not None
-            was = self._readout_state.get(t.id, False)
-            self._readout_state[t.id] = cond
-            # fire on entering the condition AND on every further move while it still holds (the hit
-            # reading differs from its previous value); a held-but-static reading does NOT re-fire.
-            # Edge-once ("fire only on entering") comes from the crosses_up / crosses_down ops, which
-            # are true only on the transition tick — not from suppressing repeats here.
-            moved = cond and self._num(values[hit]) != self._readout_prev.get(hit)
-            if cond and (not was or moved):
-                if self._route_fire(t, f"readout {t.readout_op} {t.readout_value}", items=None,
-                                    node=hit, value=values[hit]):
-                    fired.append(t.id)
-                    # animate the watch hop readout -> trigger (the reading that crossed flows INTO
-                    # the trigger), mirroring the on_change watch hop. Matches the drawn watch edge
-                    # ro:<win>:<id> <-> trigger:<id> (flow.js reverse-routes it).
-                    win = self._readout_window(hit)
-                    if win:
-                        publish_flow(self._profile.name, "watch", f"ro:{win}:{hit}", f"trigger:{t.id}", 1)
-        # remember this tick's readings so crosses_* can see the transition next tick
+            moved = next((w for w in t.readout_watch if w in values
+                          and self._num(values[w]) != self._source_prev.get(f"readout:{w}")), None)
+            if moved is None:
+                continue
+            if self._route_fire(t, f"readout {moved}", items=None, node=moved, value=values[moved]):
+                fired.append(t.id)
+                # animate the watch hop readout -> trigger (the reading flows INTO the trigger),
+                # mirroring the on_change watch hop. Matches the drawn watch edge ro:<win>:<id>.
+                win = self._readout_window(moved)
+                if win:
+                    publish_flow(self._profile.name, "watch", f"ro:{win}:{moved}", f"trigger:{t.id}", 1)
+        # remember this tick's readings so crosses_*/changed gates + the move-pulse see the transition
         for w, v in values.items():
             n = self._num(v)
             if n is not None:
-                self._readout_prev[w] = n
+                self._source_prev[f"readout:{w}"] = n
         return fired
 
     # ---- on_register ------------------------------------------------------
 
     def on_register(self, events: list[dict], snapshot: dict) -> list[str]:
-        """Fire ``on_register`` triggers whose per-key condition(s) hold — edge-triggered.
+        """Pulse every ``on_register`` trigger a watched register key MOVED for this tick, then fire
+        it if its gates hold (:meth:`_route_fire`).
 
         ``events`` is ``[{"reg", "key", "value"}, ...]`` for the keys whose exposed value moved this
-        tick (the value-gate is done upstream in :meth:`oc.collect.live.LiveSession._feed_registers`).
-        ``snapshot`` is ``{reg: {key: exposed_value}}`` for EVERY held key (needed to evaluate an
-        ``and`` across keys that didn't all change this tick, and the comparison ops on the current
-        value). Each :class:`~oc.profile.models.RegKeyCond` is satisfied when ``when="changed"`` and
-        its key is in this tick's changed set, or when its comparison op holds against ``value``;
-        ``register_logic`` combines a trigger's conditions (``or`` = any, ``and`` = all). A trigger
-        fires once when its COMBINED condition goes false->true. Returns fired ids."""
+        tick (the value-gate is done upstream in :meth:`oc.collect.live.LiveSession._feed_registers`)
+        — that move IS the pulse. ``snapshot`` is ``{reg: {key: exposed_value}}`` for every held key.
+        The per-key VALUE condition is now a gate over ``register:<id>#<key>``; this handler only
+        detects the pulse and defers the predicate to :meth:`_gates_pass`."""
+        self.set_registers(snapshot)
         if not events:
+            self._update_register_prev(snapshot)
             return []
-        changed = {(e["reg"], e["key"]) for e in events}
-        by_key = {(e["reg"], e["key"]): e.get("value") for e in events}
+        watched_moves = [(e["reg"], e["key"], e.get("value")) for e in events]
         fired: list[str] = []
         for t in self._profile.triggers:
             if not t.enabled or t.kind != "on_register":
                 continue
-            conds = [(reg, c) for reg in (t.register_watch or [])
-                     for c in (t.register_conds.get(reg) or [])]
-            if not conds:
-                continue   # watched but no condition -> nothing to trip (useless), never fires
-            # per condition: `hold` = its test is currently true (a level); `pulse` = it ACTIVATES
-            # this tick. A "changed" cond has no level (hold=True) and pulses when its key moved; a
-            # comparison holds while the value meets it and pulses on EVERY move while it holds (its
-            # key is in this tick's changed set — the upstream value-gate proves the exposed value
-            # moved). Edge-once ("fire only on entering") comes from the crosses_up / crosses_down
-            # ops, whose hold is true only on the transition tick. AND fires when every cond holds AND
-            # one pulsed (moved this tick); OR fires when any cond pulses.
-            holds, pulses, hit = [], [], None
-            for reg, c in conds:
-                if c.when == "changed":
-                    hold, pulse = True, (reg, c.key) in changed
-                else:
-                    val = snapshot.get(reg, {}).get(c.key)
-                    hold = self._reg_cond_holds(c, val, self._register_prev.get((reg, c.key)))
-                    pulse = hold and (reg, c.key) in changed
-                holds.append(hold)
-                pulses.append(pulse)
-                if pulse and hit is None:
-                    hit = (reg, c.key, by_key.get((reg, c.key), snapshot.get(reg, {}).get(c.key)))
-            fire = (all(holds) and any(pulses)) if (t.register_logic or "or") == "and" else any(pulses)
-            if fire:
-                hit_reg, hit_key, hit_val = hit or (conds[0][0], conds[0][1].key, None)
-                if self._route_fire(t, f"register {hit_reg}.{hit_key}", items=None,
-                                    node=hit_reg, value=hit_val):
-                    fired.append(t.id)
-                    # animate the watch hop register -> trigger (mirrors the on_readout / on_change
-                    # hops). Matches the drawn watch edge register:<id> <-> trigger:<id>.
-                    publish_flow(self._profile.name, "watch", f"register:{hit_reg}", f"trigger:{t.id}", 1)
-        # remember this tick's exposed values so crosses_* can see the transition next tick
-        for reg, keys in snapshot.items():
+            watched = set(t.register_watch or [])
+            hit = next(((reg, key, val) for reg, key, val in watched_moves if reg in watched), None)
+            if hit is None:
+                continue
+            hit_reg, hit_key, hit_val = hit
+            if self._route_fire(t, f"register {hit_reg}.{hit_key}", items=None,
+                                node=hit_reg, value=hit_val):
+                fired.append(t.id)
+                # animate the watch hop register -> trigger (mirrors the on_readout / on_change hops).
+                publish_flow(self._profile.name, "watch", f"register:{hit_reg}", f"trigger:{t.id}", 1)
+        self._update_register_prev(snapshot)
+        return fired
+
+    def _update_register_prev(self, snapshot: dict) -> None:
+        """Remember this tick's exposed register values so crosses_*/changed gates see the transition
+        next tick (keyed by the ``register:<reg>#<key>`` source ref). Also stamps each key's ring
+        COUNTS (``@count``/``@nonblank``/``@distinct``) so an edge gate over a count sees its previous
+        value too."""
+        for reg, keys in (snapshot or {}).items():
             for k, v in keys.items():
                 n = self._num(v)
                 if n is not None:
-                    self._register_prev[(reg, k)] = n
-        return fired
-
-    def _reg_cond_holds(self, c, val, prev) -> bool:
-        """Does register condition ``c`` currently hold for exposed value ``val``? ``between`` tests
-        ``value <= val <= value2`` (bounds sorted, so order doesn't matter); every other op defers to
-        the shared :meth:`_readout_meets` (``crosses_*`` use ``prev``)."""
-        if c.when == "between":
-            v = self._num(val)
-            if v is None:
-                return False
-            lo, hi = sorted((c.value, getattr(c, "value2", 0.0)))
-            return lo <= v <= hi
-        return self._readout_meets(c.when, val, c.value, prev)
+                    self._source_prev[f"register:{reg}#{k}"] = n
+        for reg, keys in (self._reg_rings or {}).items():
+            for k, ring in keys.items():
+                for facet in ("count", "nonblank", "distinct"):
+                    c = self._facet_count(ring, facet)
+                    if c is not None:
+                        self._source_prev[f"register:{reg}#{k}@{facet}"] = float(c)
 
     # ---- helpers -----------------------------------------------------------
 
@@ -711,15 +900,16 @@ class TriggerRunner:
                 seen[str(n)] = None
         return list(seen.keys())
 
-    def _fire_targets(self, trigger, items) -> None:
-        """Dispatch each target id by what owns it: a producer sweeps/refreshes, a file source
-        reads, a toast node raises an OS notification, and an action node clears/clones/moves a
-        dataset (sounds are skipped here — the web UI plays them client-side)."""
+    def _fire_targets(self, trigger, target_ids, items) -> None:
+        """Dispatch each resolved target id by what owns it: a producer sweeps/refreshes, a file
+        source reads, a toast node raises an OS notification, and an action node clears/clones/moves
+        a dataset (sounds are skipped here — the web UI plays them client-side). ``target_ids`` is
+        the flat, router-resolved list (see :meth:`_resolve_fire`), NOT ``trigger.targets``."""
         by_producer = {p.id: p for p in self._profile.producers}
         by_source = {s.id: s for s in self._profile.file_sources}
         by_toast = {x.id: x for x in getattr(self._profile, "toasts", [])}
         by_action = {x.id: x for x in getattr(self._profile, "actions", [])}
-        for tid in trigger.targets:
+        for tid in target_ids:
             if tid in by_producer:
                 # items == [] means an on_change fire with nothing to price (a clear / removal):
                 # skip the sweep (items=None would price the WHOLE dataset — wrong). interval /

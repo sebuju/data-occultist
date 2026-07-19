@@ -21,24 +21,28 @@ _history: dict[tuple[str, str, str], deque] = {}
 
 
 def record(game: str, window_id: str, readout_id: str, *, ts: str, raw, value,
-           dropped: bool, trace: list, conf: float, ok: bool = True, held: bool = False) -> None:
+           dropped: bool, trace: list, conf: float) -> None:
     """Append one readout read to its ring (newest first). ``ts`` is an ISO timestamp (the caller
     stamps it). ``trace`` is the per-rule step list from :func:`oc.collect.fields.run_rules`
     (``{i, when, then, in, out, fired, ignored?}`` each), ``value`` the final resolved value,
     ``dropped`` whether a rule rejected the read, ``raw`` the pre-rules OCR text (``None`` for
-    pip/symbol readouts that carry no OCR text).
-
-    ``ok`` is the expected-QUALITY flag the consensus gate ([[readout_stability]]) counts —
-    stored so the sliding window can be read straight back off the ring, and independent of the
-    gate's own outcome. ``held`` is True when the consensus gate SUPPRESSED this tick's read
-    (the readout went quiet because the recent stream was too noisy)."""
+    pip/symbol readouts that carry no OCR text)."""
     key = (game, window_id, readout_id)
     dq = _history.get(key)
     if dq is None:
         dq = _history[key] = deque(maxlen=_CAP)
     dq.appendleft({"ts": ts, "raw": raw, "value": value, "dropped": dropped,
-                   "trace": list(trace or []), "conf": round(conf, 3),
-                   "ok": ok, "held": held})
+                   "trace": list(trace or []), "conf": round(conf, 3)})
+
+
+def record_reads(game: str, window_id: str, ro_trace: list, ts: str) -> None:
+    """Record every evaluated readout read this tick to its history ring. ``ro_trace`` is
+    ``RegionReader.read_readouts_detailed``'s ``trace_sink`` — one ``{id, value, raw, dropped,
+    conf, trace}`` per enabled readout. Shared by the collector loop and the teach-UI test feed
+    (rule 7 — one recorder, not two)."""
+    for rec in ro_trace:
+        record(game, window_id, rec["id"], ts=ts, raw=rec["raw"], value=rec["value"],
+               dropped=rec["dropped"], trace=rec["trace"], conf=rec["conf"])
 
 
 def recent(game: str, window_id: str, readout_id: str) -> list[dict]:

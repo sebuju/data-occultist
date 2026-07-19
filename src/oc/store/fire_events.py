@@ -21,9 +21,11 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 
-# subscriber signature: cb(game, trigger_id)
-#   game: profile name; trigger_id: the trigger that fired (client maps it to its sound nodes)
-_Sub = Callable[[str, str], None]
+# subscriber signature: cb(game, trigger_id, sounds)
+#   game: profile name; trigger_id: the trigger that fired; sounds: the sound-node ids the client
+#   should play (a router may have SELECTED them by a live value). Empty -> the client falls back to
+#   the trigger's own sound targets (back-compat with the pre-router cue).
+_Sub = Callable[[str, str, list], None]
 
 _lock = threading.Lock()
 _subs: list[_Sub] = []
@@ -41,15 +43,17 @@ def subscribe(cb: _Sub) -> Callable[[], None]:
     return _off
 
 
-def publish_fire(game: str, trigger_id: str) -> None:
-    """Announce that ``trigger_id`` just fired for ``game`` — a live cue for the browser to play
-    its sound nodes now. A publish with no game/id is dropped."""
+def publish_fire(game: str, trigger_id: str, sounds: list | None = None) -> None:
+    """Announce that ``trigger_id`` just fired for ``game`` — a live cue for the browser to play its
+    sound nodes now. ``sounds`` names the sound ids to play (router-selected or the trigger's direct
+    sounds); empty/None -> the client plays the trigger's own sound targets. No game/id -> dropped."""
     if not game or not trigger_id:
         return
+    payload = list(sounds or [])
     with _lock:
         subs = list(_subs)
     for cb in subs:
         try:
-            cb(game, trigger_id)
+            cb(game, trigger_id, payload)
         except Exception:  # noqa: BLE001 - one bad subscriber must never break a fire
             pass

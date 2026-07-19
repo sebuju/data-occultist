@@ -26,8 +26,7 @@ from ..profile.models import GameProfile, WindowDef
 from ..ocr.serialize import ocr_job
 from ..store import DatasetStore, KeyMap, store_for
 from ..store.flow_events import publish_flow
-from . import detsig, settle
-from .readout_stability import gate_readouts
+from . import detsig, readout_history, settle
 from .items import item_templates
 from .atlas_match import build_atlas
 from .commit import commit_records
@@ -476,7 +475,6 @@ class Collector:
             readout_reads: list[dict] = []
             if window.readouts:
                 vfields = {f.id: f for f in self._profile.fields_for(window)}
-                ro_field = {v.id: vfields.get(v.field) for v in window.readouts if v.enabled}
                 ro_trace: list[dict] = []
                 _tro = time.perf_counter()
                 detailed = self._reader.read_readouts_detailed(frame, window, vfields, trace_sink=ro_trace)
@@ -488,25 +486,17 @@ class Collector:
                 # log renders readouts with the identical raw->value display as record fields.
                 readout_reads = [_readout_debug_read(rid, value, conf, raw, sub)
                                  for rid, (value, conf, raw, sub) in detailed.items()]
-                # Temporal consensus gate ([[readout_stability]]): score each read for expected
-                # QUALITY and, for a readout with the gate enabled, suppress this tick when too few
-                # of its recent reads were that-quality -- the misfire filter for the noisy action
-                # screen. A suppressed readout is dropped from BOTH the gated map (no trigger fire)
-                # and the full map (register/.ro-live HOLD their last value rather than ingest the
-                # garbage). Records EVERY evaluated read (passed or dropped) to the history ring.
-                # Shared with the teach-UI test feed (preview.py) via gate_readouts.
+                # Record EVERY evaluated read to the history ring (readout-history satellite).
                 ts = datetime.now().isoformat(timespec="milliseconds")
-                suppressed = gate_readouts(self._profile.name, window_id, ro_field, ro_trace,
-                                           readouts_now, readout_confs_now, ts)
+                readout_history.record_reads(self._profile.name, window_id, ro_trace, ts)
                 self._readouts.update(readouts_now)
                 # Full map: every ENABLED readout, empty/low-confidence defaulted to "" instead of
                 # omitted -- so a blank slot pushes an empty value (register/.ro-live) rather than
                 # nothing, and a slot that goes empty overwrites its stale prior value with "".
-                # A consensus-SUPPRESSED readout is excluded entirely so its last held value stands.
                 readouts_all_now = {v.id: readouts_now.get(v.id, "") for v in window.readouts
-                                    if v.enabled and v.id not in suppressed}
+                                    if v.enabled}
                 readout_confs_all_now = {v.id: readout_confs_now.get(v.id) for v in window.readouts
-                                         if v.enabled and v.id not in suppressed}
+                                         if v.enabled}
                 # Timed here (not with cp/st/cl below) so fast-poll and moving ticks — which
                 # return before the save-worthy gates — still record the readout cost.
                 stats_store.record_timing(self._profile.name, f"win:{window_id}", "ro",

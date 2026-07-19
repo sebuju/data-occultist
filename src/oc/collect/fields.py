@@ -121,7 +121,7 @@ _WHEN_TYPES = {
     "equal": "any", "not_equal": "any", "contains": "t",
 }
 _THEN_TYPES = {
-    "set": "any", "drop": "any", "lowercase": "t", "uppercase": "t", "fold": "t",
+    "set": "any", "drop": "any", "blank": "any", "lowercase": "t", "uppercase": "t", "fold": "t",
     "round": "n", "floor": "n", "ceil": "n", "decimal": "n", "extract": "tn", "dictionary": "t",
 }
 
@@ -178,6 +178,9 @@ def _matches(when: RuleWhen, value: str, arg: str) -> bool:
         return eq if when is RuleWhen.equal else not eq
     if when is RuleWhen.contains:
         return bool(arg) and arg.lower() in value.lower()
+    if when is RuleWhen.in_list:
+        opts = [a.strip().lower() for a in arg.split(",") if a.strip()]
+        return value.strip().lower() in opts
     return False
 
 
@@ -245,10 +248,13 @@ def run_rule_pipeline(rules: list, ftype: str, raw: str, *, dict_hook=None,
             continue
         fired = _matches(rule.when, value, rule.arg)
         dropped = False
+        blanked = False
         if fired:
             then = rule.then
             if then is RuleThen.drop:
                 dropped = True
+            elif then is RuleThen.blank:
+                blanked = True    # emit None and forward it (a gap), NOT a dropped record
             elif then is RuleThen.set:
                 result.substituted = rule.when.value   # authored value, not a genuine read
                 value = rule.value
@@ -277,9 +283,12 @@ def run_rule_pipeline(rules: list, ftype: str, raw: str, *, dict_hook=None,
                         result.verified = out.verified
         if steps is not None:
             steps.append({"i": i, "when": rule.when.value, "then": rule.then.value,
-                          "in": vin, "out": (None if dropped else value), "fired": fired})
+                          "in": vin, "out": (None if dropped or blanked else value), "fired": fired})
         if dropped:
             result.value, result.dropped, result.trace = None, True, steps
+            return result
+        if blanked:
+            result.value, result.dropped, result.trace = None, False, steps   # null forwarded, not dropped
             return result
 
     result.value = _finalize(ftype, value)
