@@ -12,9 +12,8 @@
 // out-port to a producer / file source / toast / sound / action, or picked from the "fires" row.
 // The dataset ACTION (clear/clone/move) is now its own node (action_node.js), fired via `targets`.
 // Rendering only — wiring is in main.js.
-import { h, frag, labCell, srcRow, trashBtn } from "../dom.js";
+import { h, frag, labCell, srcRow } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
-import { slideToggle } from "./node_parts.js";
 
 const KINDS = [["interval", "interval"], ["true_interval", "true interval"], ["on_change", "on change"],
     ["on_any_change", "on any change"], ["on_new_batch", "on new batch"],
@@ -22,15 +21,9 @@ const KINDS = [["interval", "interval"], ["true_interval", "true interval"], ["o
     ["on_live_start", "on live start"], ["on_live_stop", "on live stop"],
     ["on_readout", "on readout"], ["on_register", "on register"], ["on_ready", "on ready"], ["manual", "manual only"]];
 
-// comparison operators for an on_readout trigger, with human labels for the dropdown.
-const VAR_OPS = [["gte", "at least"], ["lte", "at most"], ["gt", "above"],
-    ["lt", "below"], ["eq", "equals"], ["ne", "not equal"],
-    ["crosses_up", "crosses up through"], ["crosses_down", "crosses down through"]];
-
-// on_register per-key condition operators: "changed" (fires when the key's value moves, no
-// threshold) plus the same comparisons an on_readout uses, and "between" (two bounds). The value
-// input hides for "changed"; "between" shows a second bound input.
-const REG_WHENS = [["changed", "changed"], ...VAR_OPS, ["between", "between"]];
+// The fire condition (was inline op/value / per-key rows) now lives on wired GATE node(s): a
+// trigger lists gates it must all satisfy. The on_readout/on_register kinds keep only the WATCH
+// picker (which value(s) to wake on); the gate does the comparison. See gate_node.js / GateDef.
 
 export function triggerParts(t, model) {
     const kind = KINDS.some(([v]) => v === t.kind) ? t.kind : "interval";
@@ -43,7 +36,8 @@ export function triggerParts(t, model) {
                     ...(model.profile.file_sources || []).map((s) => s.id),
                     ...(model.profile.toasts || []).map((x) => x.id),
                     ...(model.profile.sounds || []).map((x) => x.id),
-                    ...(model.profile.actions || []).map((x) => x.id)];
+                    ...(model.profile.actions || []).map((x) => x.id),
+                    ...(model.profile.routers || []).map((x) => x.id)];
     const targets = srcRow("fires", "producers (sweep), file sources (read), toasts (notify), sounds (play), or actions (dataset op) this trigger fires",
         sourcesInput({
             chips: (t.targets || []).map((p) => ({ value: p, node: model.refNode(p) })),
@@ -80,43 +74,35 @@ export function triggerParts(t, model) {
                 addinCls: "sv-addin tg-addwatch", rmCls: "sv-rmin tg-rmwatch" }));
     }
 
-    // on_readout: watch one or more live readouts and fire when the condition is met. Chips
-    // show each watched readout's id (its identity); the op + threshold set the test.
+    // on_readout: watch one or more live readouts. The fire test itself lives on the wired gate(s).
     let varwatch = null;
     if (kind === "on_readout") {
         const have = new Set(t.readout_watch || []);
-        varwatch = frag(
-            srcRow("watch", "live readouts; the trigger fires when the condition holds",
-                sourcesInput({
-                    chips: (t.readout_watch || []).map((vid) => ({ value: vid, node: model.refNode(vid) })),
-                    free: model.readouts().filter((v) => !have.has(v.id)).map((v) => v.id),
-                    addLabel: "+ watch readout", addinCls: "sv-addin tg-addvarwatch", rmCls: "sv-rmin tg-rmvarwatch" })),
-            labCell("when", "how the readout's value is compared to the threshold"),
-            h("select", { class: "tg-varop" }, VAR_OPS.map(([v, l]) => h("option", { value: v, selected: v === (t.readout_op || "gte") }, v === (t.readout_op || "gte") ? `<${l}>` : l))),
-            labCell("value", "the threshold the readout is compared against"),
-            h("input", { class: "tg-varval", type: "number", step: "any", value: t.readout_value ?? 0 }));
+        varwatch = srcRow("watch", "live readouts to wake on; the fire test is set on the wired gate(s)",
+            sourcesInput({
+                chips: (t.readout_watch || []).map((vid) => ({ value: vid, node: model.refNode(vid) })),
+                free: model.readouts().filter((v) => !have.has(v.id)).map((v) => v.id),
+                addLabel: "+ watch readout", addinCls: "sv-addin tg-addvarwatch", rmCls: "sv-rmin tg-rmvarwatch" }));
     }
 
-    // on_register: watch register(s); under each, per-key conditions [key][when][value] that trip
-    // the trigger. A single and/or slider says whether a trigger's conditions must ALL hold or ANY.
+    // on_register: watch register(s). The per-key fire test lives on the wired gate(s).
     let regwatch = null;
     if (kind === "on_register") {
         const have = new Set(t.register_watch || []);
-        const nConds = Object.values(t.register_conds || {}).reduce((a, l) => a + (l?.length || 0), 0);
-        const andOn = (t.register_logic || "or") === "and";
-        regwatch = frag(
-            srcRow("watch", "registers to watch; add key conditions under each",
-                sourcesInput({
-                    chips: (t.register_watch || []).map((rid) => ({ value: rid, node: model.refNode(`register:${rid}`) })),
-                    free: model.registers().filter((r) => !have.has(r)),
-                    addLabel: "+ watch register", addinCls: "sv-addin tg-addregwatch", rmCls: "sv-rmin tg-rmregwatch" })),
-            // and/or slider — only meaningful once >1 condition exists (below one there's nothing to combine).
-            nConds > 1 ? labCell("match", "and = every condition must hold; or = any one") : null,
-            nConds > 1 ? h("label", { class: "gn-slide-wrap tg-match" },
-                slideToggle({ on: andOn, cls: "tg-reglogic", title: "and = all conditions hold; or = any" }),
-                h("span", { class: "gn-slide-lbl" }, andOn ? "and" : "or")) : null,
-            ...(t.register_watch || []).map((rid) => regCondBlock(t, rid, model)));
+        regwatch = srcRow("watch", "registers to wake on; the fire test is set on the wired gate(s)",
+            sourcesInput({
+                chips: (t.register_watch || []).map((rid) => ({ value: rid, node: model.refNode(`register:${rid}`) })),
+                free: model.registers().filter((r) => !have.has(r)),
+                addLabel: "+ watch register", addinCls: "sv-addin tg-addregwatch", rmCls: "sv-rmin tg-rmregwatch" }));
     }
+
+    // gates: value guards that must ALL hold for this trigger to fire (any kind). Each tests one
+    // live value (readout / register slot) — the comparison lives on the gate node.
+    const gates = srcRow("gates", "value conditions that must all hold for this trigger to fire",
+        sourcesInput({
+            chips: (t.gates || []).map((g) => ({ value: g, node: model.refNode(g) })),
+            free: model.gates().filter((g) => !(t.gates || []).includes(g)),
+            addLabel: "+ gate", addinCls: "sv-addin tg-addgate", rmCls: "sv-rmin tg-rmgate" }));
 
     // throttle: minimum ms between actual fires (blank = none) — a global rate limit across all kinds.
     const throttle = frag(
@@ -148,7 +134,7 @@ export function triggerParts(t, model) {
                 targets,
                 labCell("kind", "how the trigger decides to fire"),
                 h("select", { class: "tg-kind" }, KINDS.map(kopt)),
-                interval, watch, varwatch, regwatch, throttle, settle,
+                interval, watch, varwatch, regwatch, gates, throttle, settle,
                 labCell("progress", "what the trigger is doing (live countdown for timed kinds)"),
                 h("span", { class: "tg-prog muted" }, "idle"))),
         foot: h("button", { class: "tg-fire" }, "↻ fire"),
@@ -160,39 +146,4 @@ export function triggerParts(t, model) {
             kind === "on_readout" && h("span", { class: "port pwatch", title: "drag to a readout node to watch its value" }),
             kind === "on_register" && h("span", { class: "port pwatch", title: "drag to a register to watch its keys" })),
     };
-}
-
-// One watched register's condition block: a labelled row whose content is a stack of condition
-// rows plus a "+ key" add-select of the register's not-yet-conditioned keys. `data-reg` scopes the
-// wiring (io_wire) to this register.
-function regCondBlock(t, rid, model) {
-    const keys = model.registerKeys(rid);
-    const conds = t.register_conds?.[rid] || [];
-    const used = new Set(conds.map((c) => c.key));
-    const free = keys.filter((k) => !used.has(k));
-    const rows = conds.map((c, i) => regCondRow(rid, i, c, keys));
-    const add = h("select", { class: "tg-addcond", dataset: { reg: rid }, title: "add a key condition" },
-        h("option", { value: "" }, "+ key"), ...free.map((k) => h("option", { value: k }, k)));
-    return srcRow(rid, `${rid}'s key conditions — each trips when its test holds`,
-        h("div", { class: "tg-regconds", dataset: { reg: rid } }, ...rows, free.length ? add : null));
-}
-
-// One condition row: [key select] [when select] [value input] [remove]. The value input is dropped
-// for "changed" (no threshold). `data-reg`/`data-idx` let io_wire target this exact condition.
-function regCondRow(rid, i, c, keys) {
-    const kopt = (k) => h("option", { value: k, selected: k === c.key }, k === c.key ? `<${k}>` : k);
-    const wopt = ([v, l]) => h("option", { value: v, selected: v === c.when }, v === c.when ? `<${l}>` : l);
-    const between = c.when === "between";
-    return h("div", { class: "tg-condrow", dataset: { reg: rid, idx: String(i) } },
-        h("select", { class: "tg-condkey", title: "which register key this condition watches" }, keys.map(kopt)),
-        h("select", { class: "tg-condwhen", title: "how the key's value must behave to trip" }, REG_WHENS.map(wopt)),
-        // no value for "changed"; one for a comparison; two (lo..hi) for "between"
-        c.when !== "changed"
-            ? h("input", { class: "tg-condval", type: "number", step: "any", value: c.value ?? 0, title: between ? "lower bound" : "threshold" })
-            : null,
-        between ? h("span", { class: "tg-condspan muted" }, "..") : null,
-        between
-            ? h("input", { class: "tg-condval2", type: "number", step: "any", value: c.value2 ?? 0, title: "upper bound" })
-            : null,
-        trashBtn({ cls: "tg-condrm", title: "remove condition" }));
 }

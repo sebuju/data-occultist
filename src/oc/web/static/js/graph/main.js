@@ -23,7 +23,7 @@ import {
     queueNodeRefresh, wireSubset,
 } from "./subset_wire.js";
 import {
-    wireProducer, wireProducerPreview, wireTrigger, wireAction, wireRegister, wireProcess, wireSource,
+    wireProducer, wireProducerPreview, wireTrigger, wireGate, wireRouter, wireAction, wireRegister, wireProcess, wireSource,
     refreshSourcePreview,
 } from "./io_wire.js";
 import { persist, setScrubHook } from "./persist.js";
@@ -292,7 +292,7 @@ initGameLifecycle();   // table-store + persist funnel (incl. save-conflict moda
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
 // Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", prodhist: "vttable", hist: "vttable", rohist: "vttable", reghist: "vttable", prochist: "vttable", reg: "region", register: "register", process: "process", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
+const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", prodhist: "vttable", hist: "vttable", rohist: "vttable", reghist: "vttable", prochist: "vttable", reg: "region", register: "register", process: "process", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", gate: "gate", router: "router", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
 export function nodeTypeOf(id) { return id === "game" ? "game" : id === "atlas" ? "atlas" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
 // Strip a node id's KNOWN type-prefix -> the bare id the model keys on. Same master map as
 // nodeTypeOf (one source of truth), so a new node type that registers its prefix above is wired
@@ -643,8 +643,7 @@ function _refKey() {
         (P.toasts || []).map((x) => [x.id, x.sources]),
         (P.sounds || []).map((x) => x.id),
         (P.file_sources || []).map((s) => [s.id, s.dataset, (s.fields || []).map((f) => f.id)]),
-        (P.triggers || []).map((t) => [t.id, t.targets, t.watch, t.readout_watch, t.register_watch,
-            Object.keys(t.register_conds || {})]),
+        (P.triggers || []).map((t) => [t.id, t.targets, t.watch, t.readout_watch, t.register_watch, t.gates]),
         (P.dictionaries || []).map((d) => [d.id, (d.feeds || []).map((f) => f.dataset)]),
         (P.windows || []).map((w) => [w.id, w.dataset, (w.fields || []).map((f) => f.id),
             (w.readouts || []).map((v) => v.id)]),
@@ -1077,6 +1076,10 @@ function wireNode(div, n) {
         wireProducer(div, n);
     } else if (n.type === "trigger") {
         wireTrigger(div, n);
+    } else if (n.type === "gate") {
+        wireGate(div, n);
+    } else if (n.type === "router") {
+        wireRouter(div, n);
     } else if (n.type === "toast") {
         wireToast(div, n);
     } else if (n.type === "sound") {

@@ -221,41 +221,16 @@ function wireTrigger(div, n) {
     // so an in-place chip add/remove wouldn't show. drawEdges() drops/adds the trigger's edges
     // (watch source→trigger and trigger→price) so a chip change reflects on the canvas live.
     div.querySelector(".tg-addwatch")?.addEventListener("change", (e) => { if (model.addTriggerWatch(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
-    // on_readout: watched readouts (chips + edges) + the threshold condition
+    // on_readout: watched readouts (chips + edges). The fire test now lives on the wired gate(s).
     div.querySelector(".tg-addvarwatch")?.addEventListener("change", (e) => { if (model.addTriggerReadoutWatch(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".tg-rmvarwatch", (val) => { model.removeTriggerReadoutWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
-    div.querySelector(".tg-varop")?.addEventListener("change", (e) => { model.setTriggerReadoutOp(t.id, e.target.value); autosave(null); });
-    div.querySelector(".tg-varval")?.addEventListener("change", (e) => { model.setTriggerReadoutValue(t.id, e.target.value); autosave(null); });
-    // on_register: watched registers (chips + edges); adding/removing a register changes both the
-    // edge AND the body (its condition block appears/vanishes) -> rebuildNodeEdges.
+    // on_register: watched registers (chips + edges). The fire test now lives on the wired gate(s).
     div.querySelector(".tg-addregwatch")?.addEventListener("change", (e) => { if (model.addTriggerRegisterWatch(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".tg-rmregwatch", (val) => { model.removeTriggerRegisterWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
-    // and/or slider between a trigger's key conditions (rebuild so its "and"/"or" label re-renders).
-    div.querySelector(".tg-reglogic")?.addEventListener("change", (e) => { model.setTriggerRegisterLogic(t.id, e.target.checked ? "and" : "or"); rebuildNode(n.id); autosave(null); });
-    // per-register "+ key" adds a condition (defaults to fire-on-change; the row lets you set when/value).
-    div.querySelectorAll(".tg-addcond").forEach((sel) => {
-        sel.addEventListener("change", (e) => {
-            if (e.target.value && model.addTriggerRegisterCond(t.id, sel.dataset.reg, e.target.value)) { rebuildNode(n.id); autosave(null); }
-        });
-    });
-    // each condition row: key / when / value / armed-remove. key+when rebuild (free-key list + the
-    // value input show/hide with the op); value is a plain save; remove is a two-click arm (rule 2).
-    div.querySelectorAll(".tg-condrow").forEach((row) => {
-        const reg = row.dataset.reg, idx = +row.dataset.idx;
-        row.querySelector(".tg-condkey")?.addEventListener("change", (e) => { model.setTriggerRegisterCondKey(t.id, reg, idx, e.target.value); rebuildNode(n.id); autosave(null); });
-        row.querySelector(".tg-condwhen")?.addEventListener("change", (e) => { model.setTriggerRegisterCondWhen(t.id, reg, idx, e.target.value); rebuildNode(n.id); autosave(null); });
-        row.querySelector(".tg-condval")?.addEventListener("change", (e) => { model.setTriggerRegisterCondValue(t.id, reg, idx, e.target.value); autosave(null); });
-        row.querySelector(".tg-condval2")?.addEventListener("change", (e) => { model.setTriggerRegisterCondValue2(t.id, reg, idx, e.target.value); autosave(null); });
-        const rm = row.querySelector(".tg-condrm");
-        if (rm) {
-            const armed = makeArmed({
-                onArm: () => row.classList.add("armed"),
-                onTimeout: () => row.classList.remove("armed"),
-                onFire: () => { row.classList.remove("armed"); model.removeTriggerRegisterCond(t.id, reg, idx); rebuildNode(n.id); autosave(null); },
-            });
-            rm.addEventListener("click", (e) => { e.stopPropagation(); armed.trigger(); });
-        }
-    });
+    // gates: value guards this trigger must all satisfy (chips + edges). Adding/removing changes the
+    // edge to the gate node too -> rebuildNodeEdges.
+    div.querySelector(".tg-addgate")?.addEventListener("change", (e) => { if (model.addTriggerGate(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
+    wireArmedRemove(div, ".tg-rmgate", (val) => { model.removeTriggerGate(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
     div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".tg-rmwatch", (val) => { model.removeTriggerWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
     wireArmedRemove(div, ".tg-rmtarget", (val) => { model.removeTriggerTarget(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
@@ -274,6 +249,102 @@ function wireTrigger(div, n) {
     // satellite is toggled on — the parent trigger rebuilds and populates its follower, exactly like
     // a dataset/subset fills its vt-table satellite). No-op when the satellite is hidden.
     renderTriggerHistory(t.id);
+}
+
+// ---- gate node: a boolean value-guard a trigger must satisfy before firing --
+
+function wireGate(div, n) {
+    const g = n.ref;
+    const $ = (sel) => div.querySelector(sel);
+    $(".gate-rename")?.addEventListener("change", (e) => {
+        const oldId = g.id;
+        renameNode(e.target, oldId,
+            () => model.renameGate(oldId, (e.target.value || "").trim()),
+            () => movePos(`gate:${oldId}`, `gate:${g.id}`),
+            () => { render(); autosave(null); });
+    });
+    // source: a single readout / register slot. Adding replaces; the chip trash clears it.
+    $(".gate-addsource")?.addEventListener("change", (e) => { model.setGateSource(g.id, e.target.value); rebuildNodeEdges(n.id); autosave(null); });
+    wireArmedRemove(div, ".gate-rmsource", () => { model.setGateSource(g.id, ""); rebuildNodeEdges(n.id); autosave(null); });
+    // destination: the trigger(s) this gate applies to — the trigger owns the ref, so a full render
+    // refreshes both this node and the trigger's own "gates" row.
+    $(".gate-adddest")?.addEventListener("change", (e) => { if (model.addTriggerGate(e.target.value, g.id)) { render(); autosave(null); } });
+    wireArmedRemove(div, ".gate-rmdest", (tid) => { model.removeTriggerGate(tid, g.id); render(); autosave(null); });
+    // and/or slider — rebuild so its label re-renders (and it shows/hides at the >1-condition threshold).
+    $(".gate-logic")?.addEventListener("change", (e) => { model.setGateLogic(g.id, e.target.checked ? "and" : "or"); rebuildNode(n.id); autosave(null); });
+    // negate — a plain toggle (no structural change), so just save.
+    $(".gate-negate")?.addEventListener("change", (e) => { model.setGateNegate(g.id, e.target.checked); autosave(null); });
+    // add-cond — rebuild so the new row (and the and/or slider crossing >1) appears.
+    $(".gate-addcond")?.addEventListener("click", () => { model.addGateCond(g.id); rebuildNode(n.id); autosave(null); });
+    // each cond row: when-select rebuilds (its arg input shows/hides with the op); arg-input just
+    // saves; remove is a two-click arm (rule 2), armed on the whole row.
+    div.querySelectorAll(".gate-condrow").forEach((row) => {
+        const idx = +row.dataset.idx;
+        row.querySelector(".gate-condwhen")?.addEventListener("change", (e) => { model.setGateCondWhen(g.id, idx, e.target.value); rebuildNode(n.id); autosave(null); });
+        row.querySelector(".gate-condarg")?.addEventListener("input", (e) => { model.setGateCondArg(g.id, idx, e.target.value); autosave(null); });
+        const rm = row.querySelector(".gate-condrm");
+        if (rm) armConfirm(rm, () => { model.removeGateCond(g.id, idx); rebuildNode(n.id); autosave(null); }, { silent: true, resetOnOutside: true });
+    });
+}
+
+// ---- router node: branch a live value to different targets (first match wins) --
+
+function wireRouter(div, n) {
+    const r = n.ref;
+    const $ = (sel) => div.querySelector(sel);
+    $(".router-rename")?.addEventListener("change", (e) => {
+        const oldId = r.id;
+        renameNode(e.target, oldId,
+            () => model.renameRouter(oldId, (e.target.value || "").trim()),
+            () => movePos(`router:${oldId}`, `router:${r.id}`),
+            () => { render(); autosave(null); });
+    });
+    $(".router-addsource")?.addEventListener("change", (e) => { model.setRouterSource(r.id, e.target.value); rebuildNodeEdges(n.id); autosave(null); });
+    wireArmedRemove(div, ".router-rmsource", () => { model.setRouterSource(r.id, ""); rebuildNodeEdges(n.id); autosave(null); });
+    // fired by: the trigger(s) that drive this router — the trigger owns the ref (targets), so a full
+    // render refreshes both this node and the trigger's own "fires" row.
+    $(".router-adddest")?.addEventListener("change", (e) => { if (model.addTriggerTarget(e.target.value, r.id)) { render(); autosave(null); } });
+    wireArmedRemove(div, ".router-rmdest", (tid) => { model.removeTriggerTarget(tid, r.id); render(); autosave(null); });
+    // add/remove a branch — rebuild (a branch block appears/vanishes) + edges (its targets' wires).
+    $(".router-addbranch")?.addEventListener("click", () => { model.addRouterBranch(r.id); rebuildNodeEdges(n.id); autosave(null); });
+    // every per-branch control resolves its branch index off the wrapping [data-bi].
+    div.querySelectorAll(".routerb-addcond").forEach((btn) => {
+        btn.addEventListener("click", () => { model.addRouterBranchCond(r.id, +btn.dataset.bi); rebuildNode(n.id); autosave(null); });
+    });
+    div.querySelectorAll(".routerb-logic").forEach((box) => {
+        box.addEventListener("change", (e) => { const bi = +e.target.closest("[data-bi]").dataset.bi; model.setRouterBranchLogic(r.id, bi, e.target.checked ? "and" : "or"); rebuildNode(n.id); autosave(null); });
+    });
+    div.querySelectorAll(".routerb-condrow").forEach((row) => {
+        const bi = +row.closest("[data-bi]").dataset.bi, ci = +row.dataset.idx;
+        row.querySelector(".routerb-condwhen")?.addEventListener("change", (e) => { model.setRouterBranchCondWhen(r.id, bi, ci, e.target.value); rebuildNode(n.id); autosave(null); });
+        row.querySelector(".routerb-condarg")?.addEventListener("input", (e) => { model.setRouterBranchCondArg(r.id, bi, ci, e.target.value); autosave(null); });
+        const rm = row.querySelector(".routerb-condrm");
+        if (rm) armConfirm(rm, () => { model.removeRouterBranchCond(r.id, bi, ci); rebuildNode(n.id); autosave(null); }, { silent: true, resetOnOutside: true });
+    });
+    // per-branch target add (the "+ target" select) — scoped by the wrapping .routerb-targets[data-bi].
+    div.querySelectorAll(".routerb-addtarget").forEach((sel) => {
+        sel.addEventListener("change", (e) => { const bi = +sel.closest("[data-bi]").dataset.bi; if (model.addRouterTarget(r.id, bi, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
+    });
+    // per-branch target chip removal (armed, rule 2) — resolve the branch off the wrapping [data-bi].
+    div.querySelectorAll(".routerb-rmtarget").forEach((b) => {
+        const bi = +b.closest("[data-bi]").dataset.bi, pill = b.closest(".sv-input");
+        const armed = makeArmed({
+            onArm: () => pill?.classList.add("armed"),
+            onTimeout: () => pill?.classList.remove("armed"),
+            onFire: () => { pill?.classList.remove("armed"); model.removeRouterTarget(r.id, bi, b.dataset.val); rebuildNodeEdges(n.id); autosave(null); },
+        });
+        b.addEventListener("click", (e) => { e.stopPropagation(); armed.trigger(); });
+    });
+    // remove-branch (armed) — arms the whole branch block.
+    div.querySelectorAll(".router-rmbranch").forEach((btn) => {
+        const bi = +btn.dataset.bi, wrap = btn.closest(".routerb");
+        const armed = makeArmed({
+            onArm: () => wrap?.classList.add("armed"),
+            onTimeout: () => wrap?.classList.remove("armed"),
+            onFire: () => { wrap?.classList.remove("armed"); model.removeRouterBranch(r.id, bi); rebuildNodeEdges(n.id); autosave(null); },
+        });
+        btn.addEventListener("click", (e) => { e.stopPropagation(); armed.trigger(); });
+    });
 }
 
 // ---- action node: clear / clone / move a dataset's data when fired ----------
@@ -674,6 +745,6 @@ function renderPreview(host, rows) {
 }
 
 export {
-    wireProducer, wireProducerPreview, wireTrigger, wireAction, wireRegister, wireProcess, wireSource,
+    wireProducer, wireProducerPreview, wireTrigger, wireGate, wireRouter, wireAction, wireRegister, wireProcess, wireSource,
     refreshSourcePreview,
 };

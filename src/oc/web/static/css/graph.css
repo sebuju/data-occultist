@@ -126,6 +126,8 @@
 .gnode.producer   { --nt: var(--nt-producer); }
 .gnode.dictionary { --nt: var(--nt-dictionary); }
 .gnode.trigger    { --nt: var(--nt-trigger); }
+.gnode.gate       { --nt: var(--nt-gate); }
+.gnode.router     { --nt: var(--nt-router); }
 .gnode.toast      { --nt: var(--nt-toast); }
 .gnode.sound      { --nt: var(--nt-sound); }
 .gnode.action     { --nt: var(--nt-action); }
@@ -764,10 +766,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    select overlaid on the PLUS glyph (the mb-add overlay technique) so it opens the candidate list. */
 .frule-btns .pr-inadd { position: relative; display: inline-flex; align-items: center; line-height: 1; font-size: var(--fs-xs); color: var(--nt, var(--accent)); cursor: pointer; }
 .frule-btns .pr-inadd .pr-addin { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-/* consensus (readout misfire gate): two narrow "N of M" boxes, not the full-width .gi input */
-.stab-consensus { display: flex; align-items: center; gap: 5px; }
-.stab-consensus input.stab-n { width: 3em; flex: 0 0 3em; min-width: 0; text-align: center; border-bottom: 1px solid var(--nt); border-radius: 0px; height: 16.8px; }
-.stab-consensus .stab-of { font-size: var(--fs-sm); opacity: .7; }
 /* shared labelled grid (triggers, price node, view config): every label cell sizes to its own
    text in col 1 and the control fills col 2 — short labels (kind/source/join on/limit) no longer
    eat half the row like a 1fr/1fr .flab does. Built from dom.js `labCell`; the cell AFTER each
@@ -818,6 +816,15 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .tg-condrow > .tg-condspan { flex: 0 0 auto; color: var(--muted); }
 .tg-condrow > .tg-condrm { flex: 0 0 auto; }
 .tg-condrow.armed { outline: 1px solid var(--warn); outline-offset: 1px; }
+/* gate / router condition rows: when-select + arg-input + remove on ONE line (mirrors tg-condrow).
+   The "+ add" for a new condition lives in the row's label (labAdd), not a full-width button. */
+.routerb { margin-left: 4px; }
+.gate-conds, .routerb-conds { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gate-condrow, .routerb-condrow { display: flex; align-items: center; gap: 4px; min-width: 0; border-radius: 3px; }
+.gate-condrow > select, .routerb-condrow > select { flex: 1 1 auto; min-width: 0; }
+.gate-condrow > input, .routerb-condrow > input { flex: 1 1 5em; min-width: 0; }
+.gate-condrow > .gate-condrm, .routerb-condrow > .routerb-condrm { flex: 0 0 auto; }
+.gate-condrow.armed, .routerb-condrow.armed { outline: 1px solid var(--warn); outline-offset: 1px; }
 /* the "+ key" add control is a normal select like the row's own selects (not the borderless
    sv-add glyph, which only styles right inside a pill list) — full width, never overflowing. */
 .tg-addcond { width: 100%; min-width: 0; box-sizing: border-box; }
@@ -830,9 +837,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    (or the read was low-confidence). Overrides the .muted grey while a value is present. */
 .ro-live.ro-accept { color: var(--ok); }
 .ro-live.ro-reject { color: var(--danger); }
-/* value read fine but the consensus gate is still blocking it: green with a yellow tint */
-.ro-live.ro-hold { color: color-mix(in srgb, var(--ok), var(--warn) 45%); }
-
 /* history satellite: a standard VTable records grid of recent fires. The .hist-host is a
    nodehost/scrollhost like every other vt-table satellite (so it fills + resizes the node); the
    VTable owns the rows. A throttled (suppressed) fire reads muted, its cells warn-tinted. */
@@ -1139,7 +1143,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    Fills the space between key and meta; the cell's overflow:hidden clips a very deep ring. */
 .mb-vstack { flex: 1; min-height: 0; overflow: hidden;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
-.mb-vstack.mb-start { align-items: flex-end; }
 .mb-v { max-width: 100%; line-height: 1.15; color: var(--nt); text-align: right;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mb-v-latest { font-size: var(--fs-sm); font-weight: 600; }   /* latest (ring tail) */
@@ -1148,10 +1151,10 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    tail reads as "this is what the register exposes", not just another dim history sample */
 .mb-v-old.mb-v-live { color: var(--nt); font-weight: 600; }
 /* aggregate fold summary: sits below the raw ring, set off with a hairline + accent tint */
-.mb-v-agg { font-size: 12px; color: var(--nt); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;}
+.mb-v-agg { font-size: 12px; color: var(--nt);  display: flex; align-items: center; justify-content: center;}
 /* last-written ring slot: a small arrow in the left gutter (stretch the line full-width so the
    value stays centred; the arrow sits absolute -> no reflow when it moves between slots) */
-.mb-v-cur { position: relative; align-self: stretch; }
+.mb-v-cur { position: relative; }
 .mb-v-cur::before { content: "\2192"; margin-right: 4px; 
     font-size: 9px; line-height: 1; color: var(--nt); pointer-events: none; }
 .mb-meta { display: flex; align-items: center; justify-content: space-between; gap: 4px;
@@ -1235,8 +1238,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 
 /* selected node: ringed + lit in its OWN type hue (blueprint reserves the accent glow for the
    selection, so the resting board stays flat). Falls back to white-ish when a card has no --nt. */
-.gnode.selected { border-color: var(--nt); box-shadow: 0 0 0 1px var(--nt), 0 10px 30px #000000; z-index: 20; }
-.gnode.multisel { border-color: var(--sel); box-shadow: 0 0 0 2px color-mix(in srgb, var(--sel) 60%, transparent); }
+.gnode.selected { border-color: var(--nt); box-shadow: 0 0 0 0px var(--nt), 0 10px 30px #000000; z-index: 20; }
+.gnode.multisel { border-color: var(--sel); box-shadow: 0 0 0 1px color-mix(in srgb, var(--sel) 60%, transparent); }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
 .seltoolbar { position: fixed; left: 50%; top: 46px; transform: translateX(-50%);

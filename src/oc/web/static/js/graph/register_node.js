@@ -132,8 +132,13 @@ function makeCell(id, key) {
 // tier class rather than rewriting className, so the transient "armed" (mid-remove) state survives
 // a poll tick.
 function applyCell(rec, r) {
-    const emptyStr = r.value === "";
-    const dead = r.value == null || emptyStr;
+    const vals = Array.isArray(r.values) ? r.values : [r.value];
+    const isBlank = (v) => v == null || v === "";
+    // DEAD = the slot holds NO data at all — NOT merely that the LATEST sample is a gap. A ring with
+    // earlier good values (or an aggregate) still renders its full stack; only the gap sample inside
+    // shows as ∅. Keying `dead` off the ring tail (r.value) wiped the whole stack the instant a null
+    // read landed — a null must never erase the retained ring.
+    const dead = !vals.some((v) => !isBlank(v)) && r.agg == null;
     const conf = r.conf == null ? null : +r.conf;
     const tier = dead ? "void" : conf == null ? "" : confTier(conf);   // "" = present but no conf -> neutral
     if (tier !== rec.tier) {
@@ -149,15 +154,14 @@ function applyCell(rec, r) {
     // marker, nothing reorders). SINGLE value (or dead): the latest sits big on top and the agg (if
     // any) trails below. Reconcile the line pool in place: a change-gate string skips untouched
     // slots, line nodes are added/removed only when the entry count changes.
-    const vals = Array.isArray(r.values) ? r.values : [r.value];
-    const rawNewest = dead ? ["∅"] : vals.slice().reverse().map(String);   // server stores oldest->newest
+    const rawNewest = dead ? ["∅"] : vals.slice().reverse().map((v) => (isBlank(v) ? "∅" : String(v)));   // server stores oldest->newest; gaps -> ∅
     const multi = !dead && !!r.multi;   // styling driven by the "recent values" SETTING (capacity > 1), not the live count
     const latest = (r.aggMode || "") === "";   // <latest> fold: the exposed value IS the ring tail (cursor slot)
     const aggTxt = (!dead && r.agg != null) ? fmtAgg(r.agg, r.aggMode, r.values) : null;   // just the value — the mode shows in the select
     const lines = [];
     if (multi) {
         if (aggTxt != null) lines.push({ t: aggTxt, c: "mb-v-agg" });   // agg first
-        const vlist = vals.map(String);   // oldest -> newest
+        const vlist = vals.map((v) => (isBlank(v) ? "∅" : String(v)));   // oldest -> newest; gaps -> ∅
         const L = vlist.length;
         const cap = Math.max(1, r.cap || L);
         const W = (r.writes == null) ? L : r.writes;   // preview fallback: no live cursor -> treat as in-order
@@ -179,7 +183,7 @@ function applyCell(rec, r) {
     }
     // top-justify the stack only when multi (else keep it centred) — gated so a static tick doesn't touch the DOM
     if (multi !== rec.multi) { rec.vstack.classList.toggle("mb-start", multi); rec.multi = multi; }
-    const vkey = lines.map((l) => `${l.c}:${l.t}`).join(" ");
+    const vkey = lines.map((l) => `${l.c}:${l.t}`).join("");
     if (vkey !== rec.vkey) {
         while (rec.vlines.length < lines.length) {
             const line = h("div", { class: "mb-v" });

@@ -7,7 +7,7 @@ import * as hub from "../../hub.js";
 import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
-import { $, model, nodeEls, readoutPreview } from "../state.js";
+import { $, model, nodeEls } from "../state.js";
 import { since, countdown } from "../../datefmt.js";
 import { liveAgo, liveUntil, stopAgo } from "../../ago.js";
 import { autosave } from "../main.js";
@@ -56,6 +56,10 @@ let actSpin = null;          // the reused first-load spinner, shown until the f
 // register id -> newest push ts last seen on the beat, so the membank repaints the instant a value
 // lands (live OR a teach-UI test feed), not only while liveCollecting. See updateTriggerNodes.
 const _lastRegPush = new Map();
+// trigger ids currently flagged 'gated off' (their .gnode carries `node-gated`) — tracked so each
+// beat only ADDS/REMOVES the class that actually changed (reconcile in place, rule 1). Live-only:
+// the snapshot's `gated` is empty when the collector is idle, which clears every cue.
+let _gatedNodes = new Set();
 
 function buildActivity() {
     if (act) return;
@@ -79,7 +83,7 @@ function buildActivity() {
     // a cue trail its trigger by seconds. This is the single funnel for every fire source
     // (interval / on_change / on_register / manual), all of which route through _emit_fire and so
     // publish_fire (rule 7). Subscribed once here, panel open or not.
-    dsevents.subscribeFire((ev) => playFire(ev.trigger));
+    dsevents.subscribeFire((ev) => playFire(ev));
     mountActivity(winAdapter);
 }
 
@@ -255,15 +259,17 @@ function activityJobs(data, elapsed = 0) {
     return jobs;
 }
 
-// Play a fired trigger's SOUND NODES, driven by the instant `fire` push (dsevents), keyed by the
-// trigger id in the cue. A sound is a node the trigger names in its `targets` (browser-played,
-// unlike a server-fired toast/producer), so a fire plays every sound target; a trigger with no
-// sound target no-ops. The push is un-backfilled (only live fires arrive), so no replay guard is
-// needed — unlike the old polled `last_fired` path, this fires the moment the trigger does.
-function playFire(tid) {
+// Play a fired trigger's SOUND NODES, driven by the instant `fire` push (dsevents). The cue carries
+// `sounds` — the sound ids the SERVER resolved for this fire (a router may have SELECTED them by a
+// live value, and direct sound targets land there too). We play exactly those; only if the cue
+// carries none do we fall back to the trigger's own sound targets (back-compat with old servers).
+// Sounds are browser-played (unlike a server-fired toast/producer). The push is un-backfilled (only
+// live fires arrive), so no replay guard is needed — it fires the moment the trigger does.
+function playFire(ev) {
+    const tid = ev?.trigger;
     if (!tid) return;
-    const tr = model.trigger(tid);
-    for (const pid of tr?.targets || []) {
+    const ids = (ev.sounds && ev.sounds.length) ? ev.sounds : (model.trigger(tid)?.targets || []);
+    for (const pid of ids) {
         const sn = model.soundNode(pid);
         if (sn) playCue(sn);
     }
@@ -274,6 +280,13 @@ function playFire(tid) {
 // ticks). Timed kinds show a live "idle (next in: …)"; an on_readout crosses shows the saved
 // value it compares against; every other kind shows plain idle / firing now.
 function updateTriggerNodes(data) {
+    // 'gated off' cue: flag every trigger node whose gates currently block it (live-only; the
+    // snapshot's `gated` is empty when idle -> clears all). Reconcile via the tracked set so a
+    // steady beat writes ZERO classes (rule 1): only a gate flipping adds/removes its node's class.
+    const gatedSet = new Set(data.gated || []);
+    for (const id of _gatedNodes) if (!gatedSet.has(id)) nodeEls.get(`trigger:${id}`)?.classList.remove("node-gated");
+    for (const id of gatedSet) if (!_gatedNodes.has(id)) nodeEls.get(`trigger:${id}`)?.classList.add("node-gated");
+    _gatedNodes = gatedSet;
     // (sound playback moved off this polled beat to the instant `fire` push — see playFire)
     // readout read-history satellites ride the same beat (readout_history, keyed "<win>:<ro>");
     // TOP-LEVEL (not under `live`) so a test feed updates them with the collector stopped too.
@@ -321,15 +334,7 @@ function updateTriggerNodes(data) {
             continue;
         }
         stopAgo(span);
-        let txt = running ? "firing now…" : "idle";
-        if (!running) {
-            const tr = model.trigger(t.id);
-            if (tr && tr.kind === "on_readout" && /^crosses/.test(tr.readout_op || "")) {
-                const w = (tr.readout_watch || [])[0];
-                const v = w != null ? readoutPreview.vals[w] : undefined;
-                if (v != null) txt = `idle (prev: ${v})`;   // the saved value the cross compares against
-            }
-        }
+        const txt = running ? "firing now…" : "idle";
         if (span.textContent !== txt) span.textContent = txt;
     }
     // Register membank refetch (no-op / no host when the node isn't shown; renderBank reconciles in

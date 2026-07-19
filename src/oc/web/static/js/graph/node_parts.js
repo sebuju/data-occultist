@@ -24,6 +24,8 @@ import { sourceParts } from "./source_node.js";
 import { toastParts } from "./toast_node.js";
 import { soundParts } from "./sound_node.js";
 import { triggerParts } from "./trigger_node.js";
+import { gateParts } from "./gate_node.js";
+import { routerParts } from "./router_node.js";
 import { actionParts } from "./action_node.js";
 import { registerParts } from "./register_node.js";
 import { processParts } from "./process_node.js";
@@ -146,6 +148,7 @@ export const RULE_WHEN = [
 export const RULE_THEN = [
     ["set", "set value", "any"],
     ["drop", "drop", "any"],
+    ["blank", "blank", "any"],
     ["lowercase", "lowercase", "t"],
     ["uppercase", "uppercase", "t"],
     ["fold", "fold", "t"],
@@ -536,7 +539,7 @@ export function ruleRows(fd, cls, fid) {
                     opts(RULE_WHEN, when, 3)),
                 RULE_WHEN_ARG.has(when) && h("input", { class: "rule-arg", dataset: d, value: r.arg || "", placeholder: "value", title: "value the condition compares against" }),
                 h("span", { class: "rule-arrow muted" }, "→"),
-                h("select", { class: "rule-then rule-op", dataset: d, title: "action when it matches (drop stops here; others rewrite the value and continue)" },
+                h("select", { class: "rule-then rule-op", dataset: d, title: "action when it matches (drop/blank stop here — drop removes the record, blank forwards a null gap; others rewrite the value and continue)" },
                     opts(RULE_THEN, then, 2)),
                 ...ruleThenOperands(r, then, d),
                 trashBtn({ cls: "rule-del", dataset: d, title: "remove this rule" })));
@@ -555,9 +558,6 @@ export function ruleRows(fd, cls, fid) {
 export function fieldConfigBody(fd, cls, fid, afterConf = null, stability = false) {
     const da = fid ? { fid } : {};
     const isText = (fd.type || "text") === "text";
-    const stabNum = (k, val, title) => h("input", {
-        type: "number", min: "0", class: `gi stab-n ${cls}`, dataset: { k, ...da },
-        value: String(val ?? 0), title });
     return frag(
         cls !== "roset" && kv("type", h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, fd.type === v ? `<${t}>` : t)))),   // readouts have no editable type
         kv("isolate", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate }),
@@ -566,11 +566,6 @@ export function fieldConfigBody(fd, cls, fid, afterConf = null, stability = fals
             { title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the atlas node." }),
         kv("conf", confMeter({ cls, k: "minconf", value: fd.min_confidence ?? 0, fid }),
             { title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor). Drag the bar to set it." }),
-        stability && kv("consensus", h("span", { class: "stab-consensus" },
-            stabNum("stab_min", fd.stability_min, "N — minimum expected-quality reads required within the window"),
-            h("span", { class: "stab-of" }, "of"),
-            stabNum("stab_reads", fd.stability_reads, "M — window size, how many recent reads to consider (0 = filter off)")),
-            { title: "misfire filter (live only): surface this readout only when at least N of the last M reads were a good value — a real read, not OCR noise — else HOLD the last value. Kills the OCR garbage a busy action screen produces without lagging a legit fast-changing value. Second box 0 = off." }),
         // per-readout OCR crop cleanup — the SAME controls as the window's Text appearance,
         // sunk into this readout's own preprocess (overrides the window's for this box). Masking
         // white/whitish HUD digits + upscale saves a thin decimal a busy background would drop.
@@ -1074,6 +1069,8 @@ export function nodeParts(n) {
         head: frag(satToggleBtn(`vt:src:${n.ref.id}`, "vttable"),
             satToggleBtn(`vtd:src:${n.ref.id}`, "dismissed")) };
     if (n.type === "trigger") return { ...triggerParts(n.ref, model), head: satToggleBtn(`hist:${n.ref.id}`, "history") };
+    if (n.type === "gate") return gateParts(n.ref, model);
+    if (n.type === "router") return routerParts(n.ref, model);
     if (n.type === "toast") return toastParts(n.ref, model);
     if (n.type === "sound") return soundParts(n.ref, model);
     if (n.type === "action") return actionParts(n.ref, model);

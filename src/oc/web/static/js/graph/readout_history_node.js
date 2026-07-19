@@ -27,7 +27,8 @@ function ruleLabel(s) {
 // satellite paints its rule columns identically (rule 7 — one trace-cell renderer, not two).
 export function cellFor(s) {
     if (s.ignored) return "—";                          // rule invalid for the field type (skipped)
-    if (s.out === null || s.out === undefined) return "drop";   // a drop rule rejected the read here
+    if (s.out === null || s.out === undefined)          // both stop the pipeline with a null value:
+        return s.then === "blank" ? "blank" : "drop";   // blank FORWARDS the gap, drop rejects the read
     if (s.fired === false) return "·";                  // condition didn't match — value passes through
     return String(s.out);                               // the rule transformed the value
 }
@@ -58,30 +59,30 @@ export function renderReadoutHistory(win, vid, history) {
     if (history === undefined)
         history = hub.latest()?.readout_history?.[`${win}:${vid}`] || [];
     const ruleCols = ruleColumns(history);
-    const COLS = ["when", "raw", ...ruleCols.map((r) => r.col), "value", "confidence", "consensus"];
-    const rows = history.map((e) => {
-        // consensus = the misfire gate's verdict on this read: "held" = suppressed (value read but
-        // not surfaced, readout held its last value), "ok" = accepted, "noise" = expected-quality
-        // failed (fed the window but wasn't surfaced on its own). Gate-off reads show ok/noise by
-        // quality with no holds. Flagged so the author can watch the gate work + tune N-of-M.
+    const COLS = ["when", "gap", "raw", ...ruleCols.map((r) => r.col), "value", "confidence"];
+    const rows = history.map((e, i) => {
+        // gap = milliseconds since the PREVIOUS (older) read of this readout — the read cadence,
+        // so a stall or a fast burst is visible per row. History is newest-first, so the older
+        // read is the next index; the oldest row has no prior read (blank).
+        const older = history[i + 1];
+        const gapMs = older ? (Date.parse(e.ts) - Date.parse(older.ts)) : null;
         const val = e.value == null ? "∅" : String(e.value);
         const row = {
             when: fmtDateTimeMs(e.ts),
+            gap: gapMs == null ? "" : `${gapMs} ms`,
             raw: e.raw == null ? "" : String(e.raw),
             value: val,
             confidence: e.conf == null ? "" : `${Math.round(e.conf * 100)}%`,
-            consensus: e.held ? "held" : (e.ok ? "ok" : "noise"),
             _dropped: !!e.dropped,
-            _held: !!e.held,
         };
         const byI = new Map((e.trace || []).map((s) => [s.i, s]));
-        for (const { i, col } of ruleCols) {
-            const s = byI.get(i);
+        for (const { i: si, col } of ruleCols) {
+            const s = byI.get(si);
             row[col] = s ? cellFor(s) : "";   // blank = the pipeline stopped before this rule
         }
         return row;
     });
     satVT(`rohist:${win}:${vid}`, host).setData(COLS, rows, {
-        rowClass: (row) => (row._dropped || row._held ? "hist-throttled" : ""),
+        rowClass: (row) => (row._dropped ? "hist-throttled" : ""),
     });
 }

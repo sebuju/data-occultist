@@ -288,6 +288,11 @@ select.sv-addin:not(:hover) { opacity: 0.7; }
     color: var(--muted); font-size: 11px; margin: 0; }
 .gn-slide-lbl { white-space: nowrap; }
 .gnode.node-disabled { filter: grayscale(1); }
+/* 'gated off' — a trigger currently BLOCKED by its gates while live is running (see activity.js).
+   Deliberately NOT grayscale (that is reserved for node-disabled): the node keeps its colour, dims
+   a little, and gains a dashed warn ring so it reads as "temporarily silenced", not "turned off".
+   Uses outline (selection uses border-color + box-shadow, so the two never clash). */
+.gnode.node-gated { opacity: .55; outline: 2px dashed color-mix(in oklab, var(--warn) 70%, transparent); outline-offset: 2px; }
 
 /* item-template preview diagnostics */
 .tc-ok { color: var(--ok); }

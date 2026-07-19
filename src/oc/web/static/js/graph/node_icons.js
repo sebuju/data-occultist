@@ -115,6 +115,10 @@ const INNER = {
     // trigger has two looks, chosen by kind: a bolt for "on change", a clock for "interval".
     trigger_change: () => [P("M13 3L5 13h6l-1 8 8-10h-6z", fill)],
     trigger_timer: () => [C("12", "13", "7"), P("M12 9.5V13l2.5 1.5"), P("M9 3h6M12 3v3")],
+    // gate: a funnel — the tested value narrows to a pass/block channel.
+    gate: () => [P("M5 5h14M5 5 10 12v6l4 2v-8L19 5")],
+    // router: a fan-out — one input branches to several targets.
+    router: () => [C("6", "12", "2.4"), C("18", "6", "2.4"), C("18", "18", "2.4"), P("M8 11 16 7M8 13 16 17")],
     // toast: a bell with a clapper — an OS desktop notification raised on fire.
     toast: () => [
         P("M18 15.5v-4.5a6 6 0 1 0-12 0v4.5l-1.6 2v.5h15.2v-.5z"),

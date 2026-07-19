@@ -50,12 +50,15 @@ function outPortSpec(n) {
         };
         case "readout": return {
             // a readout feeds a TOAST its live value as a {{readout:id}} token, a REGISTER that holds
-            // its latest value in an in-memory keyed map, or a PROCESS that runs it through a rules pipeline
-            target: ["toast", "register", "process"],
+            // its latest value in an in-memory keyed map, a PROCESS that runs it through a rules
+            // pipeline, or a GATE / ROUTER that tests its value as their tested source
+            target: ["toast", "register", "process", "gate", "router"],
             onDrop: (id, ttype) => {
                 const ref = `readout:${n.ref.id}`;
                 if (ttype === "register") model.addRegisterSource(id, ref);
                 else if (ttype === "process") model.addProcessSource(id, ref);
+                else if (ttype === "gate") model.setGateSource(id, ref);
+                else if (ttype === "router") model.setRouterSource(id, ref);
                 else model.addToastSource(id, ref);
             },
             onEmpty: (pt) => { const id = model.addRegister(); model.addRegisterSource(id, `readout:${n.ref.id}`); placeAt(`register:${id}`, pt); return `register:${id}`; },
@@ -65,8 +68,14 @@ function outPortSpec(n) {
             // state becomes joinable like any other dataset (same wiring shape as window/producer ->
             // dataset). A register SLOT can feed a process, but that's a per-key pick made from the
             // process's "+ input" picker (a whole-register drag has no single key), so no process target here.
-            target: "dataset",
-            onDrop: (ds) => model.setRegisterPersist(n.ref.id, ds),
+            // Dropping on a GATE / ROUTER wires the register (bare, no #key) as their tested source —
+            // the body picker sets a specific #key; a bare `register:<id>` source is acceptable.
+            target: ["dataset", "gate", "router"],
+            onDrop: (id, ttype) => {
+                if (ttype === "gate") model.setGateSource(id, `register:${n.ref.id}`);
+                else if (ttype === "router") model.setRouterSource(id, `register:${n.ref.id}`);
+                else model.setRegisterPersist(n.ref.id, id);
+            },
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setRegisterPersist(n.ref.id, ds); return `ds:${ds}`; },
         };
         case "process": return {
@@ -83,9 +92,21 @@ function outPortSpec(n) {
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setSourceDataset(n.ref.id, ds); return `ds:${ds}`; },
         };
         case "trigger": return {
-            // a trigger fires a PRODUCER (sweep), FILE SOURCE (read), TOAST (notify), SOUND (play), or ACTION (dataset op)
-            target: ["producer", "filesource", "toast", "sound", "action"],
+            // a trigger fires a PRODUCER (sweep), FILE SOURCE (read), TOAST (notify), SOUND (play),
+            // ACTION (dataset op), or ROUTER (branch) — and a GATE it must satisfy before firing
+            target: ["producer", "filesource", "toast", "sound", "action", "router"],
             onDrop: (pid) => model.addTriggerTarget(n.ref.id, pid),
+        };
+        case "gate": return {
+            // a gate gates the TRIGGER(s) wired to it — it permits/blocks, never fires anything itself
+            target: ["trigger"],
+            onDrop: (tid) => model.addTriggerGate(tid, n.ref.id),
+        };
+        case "router": return {
+            // a router fires its matching branch's targets. A body drop adds to the LAST branch (a
+            // reasonable default; the body editor manages branches precisely).
+            target: ["producer", "filesource", "toast", "sound", "action"],
+            onDrop: (pid) => model.addRouterTarget(n.ref.id, Math.max(0, (n.ref.branches || []).length - 1), pid),
         };
         case "action": return {
             // an action node operates on the DATASET(s) and REGISTER(s) it's wired to

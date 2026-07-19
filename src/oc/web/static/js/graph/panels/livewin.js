@@ -56,6 +56,7 @@ let liveColStatus = null;   // latest server collector status (from the heartbea
 let liveStatsLast = null;
 let liveColUnsub = null;    // hub subscription active while the server collector runs
 let liveSawServer = false;  // we've observed the server collector actually running this run (gates the external-stop reflect, so an optimistic pre-start beat can't kill a just-started toggle)
+let liveStopping = false;   // user-initiated stop in flight: suppress ADOPT of stale "running" beats until a beat confirms the server actually stopped (worker join is up to 5s)
 let liveImg = { count: 0, bytes: 0 };   // saved live-image stat (live tuning saves one frame/round)
 // OCR log (expandable, below the stats): shows what OCR read, how it was corrected, and what
 // was pushed to which dataset. Polled from /api/live/{game}/debug ONLY while expanded AND live is
@@ -92,7 +93,8 @@ function buildLiveWindow() {
     // Distinct from liveColUnsub (which mirrors status only while WE run) — this watches the on/off edge.
     hub.subscribe((s) => {
         const running = !!(s && s.live);
-        if (running && !liveOn) adoptServerCollect(s);
+        if (!running) liveStopping = false;   // server confirmed stopped -> future external starts may adopt again
+        if (running && !liveOn && !liveStopping) adoptServerCollect(s);
         else if (!running && liveOn && liveSave && liveSawServer) reflectExternalStop();
         if (active) renderLiveWindow();    // reflect the pacing readout (reconciles in place, rule 1)
     });
@@ -402,29 +404,17 @@ function renderLiveWindow() {
     fitLivePanelHeight();
 }
 
-// The FieldDef a readout borrows its read config from (carries the consensus knobs
-// stability_reads/min), looked up by window + readout id off the profile model.
-function readoutField(winId, roId) {
-    const w = model.profile.windows?.find((x) => x.id === winId);
-    const v = w?.readouts?.find((r) => r.id === roId);
-    return (w && v) ? model.readoutField(w, v) : null;
-}
-
 // Fill each readout node's `.ro-live` span with `value CONF% STATUS`. Source is single: the live
 // collector's FULL values+confidence while it's running, else what the current image last read
 // via /api/preview (readoutPreview.all) so the value shows even with live mode OFF. Confidence is
-// shown as a whole percent. STATUS is a ✓ when the read is okay (high confidence); when a readout's
-// CONSENSUS gate is in use (stability_reads > 0) it instead shows the live agreement — "⏸ held"
-// while the gate is suppressing (the value shown is the last held one) or "✓ good/window" while it
-// passes, so you can watch the gate work and tune N-of-M. Mirrors the register: an evaluated-but-
-// empty/low-confidence readout shows blank (not "—"). "—" only when never evaluated. Reconciled in
-// place (touch textContent/class only on change) so a steady value mutates the DOM zero times per
-// heartbeat (CLAUDE.md rule 1).
+// shown as a whole percent. STATUS is a ✓ when the read is okay (high confidence). Mirrors the
+// register: an evaluated-but-empty/low-confidence readout shows blank (not "—"). "—" only when
+// never evaluated. Reconciled in place (touch textContent/class only on change) so a steady value
+// mutates the DOM zero times per heartbeat (CLAUDE.md rule 1).
 function renderReadoutValues() {
     const running = !!(liveColStatus && liveColStatus.running);
     const lv = running ? (liveColStatus.readouts_all || {}) : {};
     const lc = running ? (liveColStatus.readout_confs_all || {}) : {};
-    const rh = running ? (liveColStatus.readout_history || {}) : {};
     const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
     for (const el of document.querySelectorAll(".ro-live")) {
         const id = el.dataset.ro, win = el.dataset.win;
@@ -432,24 +422,13 @@ function renderReadoutValues() {
         if (has(lv, id)) { val = lv[id]; conf = lc[id]; }
         else if (has(readoutPreview.all, id)) { val = readoutPreview.all[id]; conf = readoutPreview.allConfs[id]; }
         else found = false;
-        let txt, tint = null;   // "ok"=green, "reject"=red, "hold"=yellow-green (value fine, gate blocking)
+        let txt, tint = null;   // "ok"=green, "reject"=red
         if (!found) txt = "—";
         else if (val === "") txt = "(none)";   // read happened but produced nothing -> dim (none)
         else {
             const pct = conf == null ? "" : ` ${Math.round(+conf * 100)}%`;
-            // consensus status when the gate is in use; else a plain ✓ for a high-confidence read.
-            const fd = readoutField(win, id);
-            const m = fd?.stability_reads || 0;
-            const hist = m > 0 ? (rh[`${win}:${id}`] || null) : null;
             let status = "";
-            if (hist && hist.length) {
-                const good = hist.slice(0, m).reduce((a, e) => a + (e.ok ? 1 : 0), 0);
-                const cur = hist[0], held = !!cur.held;
-                status = held ? " ⏸ held" : ` ✓ ${good}/${m}`;
-                // held + this read was itself fine = value ok but consensus still blocking (yellow-
-                // green); held + a bad read = reject (red); not held = accepted (green).
-                tint = held ? (cur.ok ? "hold" : "reject") : "ok";
-            } else if (conf != null) {
+            if (conf != null) {
                 const tier = confTier(+conf);
                 if (tier === "ok") { status = " ✓"; tint = "ok"; }
                 else if (tier === "bad") tint = "reject";
@@ -461,7 +440,6 @@ function renderReadoutValues() {
         if (el.classList.contains("muted") !== dim) el.classList.toggle("muted", dim);
         el.classList.toggle("ro-accept", tint === "ok");      // green (var --ok)
         el.classList.toggle("ro-reject", tint === "reject");  // red   (var --danger)
-        el.classList.toggle("ro-hold", tint === "hold");      // yellow-green: value fine, gate blocking
     }
 }
 // A fresh /api/preview readout batch landed (non-live source) — repaint the readout values.
@@ -681,6 +659,7 @@ function stopServerCollect() {
     const done = game ? api.live.stop(game).catch((e) => log(`live stop failed: ${e.message || e}`) || null) : Promise.resolve();
     liveColStatus = null;
     liveSawServer = false;   // teardown -> the watcher must re-observe before reflecting another stop
+    liveStopping = true;     // don't let a stale in-flight "running" beat re-adopt during the worker join
     refreshLiveImgStat(true);   // final count after the run stops
     hub.kick();                       // optimistic beat
     done.then(() => hub.kick());      // authoritative beat once the worker is joined and live reads false

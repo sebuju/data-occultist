@@ -153,9 +153,9 @@ export const labCell = (label, title = "", top = false, cls = "") =>
 // A section label with a bare "+" add-button nested after the text (chrome-less, node-tinted).
 // Shared by subset filters/columns/sort and the producer explode/keep-rows/fields sections.
 // `addCls` is the caller's wiring hook; `lab-add-btn` carries the shared styling.
-export const labAdd = (text, title, addCls, addTitle, top = false) =>
+export const labAdd = (text, title, addCls, addTitle, top = false, dataset = null) =>
     h("span", { class: "lab lab-add" + (top ? " lab-top" : ""), title: title || null },
-        text, h("button", { class: addCls + " lab-add-btn", title: addTitle }, "+"));
+        text, h("button", { class: addCls + " lab-add-btn", title: addTitle, ...(dataset ? { dataset } : {}) }, "+"));
 
 // A k/v field row for the body grid: the wrapped label (col 1) + the control (col 2), emitted
 // as two DIRECT grid children (never a wrapping row element — that would break the shared

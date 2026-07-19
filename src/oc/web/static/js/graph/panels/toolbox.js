@@ -60,6 +60,20 @@ async function createTriggerNode(at = null, group = null) {
     if (group) groups.addToGroup(group, [`trigger:${id}`]);
     autosave(null); if (!at) panTo(`trigger:${id}`);   // new node changes nothing open windows OCR
 }
+async function createGateNode(at = null, group = null) {
+    const id = model.addGate();   // a value guard a trigger must satisfy before firing (wired after)
+    if (!id) return;
+    await placeNewNode(`gate:${id}`, "gate", null, at); render();
+    if (group) groups.addToGroup(group, [`gate:${id}`]);
+    autosave(null); if (!at) panTo(`gate:${id}`);   // new node changes nothing open windows OCR
+}
+async function createRouterNode(at = null, group = null) {
+    const id = model.addRouter();   // branches a live value to different targets (wired after)
+    if (!id) return;
+    await placeNewNode(`router:${id}`, "router", null, at); render();
+    if (group) groups.addToGroup(group, [`router:${id}`]);
+    autosave(null); if (!at) panTo(`router:${id}`);   // new node changes nothing open windows OCR
+}
 async function createFileSourceNode(at = null, group = null) {
     const id = model.addFileSource();   // reads a game log/config file into a dataset (wired after)
     if (!id) return;
@@ -326,7 +340,7 @@ function svgToPngBlob(svg, W, H) {
 }
 
 export {
-    tb, tbState, createWindowNode, createProducerNode, createTriggerNode,
+    tb, tbState, createWindowNode, createProducerNode, createTriggerNode, createGateNode, createRouterNode,
     createDictionaryNode, createDatasetNode, createSubsetNode, createFileSourceNode,
     createToastNode, createSoundNode, createActionNode, createRegisterNode, createProcessNode, buildToolbox, runCollisionCheck,
 };

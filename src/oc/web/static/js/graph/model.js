@@ -67,6 +67,18 @@ export class GraphModel {
             }
         }
         this.profile.sounds = this.profile.sounds || [];   // browser-played sound nodes (trigger targets)
+        // gates (boolean guards a trigger must satisfy) + routers (branch a live value to targets)
+        this.profile.gates = this.profile.gates || [];
+        for (const g of this.profile.gates) {
+            g.source = g.source || ""; g.conds = g.conds || []; g.logic = g.logic || "or";
+            g.negate = !!g.negate; if (g.enabled === undefined) g.enabled = true;
+        }
+        this.profile.routers = this.profile.routers || [];
+        for (const r of this.profile.routers) {
+            r.source = r.source || ""; r.branches = r.branches || [];
+            for (const b of r.branches) { b.conds = b.conds || []; b.targets = b.targets || []; b.logic = b.logic || "or"; }
+            if (r.enabled === undefined) r.enabled = true;
+        }
         this.profile.dictionaries = this.profile.dictionaries || [];
         // taught cutout atlas: kind=glyph feeds post-OCR refinement, kind=symbol feeds whole-box
         // classification (`type: symbol` fields) — one atlas, two match pools (see atlas_match.py)
@@ -85,8 +97,9 @@ export class GraphModel {
         for (const s of this.profile.file_sources) { s.match = s.match || []; s.fields = s.fields || []; s.roots = s.roots || []; }
         for (const t of this.profile.triggers) {
             t.watch = t.watch || []; t.targets = t.targets || [];
-            t.readout_watch = t.readout_watch || []; t.readout_op = t.readout_op || "gte"; if (t.readout_value == null) t.readout_value = 0;
-            t.register_watch = t.register_watch || []; t.register_conds = t.register_conds || {}; t.register_logic = t.register_logic || "or";
+            t.readout_watch = t.readout_watch || [];
+            t.register_watch = t.register_watch || [];
+            t.gates = t.gates || [];   // value gates that must all pass for this trigger to fire
             if (t.throttle_ms === undefined) t.throttle_ms = null;
             if (t.settle_ms === undefined) t.settle_ms = null;
             if (t.settle_max_ms === undefined) t.settle_max_ms = null;
@@ -256,6 +269,7 @@ export class GraphModel {
             ["filesource", this.profile.file_sources], ["trigger", this.profile.triggers],
             ["register", this.profile.registers], ["dictionary", this.profile.dictionaries],
             ["process", this.profile.processes], ["window", this.profile.windows],
+            ["gate", this.profile.gates], ["router", this.profile.routers],
         ];
         for (const [kind, arr] of defs)
             for (const o of arr || []) scalar([kind], true, () => o.id, (v) => { o.id = v; });
@@ -281,7 +295,8 @@ export class GraphModel {
         };
         bareList(["dataset"], this.profile.producers, (p) => p.sources);                                   // priced-item sources
         bareList(["dataset", "subset"], this.profile.triggers, (t) => t.watch);                            // on_change watch
-        bareList(["producer", "action", "toast", "sound", "filesource"], this.profile.triggers, (t) => t.targets);
+        bareList(["producer", "action", "toast", "sound", "filesource", "router"], this.profile.triggers, (t) => t.targets);
+        bareList(["gate"], this.profile.triggers, (t) => t.gates);
         bareList(["register"], this.profile.triggers, (t) => t.register_watch);
         bareList(["readout"], this.profile.triggers, (t) => t.readout_watch);
         bareList(["window"], [this.profile], () => this.profile.window_priority);                          // recognition order
@@ -332,6 +347,27 @@ export class GraphModel {
             lists.push({ arr: () => p.sources, empty: (o) => !procRegId(o.ref || "") });
         }
 
+        // gate/router SOURCE: one prefixed ref ("readout:<id>" | "register:<id>#<key>") that may
+        // carry a "#key" suffix — decode the kind, and for a register ref repoint the id BEFORE the
+        // "#" while preserving the suffix (same pattern as the process source above). A router also
+        // holds per-branch bare-id target lists.
+        const refField = (owner, get, set) => {
+            const ref = get(); if (!ref) return;
+            const c = ref.indexOf(":"); if (c < 0) return;
+            const kind = ref.slice(0, c);
+            if (kind === "register") {
+                const rest = ref.slice(c + 1), hh = rest.indexOf("#"), suf = hh < 0 ? "" : rest.slice(hh);
+                scalar(["register"], false, () => { const rr = get().slice(get().indexOf(":") + 1), h2 = rr.indexOf("#"); return h2 < 0 ? rr : rr.slice(0, h2); }, (v) => set(v ? `register:${v}${suf}` : ""));
+            } else {
+                scalar([kind], false, () => get().slice(get().indexOf(":") + 1), (v) => set(v ? `${kind}:${v}` : ""));
+            }
+        };
+        for (const g of this.profile.gates || []) refField(g, () => g.source, (v) => { g.source = v; });
+        for (const r of this.profile.routers || []) {
+            refField(r, () => r.source, (v) => { r.source = v; });
+            bareList(["producer", "action", "toast", "sound", "filesource"], r.branches, (b) => b.targets);
+        }
+
         // dict-key sites (register slots) — re-key on rename, drop on delete
         const dictSite = (kinds, owner, key) => sites.push({
             kinds, decl: false, dict: true,
@@ -340,7 +376,6 @@ export class GraphModel {
             drop: (id) => { if (owner[key]) delete owner[key][id]; },
         });
         for (const x of this.profile.actions || []) dictSite(["register"], x, "slots");
-        for (const t of this.profile.triggers || []) dictSite(["register"], t, "register_conds");
 
         return { sites, lists };
     }
@@ -568,6 +603,10 @@ export class GraphModel {
             // grid (kind "triggerhistory"), so it resizes like every other node. See history_node.js.
             if (this.satelliteOn(`hist:${t.id}`)) ns.push({ id: `hist:${t.id}`, type: "vttable", ref: { kind: "triggerhistory", id: t.id } });
         }
+        // gate: a boolean guard a trigger must satisfy before it fires (tests one live value).
+        for (const x of this.profile.gates || []) ns.push({ id: `gate:${x.id}`, type: "gate", ref: x });
+        // router: branches a live value to different targets (first matching branch wins).
+        for (const x of this.profile.routers || []) ns.push({ id: `router:${x.id}`, type: "router", ref: x });
         for (const x of this.profile.toasts || []) ns.push({ id: `toast:${x.id}`, type: "toast", ref: x });
         for (const x of this.profile.sounds || []) ns.push({ id: `sound:${x.id}`, type: "sound", ref: x });
         for (const x of this.profile.actions || []) ns.push({ id: `action:${x.id}`, type: "action", ref: x });
@@ -624,6 +663,8 @@ export class GraphModel {
         if (this.soundNode(ref)) return `sound:${ref}`;
         if (this.actionNode(ref)) return `action:${ref}`;
         if (this.processNode(ref)) return `process:${ref}`;
+        if (this.gateNode(ref)) return `gate:${ref}`;
+        if (this.routerNode(ref)) return `router:${ref}`;
         const site = this.readoutSite(ref);
         return site ? `ro:${site.win}:${ref}` : null;
     }
@@ -685,6 +726,10 @@ export class GraphModel {
                 const to = this.refNode(pid);
                 if (to) es.push({ from: `trigger:${t.id}`, to, kind: "trigger" });
             }
+            // a gate this trigger must satisfy (trigger -> gate). The gate reads its own tested value
+            // from a readout/register (source -> gate, drawn in the gates loop below).
+            for (const gid of t.gates || [])
+                if (this.gateNode(gid)) es.push({ from: `trigger:${t.id}`, to: `gate:${gid}`, kind: "gate" });
             if (t.kind === "on_change" || t.kind === "on_any_change" || t.kind === "on_new_batch" || t.kind === "on_ready")
                 for (const w of t.watch || []) {
                     const to = this.refNode(w);
@@ -703,6 +748,23 @@ export class GraphModel {
                 }
             // history satellite: dotted "img" edge trigger -> its recent-fires grid (opt-in)
             if (this.satelliteOn(`hist:${t.id}`)) es.push({ from: `trigger:${t.id}`, to: `hist:${t.id}`, kind: "img" });
+        }
+        // a gate READS the live value it tests from a readout/register (source -> gate); the
+        // trigger(s) it gates wire IN from above (trigger -> gate).
+        for (const g of this.profile.gates || []) {
+            const from = this.refNode(g.source);
+            if (from) es.push({ from, to: `gate:${g.id}`, kind: "data" });
+        }
+        // a router READS its tested value from a readout/register (source -> router) and, per branch,
+        // FIRES that branch's targets (router -> target) when the branch's conds match.
+        for (const r of this.profile.routers || []) {
+            const from = this.refNode(r.source);
+            if (from) es.push({ from, to: `router:${r.id}`, kind: "data" });
+            for (const b of r.branches || [])
+                for (const tid of b.targets || []) {
+                    const to = this.refNode(tid);
+                    if (to) es.push({ from: `router:${r.id}`, to, kind: "trigger" });
+                }
         }
         // an action node ACTS ON its dataset AND register sources (action -> ds/register), and
         // WRITES into its clone/move destination dataset (action -> dest).
@@ -937,7 +999,7 @@ export class GraphModel {
         this.profile.triggers = this.profile.triggers || [];
         let n = 1, id = "trigger";
         while (this.trigger(id)) id = `trigger_${++n}`;
-        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], readout_op: "gte", readout_value: 0, register_watch: [], register_conds: {}, register_logic: "or", throttle_ms: null, settle_ms: null, settle_max_ms: null, ready_field: "" });
+        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], register_watch: [], gates: [], throttle_ms: null, settle_ms: null, settle_max_ms: null, ready_field: "" });
         return id;
     }
     removeTrigger(id) { this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id); }
@@ -960,8 +1022,8 @@ export class GraphModel {
     setTriggerReadyField(id, v) { const t = this.trigger(id); if (!t) return; t.ready_field = (v || "").trim(); }
     addTriggerTarget(id, pid) {
         const t = this.trigger(id);
-        // a target is a price node (sweep), a file source (read), a toast (notify), a sound (play), OR an action (dataset op) — accept any id
-        if (!t || !pid || !(this.producerNode(pid) || this.fileSource(pid) || this.toastNode(pid) || this.soundNode(pid) || this.actionNode(pid))) return false;
+        // a target is a price node (sweep), a file source (read), a toast (notify), a sound (play), an action (dataset op), OR a router (branch) — accept any id
+        if (!t || !pid || !(this.producerNode(pid) || this.fileSource(pid) || this.toastNode(pid) || this.soundNode(pid) || this.actionNode(pid) || this.routerNode(pid))) return false;
         t.targets = t.targets || [];
         if (t.targets.includes(pid)) return false;
         t.targets.push(pid);
@@ -988,12 +1050,8 @@ export class GraphModel {
         return true;
     }
     removeTriggerReadoutWatch(id, vid) { const t = this.trigger(id); if (t) t.readout_watch = (t.readout_watch || []).filter((v) => v !== vid); }
-    static TRIGGER_READOUT_OPS = ["gte", "lte", "gt", "lt", "eq", "ne", "crosses_up", "crosses_down"];
-    setTriggerReadoutOp(id, op) { const t = this.trigger(id); if (t && GraphModel.TRIGGER_READOUT_OPS.includes(op)) t.readout_op = op; }
-    setTriggerReadoutValue(id, v) { const t = this.trigger(id); const n = parseFloat(v); if (t && !Number.isNaN(n)) t.readout_value = n; }
 
-    // ---- on_register: watch register keys, fire on a per-key condition (and/or between them) ----
-    static TRIGGER_REGISTER_WHENS = ["changed", "gte", "lte", "gt", "lt", "eq", "ne", "crosses_up", "crosses_down", "between"];
+    // ---- on_register: watch register(s); the fire condition now lives on the wired gate(s) ----
     addTriggerRegisterWatch(id, reg) {
         const t = this.trigger(id);
         if (!t || !reg || !this.registerNode(reg)) return false;
@@ -1006,33 +1064,89 @@ export class GraphModel {
         const t = this.trigger(id);
         if (!t) return;
         t.register_watch = (t.register_watch || []).filter((r) => r !== reg);
-        if (t.register_conds) delete t.register_conds[reg];   // drop orphaned key conditions
     }
-    // how a trigger's key conditions combine ("or" = any holds, "and" = all hold).
-    setTriggerRegisterLogic(id, v) { const t = this.trigger(id); if (t) t.register_logic = (v === "and") ? "and" : "or"; }
-    // the per-key conditions for one watched register — [{key, when, value}, ...].
-    triggerRegisterConds(id, reg) { const t = this.trigger(id); return (t && t.register_conds && t.register_conds[reg]) || []; }
-    // add a condition on `reg` for `key` (default: fires when it changes). Skips a duplicate key.
-    addTriggerRegisterCond(id, reg, key) {
+    // ---- trigger gates: value guards that must ALL pass for the trigger to fire (see GateDef) ----
+    addTriggerGate(id, gid) {
         const t = this.trigger(id);
-        if (!t || !key) return false;
-        t.register_conds = t.register_conds || {};
-        const list = t.register_conds[reg] || (t.register_conds[reg] = []);
-        if (list.some((c) => c.key === key)) return false;
-        list.push({ key, when: "changed", value: 0, value2: 0 });
+        if (!t || !gid || !this.gateNode(gid)) return false;
+        t.gates = t.gates || [];
+        if (t.gates.includes(gid)) return false;
+        t.gates.push(gid);
         return true;
     }
-    removeTriggerRegisterCond(id, reg, idx) {
-        const t = this.trigger(id);
-        if (!t || !t.register_conds || !t.register_conds[reg]) return;
-        t.register_conds[reg].splice(idx, 1);
-        if (!t.register_conds[reg].length) delete t.register_conds[reg];
+    removeTriggerGate(id, gid) { const t = this.trigger(id); if (t) t.gates = (t.gates || []).filter((g) => g !== gid); }
+
+    // ---- gate / router nodes: value guards (gate) + value branches (router) ----
+    // A gate tests ONE live value (a readout, or a register slot) against an ordered condition list
+    // combined by and/or, optionally negated; a trigger lists the gates it must satisfy. A router
+    // tests one live value and, per branch (first match wins), fires that branch's targets.
+    gateNode(id) { return (this.profile.gates || []).find((g) => g.id === id) || null; }
+    routerNode(id) { return (this.profile.routers || []).find((r) => r.id === id) || null; }
+    gates() { return (this.profile.gates || []).map((g) => g.id); }
+    routers() { return (this.profile.routers || []).map((r) => r.id); }
+    // Reverse lookups: which triggers a gate/router is wired TO (the trigger owns the ref, so the
+    // gate/router body shows its destination by scanning triggers). Editing them writes back through
+    // addTriggerGate/addTriggerTarget so there is one source of truth (the trigger).
+    gateTriggers(gid) { return (this.profile.triggers || []).filter((t) => (t.gates || []).includes(gid)).map((t) => t.id); }
+    routerTriggers(rid) { return (this.profile.triggers || []).filter((t) => (t.targets || []).includes(rid)).map((t) => t.id); }
+    addGate() {
+        this.profile.gates = this.profile.gates || [];
+        let n = 1, id = "gate";
+        while (this.gateNode(id)) id = `gate_${++n}`;
+        this.profile.gates.push({ id, source: "", conds: [], logic: "or", negate: false, enabled: true });
+        return id;
     }
-    _regCond(id, reg, idx) { const t = this.trigger(id); return (t && t.register_conds && t.register_conds[reg] && t.register_conds[reg][idx]) || null; }
-    setTriggerRegisterCondKey(id, reg, idx, key) { const c = this._regCond(id, reg, idx); if (c && key) c.key = key; }
-    setTriggerRegisterCondWhen(id, reg, idx, when) { const c = this._regCond(id, reg, idx); if (c && GraphModel.TRIGGER_REGISTER_WHENS.includes(when)) c.when = when; }
-    setTriggerRegisterCondValue(id, reg, idx, v) { const c = this._regCond(id, reg, idx); const n = parseFloat(v); if (c && !Number.isNaN(n)) c.value = n; }
-    setTriggerRegisterCondValue2(id, reg, idx, v) { const c = this._regCond(id, reg, idx); const n = parseFloat(v); if (c && !Number.isNaN(n)) c.value2 = n; }
+    addRouter() {
+        this.profile.routers = this.profile.routers || [];
+        let n = 1, id = "router";
+        while (this.routerNode(id)) id = `router_${++n}`;
+        this.profile.routers.push({ id, source: "", branches: [{ conds: [], logic: "or", targets: [] }], enabled: true });
+        return id;
+    }
+    removeGate(id) { this.profile.gates = (this.profile.gates || []).filter((g) => g.id !== id); this._unwire("gate", id); }
+    removeRouter(id) { this.profile.routers = (this.profile.routers || []).filter((r) => r.id !== id); this._unwire("router", id); }
+    renameGate(oldId, newId) {
+        newId = (newId || "").trim();
+        if (!newId || newId === oldId || this.gateNode(newId)) return false;
+        this._repoint("gate", oldId, newId, { decl: true });   // def id + any trigger's gates list
+        this._emitRename("gate", oldId, newId);
+        return true;
+    }
+    renameRouter(oldId, newId) {
+        newId = (newId || "").trim();
+        if (!newId || newId === oldId || this.routerNode(newId)) return false;
+        this._repoint("router", oldId, newId, { decl: true });   // def id + any trigger target
+        this._emitRename("router", oldId, newId);
+        return true;
+    }
+    // ---- gate config ----
+    setGateSource(id, ref) { const g = this.gateNode(id); if (g) g.source = ref || ""; }
+    setGateLogic(id, v) { const g = this.gateNode(id); if (g) g.logic = (v === "and") ? "and" : "or"; }
+    setGateNegate(id, on) { const g = this.gateNode(id); if (g) g.negate = !!on; }
+    addGateCond(id) { const g = this.gateNode(id); if (g) { g.conds = g.conds || []; g.conds.push({ when: "always", arg: "" }); } }
+    removeGateCond(id, idx) { const g = this.gateNode(id); if (g && g.conds) g.conds.splice(idx, 1); }
+    setGateCondWhen(id, idx, when) { const g = this.gateNode(id); const c = g && g.conds && g.conds[idx]; if (c) c.when = when; }
+    setGateCondArg(id, idx, arg) { const g = this.gateNode(id); const c = g && g.conds && g.conds[idx]; if (c) c.arg = arg ?? ""; }
+    // ---- router config ----
+    setRouterSource(id, ref) { const r = this.routerNode(id); if (r) r.source = ref || ""; }
+    _branch(id, bi) { const r = this.routerNode(id); return (r && r.branches && r.branches[bi]) || null; }
+    addRouterBranch(id) { const r = this.routerNode(id); if (r) { r.branches = r.branches || []; r.branches.push({ conds: [], logic: "or", targets: [] }); } }
+    removeRouterBranch(id, bi) { const r = this.routerNode(id); if (r && r.branches) r.branches.splice(bi, 1); }
+    setRouterBranchLogic(id, bi, v) { const b = this._branch(id, bi); if (b) b.logic = (v === "and") ? "and" : "or"; }
+    addRouterBranchCond(id, bi) { const b = this._branch(id, bi); if (b) { b.conds = b.conds || []; b.conds.push({ when: "always", arg: "" }); } }
+    removeRouterBranchCond(id, bi, ci) { const b = this._branch(id, bi); if (b && b.conds) b.conds.splice(ci, 1); }
+    setRouterBranchCondWhen(id, bi, ci, w) { const b = this._branch(id, bi); const c = b && b.conds && b.conds[ci]; if (c) c.when = w; }
+    setRouterBranchCondArg(id, bi, ci, a) { const b = this._branch(id, bi); const c = b && b.conds && b.conds[ci]; if (c) c.arg = a ?? ""; }
+    addRouterTarget(id, bi, targetId) {
+        const b = this._branch(id, bi);
+        // a branch target is a producer/file source/toast/sound/action (same set a trigger fires) — validate + dedupe
+        if (!b || !targetId || !(this.producerNode(targetId) || this.fileSource(targetId) || this.toastNode(targetId) || this.soundNode(targetId) || this.actionNode(targetId))) return false;
+        b.targets = b.targets || [];
+        if (b.targets.includes(targetId)) return false;
+        b.targets.push(targetId);
+        return true;
+    }
+    removeRouterTarget(id, bi, targetId) { const b = this._branch(id, bi); if (b) b.targets = (b.targets || []).filter((p) => p !== targetId); }
 
     // ---- action nodes: clear / clone / move a dataset's data when fired (a trigger target) ----
     static ACTION_KINDS = ["", "clear", "clone_batches", "clone_resolved", "move_batches", "move_resolved"];
@@ -1137,7 +1251,14 @@ export class GraphModel {
         register: ["readout", "process"],
         process: ["readout", "register_key"],
         toast: ["readout", "dataset", "subset"],
+        gate: ["readout", "register_key", "register_count"],
+        router: ["readout", "register_key", "register_count"],
     };
+    // The count-facet suffixes a `register_count` source offers per key: each counts over the key's
+    // ring of recent values (register:<id>#<key>@<facet>) so a numeric gate op tests HOW MANY values
+    // the key holds, not its single exposed value. count = held depth; nonblank = the actual (non-
+    // blank) values; distinct = unique values. Backend: TriggerRunner._facet_count.
+    static REGISTER_COUNT_FACETS = [["count", "count"], ["nonblank", "actual"], ["distinct", "distinct"]];
     // Addable source candidates for a consumer node, derived from SOURCE_KINDS + the consumer's
     // already-wired refs. -> [{ref,label,kind}]. Every picker calls this so the listings can't drift
     // from what's actually wireable (e.g. a register's "+" now lists processes, not only readouts).
@@ -1150,6 +1271,7 @@ export class GraphModel {
             if (kind === "readout") for (const v of this.readouts()) add(`readout:${v.id}`, `readout: ${v.id}`, kind);
             else if (kind === "process") for (const pid of this.processes()) { if (pid !== consumerId) add(`process:${pid}`, `process: ${pid}`, kind); }
             else if (kind === "register_key") for (const rg of this.registers()) for (const k of this.registerKeys(rg)) add(`register:${rg}#${k}`, `register: ${rg} · ${k}`, kind);
+            else if (kind === "register_count") for (const rg of this.registers()) for (const k of this.registerKeys(rg)) for (const [f, lbl] of GraphModel.REGISTER_COUNT_FACETS) add(`register:${rg}#${k}@${f}`, `register: ${rg} · ${k} · #${lbl}`, kind);
             else if (kind === "register") for (const rg of this.registers()) add(`register:${rg}`, `register: ${rg}`, kind);
             else if (kind === "dataset") for (const ds of this.datasets()) add(`dataset:${ds}`, `dataset: ${ds}`, kind);
             else if (kind === "subset") for (const s of (this.profile.subsets || [])) add(`subset:${s.id}`, `subset: ${s.id}`, kind);
