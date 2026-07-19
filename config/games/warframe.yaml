@@ -99,18 +99,6 @@ windows:
       tolerance: 30
       scale: 1.0
       min_frac: 0.0
-  - id: rof_93
-    type: text
-    rules: []
-    min_confidence: 0.7
-    isolate: false
-    glyph_check: false
-    preprocess:
-      mode: none
-      colors: []
-      tolerance: 60
-      scale: 1.0
-      min_frac: 0.0
   detect:
   - id: hud
     enabled: true
@@ -181,14 +169,6 @@ windows:
       h: 0.02904006453347674
     field: rof_90
     enabled: true
-  - id: ro_92
-    box:
-      x: 0.834118350116527
-      y: 0.8796450724426089
-      w: 0.10778985507246375
-      h: 0.04840010755579449
-    field: rof_93
-    enabled: false
   preprocess:
     mode: none
     colors: []
@@ -4432,9 +4412,10 @@ triggers:
   watch: []
   readout_watch: []
   register_watch:
-  - register
+  - ab_register
   gates:
   - gate_ab1
+  - gate_ab1_not
   targets:
   - bob
   enabled: true
@@ -4446,10 +4427,10 @@ triggers:
   watch: []
   readout_watch: []
   register_watch:
-  - register
+  - ab_register
   gates:
   - gate_ab2
-  - not_protea
+  - gate_ab2_not
   targets:
   - bob
   enabled: true
@@ -4461,9 +4442,10 @@ triggers:
   watch: []
   readout_watch: []
   register_watch:
-  - register
+  - ab_register
   gates:
   - gate_ab3
+  - gate_ab3_not
   targets:
   - bob
   enabled: true
@@ -4475,9 +4457,10 @@ triggers:
   watch: []
   readout_watch: []
   register_watch:
-  - register
+  - ab_register
   gates:
   - gate_ab4
+  - gate_ab4_not
   targets:
   - bob
   enabled: true
@@ -4485,7 +4468,7 @@ triggers:
   ready_field: ''
 gates:
 - id: gate_ab1
-  source: register:register#ability_1_cd
+  source: register:ab_register#ability_1_cd
   conds:
   - when: lt
     arg: '3'
@@ -4493,7 +4476,7 @@ gates:
   negate: false
   enabled: true
 - id: gate_ab2
-  source: register:register#ability_2_cd
+  source: register:ab_register#ability_2_cd
   conds:
   - when: lt
     arg: '3'
@@ -4501,7 +4484,7 @@ gates:
   negate: false
   enabled: true
 - id: gate_ab3
-  source: register:register#ability_3_cd
+  source: register:ab_register#ability_3_cd
   conds:
   - when: lt
     arg: '3'
@@ -4509,18 +4492,44 @@ gates:
   negate: false
   enabled: true
 - id: gate_ab4
-  source: register:register#ability_4_cd
+  source: register:ab_register#ability_4_cd
   conds:
   - when: eq
     arg: '3'
   logic: or
   negate: false
   enabled: true
-- id: not_protea
+- id: gate_ab2_not
   source: register:wf_name_live#warframe_name_live
   conds:
   - when: contains
     arg: protea
+  - when: contains
+    arg: revenant
+  logic: or
+  negate: true
+  enabled: true
+- id: gate_ab3_not
+  source: readout:ability_3_cd
+  conds:
+  - when: contains
+    arg: ''
+  logic: or
+  negate: true
+  enabled: true
+- id: gate_ab4_not
+  source: register:ab_register#ability_4_cd
+  conds:
+  - when: contains
+    arg: ''
+  logic: or
+  negate: true
+  enabled: true
+- id: gate_ab1_not
+  source: register:wf_name_live#warframe_name_live
+  conds:
+  - when: contains
+    arg: ''
   logic: or
   negate: true
   enabled: true
@@ -4862,24 +4871,6 @@ sounds:
     crush: 11
   volume: 0.7
   enabled: true
-- id: test_sound
-  file: ''
-  synth:
-    wave: square
-    points:
-    - t: 0.0
-      p: 0.565
-    - t: 0.5
-      p: 0.539
-    - t: 1.0
-      p: 0.862
-    length_ms: 596
-    attack: 15
-    decay: 63
-    vibrato: 43
-    crush: 0
-  volume: 1.0
-  enabled: true
 actions: []
 registers:
 - id: loadout_register
@@ -4897,7 +4888,7 @@ registers:
   aggregate: ''
   ignore_empty: false
   persist: loadout
-- id: register
+- id: ab_register
   sources:
   - process:process_renamed
   title: ''
@@ -5713,12 +5704,12 @@ layout:
       softH: true
     sound:bob:
       x: -1180.0
-      y: -5480.0
-      w: 300.0
-      h: 420.0
+      y: -7180.0
+      w: 400.0
+      h: 440.0
       collapsed: false
-      custW: false
-      custH: false
+      custW: true
+      custH: true
       softW: true
       softH: true
     win:mission_rewards:
@@ -5746,7 +5737,7 @@ layout:
       softW: false
       softH: false
     item:arsenal_warframe:mod:
-      x: 11940.0
+      x: 11960.0
       y: -4720.0
       w: 400.0
       h: 760.0
@@ -5756,7 +5747,7 @@ layout:
       softW: false
       softH: false
     fld:arsenal_warframe:mod:name:
-      x: 12100.0
+      x: 12120.0
       y: -3920.0
       w: 240.0
       h: 321.0
@@ -5765,7 +5756,7 @@ layout:
       custH: false
       softW: true
     fld:arsenal_warframe:mod:drain:
-      x: 11820.0
+      x: 11840.0
       y: -3920.0
       w: 240.0
       h: 321.0
@@ -5774,7 +5765,7 @@ layout:
       custH: false
       softW: true
     fld:arsenal_warframe:mod:rank:
-      x: 11540.0
+      x: 11560.0
       y: -3920.0
       w: 240.0
       h: 320.0
@@ -5811,16 +5802,16 @@ layout:
       custH: true
       softH: true
     win:live_game_window:
-      x: -3760.0
-      y: -4700.0
+      x: -3840.0
+      y: -4180.0
       w: 680.0
       h: 806.0
       collapsed: false
       custW: true
       custH: false
     det:live_game_window:hud:
-      x: -3040.0
-      y: -4700.0
+      x: -3120.0
+      y: -4180.0
       w: 250.0
       h: 180.0
       collapsed: false
@@ -5828,30 +5819,30 @@ layout:
       custH: true
       softH: true
     ro:live_game_window:ability_2_cd:
-      x: -2940.0
-      y: -6240.0
-      w: 360.0
-      h: 586.0
+      x: -3100.0
+      y: -5100.0
+      w: 240.0
+      h: 380.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     ro:live_game_window:ability_3_cd:
-      x: -3760.0
-      y: -5600.0
-      w: 360.0
-      h: 586.0
+      x: -3840.0
+      y: -4660.0
+      w: 240.0
+      h: 380.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     ro:live_game_window:ability_4_cd:
-      x: -2940.0
-      y: -5600.0
-      w: 360.0
-      h: 586.0
+      x: -3100.0
+      y: -4660.0
+      w: 240.0
+      h: 380.0
       collapsed: false
       custW: true
       custH: true
@@ -6253,7 +6244,7 @@ layout:
       custH: true
       softH: true
     ds:dataset:
-      x: 11540.0
+      x: 11560.0
       y: -4720.0
       w: 380.0
       h: 189.0
@@ -6262,7 +6253,7 @@ layout:
       custH: false
       softW: true
     sub:installable_mods:
-      x: 12460.0
+      x: 12700.0
       y: -580.0
       w: 360.0
       h: 920.0
@@ -6272,8 +6263,8 @@ layout:
       softW: true
       softH: true
     ds:loadout:
-      x: 11640.0
-      y: -9260.0
+      x: 11660.0
+      y: -9160.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6422,8 +6413,8 @@ layout:
       custH: true
       softH: true
     sub:loadout_equipped:
-      x: 10280.0
-      y: -3260.0
+      x: 9280.0
+      y: -3160.0
       w: 360.0
       h: 440.0
       collapsed: false
@@ -6431,7 +6422,7 @@ layout:
       custH: true
       softH: true
     sub:mod_suggestions:
-      x: 12460.0
+      x: 12700.0
       y: -2020.0
       w: 360.0
       h: 1240.0
@@ -6440,8 +6431,8 @@ layout:
       custH: true
       softH: true
     sub:loadout_wide:
-      x: 10700.0
-      y: -3260.0
+      x: 9700.0
+      y: -3160.0
       w: 360.0
       h: 440.0
       collapsed: false
@@ -6449,8 +6440,8 @@ layout:
       custH: true
       softH: true
     sub:empty_slots:
-      x: 11120.0
-      y: -3260.0
+      x: 10120.0
+      y: -3160.0
       w: 360.0
       h: 280.0
       collapsed: false
@@ -6459,7 +6450,7 @@ layout:
       softW: true
       softH: true
     sub:drain_remaining:
-      x: 12880.0
+      x: 13140.0
       y: -200.0
       w: 360.0
       h: 360.0
@@ -6468,7 +6459,7 @@ layout:
       custH: true
       softH: true
     sub:mod_suggestions_ranked:
-      x: 13720.0
+      x: 14020.0
       y: -2020.0
       w: 360.0
       h: 1240.0
@@ -6477,8 +6468,8 @@ layout:
       custH: true
       softH: true
     register:loadout_register:
-      x: 11260.0
-      y: -9020.0
+      x: 11280.0
+      y: -8920.0
       w: 1100.0
       h: 860.0
       collapsed: false
@@ -6487,7 +6478,7 @@ layout:
       softW: true
       softH: true
     process:proc_slot_name:
-      x: 11420.0
+      x: 11400.0
       y: -7120.0
       w: 320.0
       h: 440.0
@@ -6497,7 +6488,7 @@ layout:
       softW: true
       softH: true
     process:proc_slot_drain:
-      x: 11940.0
+      x: 11920.0
       y: -7760.0
       w: 320.0
       h: 440.0
@@ -6507,7 +6498,7 @@ layout:
       softW: true
       softH: true
     process:proc_slot_school:
-      x: 11940.0
+      x: 11920.0
       y: -7120.0
       w: 320.0
       h: 440.0
@@ -6517,7 +6508,7 @@ layout:
       softW: true
       softH: true
     process:proc_slot_po:
-      x: 11420.0
+      x: 11400.0
       y: -7760.0
       w: 320.0
       h: 440.0
@@ -6530,7 +6521,7 @@ layout:
       x: 13020.0
       y: -7540.0
       w: 320.0
-      h: 260.0
+      h: 240.0
       collapsed: false
       custW: true
       custH: true
@@ -6557,7 +6548,7 @@ layout:
       softW: true
       softH: true
     sub:empty_general_slots:
-      x: 12880.0
+      x: 13140.0
       y: -580.0
       w: 360.0
       h: 340.0
@@ -6566,7 +6557,7 @@ layout:
       custH: true
       softH: true
     sub:empty_aura_slot:
-      x: 13300.0
+      x: 13580.0
       y: -580.0
       w: 360.0
       h: 260.0
@@ -6574,7 +6565,7 @@ layout:
       custW: false
       custH: true
     sub:mod_suggestions_general:
-      x: 12880.0
+      x: 13140.0
       y: -2020.0
       w: 360.0
       h: 1240.0
@@ -6583,7 +6574,7 @@ layout:
       custH: true
       softH: true
     sub:mod_suggestions_aura:
-      x: 13300.0
+      x: 13580.0
       y: -2020.0
       w: 360.0
       h: 1240.0
@@ -6612,7 +6603,7 @@ layout:
       softW: true
       softH: true
     sub:unowned_mods:
-      x: 12460.0
+      x: 12700.0
       y: -3340.0
       w: 360.0
       h: 1140.0
@@ -6621,7 +6612,7 @@ layout:
       custH: true
       softH: true
     sub:unowned_suggestions:
-      x: 12900.0
+      x: 13140.0
       y: -3340.0
       w: 360.0
       h: 1140.0
@@ -6630,7 +6621,7 @@ layout:
       custH: true
       softH: true
     sub:unowned_suggestions_general:
-      x: 13320.0
+      x: 13580.0
       y: -3340.0
       w: 360.0
       h: 1140.0
@@ -6639,7 +6630,7 @@ layout:
       custH: true
       softH: true
     sub:unowned_suggestions_aura:
-      x: 13740.0
+      x: 14020.0
       y: -3340.0
       w: 360.0
       h: 1140.0
@@ -6648,7 +6639,7 @@ layout:
       custH: true
       softH: true
     sub:unowned_suggestions_ranked:
-      x: 14160.0
+      x: 14460.0
       y: -3340.0
       w: 360.0
       h: 1140.0
@@ -6667,34 +6658,34 @@ layout:
       softW: true
       softH: true
     rohist:live_game_window:ability_2_cd:
-      x: -2540.0
-      y: -6240.0
-      w: 340.0
-      h: 580.0
+      x: -2820.0
+      y: -5100.0
+      w: 420.0
+      h: 380.0
       collapsed: false
       custW: true
       custH: true
-      softW: false
+      softW: true
       softH: true
     rohist:live_game_window:ability_3_cd:
-      x: -3360.0
-      y: -5600.0
-      w: 340.0
-      h: 580.0
+      x: -3560.0
+      y: -4660.0
+      w: 420.0
+      h: 380.0
       collapsed: false
       custW: true
       custH: true
-      softW: false
+      softW: true
       softH: true
     rohist:live_game_window:ability_4_cd:
-      x: -2540.0
-      y: -5600.0
-      w: 340.0
-      h: 580.0
+      x: -2820.0
+      y: -4660.0
+      w: 420.0
+      h: 380.0
       collapsed: false
       custW: true
       custH: true
-      softW: false
+      softW: true
       softH: true
     prodhist:wf_market_relic:
       x: 1940.0
@@ -6739,10 +6730,10 @@ layout:
       y: -3840.0
       collapsed: false
     ro:live_game_window:warframe_name_live:
-      x: -2280.0
-      y: -4620.0
-      w: 360.0
-      h: 420.0
+      x: -2340.0
+      y: -4920.0
+      w: 240.0
+      h: 380.0
       collapsed: false
       custW: true
       custH: true
@@ -6767,28 +6758,125 @@ layout:
       custH: true
       softW: true
       softH: true
-    ro:live_game_window:ro_92:
-      x: -2740.0
-      y: -4000.0
-      w: 360.0
-      h: 519.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-    rohist:live_game_window:ro_92:
-      x: -2340.0
-      y: -4000.0
-      w: 800.0
-      h: 520.0
+    process:process_renamed:
+      x: -3840.0
+      y: -6060.0
+      w: 340.0
+      h: 340.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
-    register:register:
-      x: -2160.0
-      y: -5860.0
+    ro:live_game_window:ability_1_cd:
+      x: -3840.0
+      y: -5100.0
+      w: 240.0
+      h: 380.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    rohist:live_game_window:ability_1_cd:
+      x: -3560.0
+      y: -5100.0
+      w: 420.0
+      h: 380.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    process:proc_live_warframe_name:
+      x: -3840.0
+      y: -5680.0
+      w: 340.0
+      h: 340.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:trigger_ab1:
+      x: -3400.0
+      y: -6580.0
+      w: 280.0
+      h: 220.0
+      collapsed: false
+      custW: false
+      custH: true
+      softH: true
+    trigger:trigger_ab2:
+      x: -2620.0
+      y: -6580.0
+      w: 280.0
+      h: 240.0
+      collapsed: false
+      custW: false
+      custH: true
+      softH: true
+    trigger:trigger_ab3:
+      x: -1840.0
+      y: -6580.0
+      w: 280.0
+      h: 240.0
+      collapsed: false
+      custW: false
+      custH: true
+      softH: true
+    trigger:trigger_ab4:
+      x: -1060.0
+      y: -6580.0
+      w: 280.0
+      h: 240.0
+      collapsed: false
+      custW: false
+      custH: true
+      softH: true
+    gate:gate_ab1:
+      x: -3840.0
+      y: -6580.0
+      w: 380.0
+      h: 140.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    gate:gate_ab2:
+      x: -3060.0
+      y: -6580.0
+      w: 380.0
+      h: 140.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    gate:gate_ab3:
+      x: -2280.0
+      y: -6580.0
+      w: 380.0
+      h: 140.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    gate:gate_ab4:
+      x: -1500.0
+      y: -6580.0
+      w: 380.0
+      h: 140.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    register:wf_name_live:
+      x: -3400.0
+      y: -5680.0
       w: 520.0
       h: 340.0
       collapsed: false
@@ -6796,141 +6884,75 @@ layout:
       custH: true
       softW: true
       softH: true
-    process:process_renamed:
-      x: -2160.0
-      y: -6240.0
-      w: 340.0
+    register:ab_register:
+      x: -3400.0
+      y: -6060.0
+      w: 520.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
-    reghist:register:
-      x: -1600.0
-      y: -5860.0
-      w: 720.0
+    reghist:ab_register:
+      x: -2840.0
+      y: -6060.0
+      w: 740.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: false
-    prochist:process_renamed:
-      x: -1780.0
-      y: -6240.0
-      w: 900.0
-      h: 340.0
+    rohist:live_game_window:warframe_name_live:
+      x: -2060.0
+      y: -4920.0
+      w: 300.0
+      h: 360.0
       collapsed: false
       custW: true
-      custH: true
-      softW: true
-      softH: false
-    ro:live_game_window:ability_1_cd:
-      x: -3760.0
-      y: -6240.0
-      w: 360.0
-      h: 586.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
-    rohist:live_game_window:ability_1_cd:
-      x: -3360.0
-      y: -6240.0
-      w: 340.0
-      h: 580.0
-      collapsed: false
-      custW: true
-      custH: true
+      custH: false
       softW: false
-      softH: true
-    process:proc_live_warframe_name:
-      x: -2360.0
-      y: -4940.0
-      w: 360.0
+    gate:gate_ab4_not:
+      x: -1500.0
+      y: -6420.0
+      w: 380.0
       h: 280.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
-    trigger:trigger_ab1:
-      x: -800.0
-      y: -4640.0
-      collapsed: false
-    trigger:trigger_ab2:
-      x: -800.0
-      y: -4380.0
-      collapsed: false
-    trigger:trigger_ab3:
-      x: -800.0
-      y: -4120.0
-      collapsed: false
-    trigger:trigger_ab4:
-      x: -800.0
-      y: -3820.0
-      collapsed: false
-    gate:gate_ab1:
-      x: -1420.0
-      y: -4720.0
-      w: 340.0
-      h: 172.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-    gate:gate_ab2:
-      x: -1420.0
-      y: -4380.0
-      w: 340.0
-      h: 172.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-    gate:gate_ab3:
-      x: -1420.0
-      y: -4120.0
-      w: 340.0
-      h: 172.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-    gate:gate_ab4:
-      x: -1420.0
-      y: -3820.0
-      w: 340.0
-      h: 172.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-    sound:test_sound:
-      x: -820.0
-      y: -5160.0
-      collapsed: false
-    register:wf_name_live:
-      x: -1960.0
-      y: -4940.0
-      w: 400.0
-      h: 300.0
+    gate:gate_ab3_not:
+      x: -2280.0
+      y: -6420.0
+      w: 380.0
+      h: 280.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
-    gate:not_protea:
-      x: -1860.0
-      y: -4560.0
+    gate:gate_ab2_not:
+      x: -3060.0
+      y: -6420.0
       w: 380.0
-      h: 130.0
+      h: 280.0
       collapsed: false
       custW: true
-      custH: false
+      custH: true
       softW: true
+      softH: true
+    gate:gate_ab1_not:
+      x: -3840.0
+      y: -6420.0
+      w: 380.0
+      h: 280.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
   tables:
     warframe:ds:master:
       sorts:
@@ -7322,67 +7344,67 @@ layout:
       sorts: []
     rohist:live_game_window:ability_1_cd:
       widths:
-        when: 147
-        raw: 36
+        when: 75
+        raw: 75
         empty→drop: 36
         always→extract: 43
         always→floor: 43
-        confidence: 36
+        confidence: 75
         consensus: 40
         no_digit→drop: 43
         below→drop: 43
         above→drop: 43
-        value: 36
-        gap: 55
+        value: 75
+        gap: 75
       sorts: []
     rohist:live_game_window:ability_2_cd:
       widths:
-        when: 147
-        raw: 36
+        when: 75
+        raw: 75
         always→extract: 43
         always→floor: 43
         empty→drop: 36
         consensus: 44
-        confidence: 36
+        confidence: 75
         no_digit→drop: 43
         below→drop: 43
         above→drop: 43
-        value: 36
-        gap: 55
+        value: 75
+        gap: 75
       sorts:
       - col: when
         dir: -1
     rohist:live_game_window:ability_3_cd:
       widths:
-        when: 147
-        raw: 36
+        when: 75
+        raw: 75
         always→extract: 43
         always→floor: 43
-        value: 36
+        value: 75
         empty→drop: 36
-        confidence: 36
+        confidence: 75
         consensus: 40
         no_digit→drop: 43
         below→drop: 43
         above→drop: 43
-        gap: 55
+        gap: 75
       sorts:
       - col: when
         dir: -1
     rohist:live_game_window:ability_4_cd:
       sorts: []
       widths:
-        when: 147
-        raw: 36
+        when: 75
+        raw: 75
         no_digit→drop: 43
         always→extract: 43
         always→floor: 43
-        value: 36
-        confidence: 36
+        value: 75
+        confidence: 75
         consensus: 44
         below→drop: 43
         above→drop: 43
-        gap: 55
+        gap: 75
       order: []
     prodhist:wf_market_relic:
       widths:
@@ -7401,15 +7423,16 @@ layout:
         dir: -1
     rohist:live_game_window:warframe_name_live:
       widths:
-        when: 148
-        raw: 115
-        confidence: 37
+        when: 55
+        raw: 55
+        confidence: 55
         no_letter→drop: 37
         always→fold: 115
         always→lowercase: 115
         always→extract: 82
-        value: 82
+        value: 55
         consensus: 37
+        gap: 55
     reghist:register:
       sorts: []
       widths:
@@ -7498,16 +7521,16 @@ layout:
     - ds:ee_log
     - src:log_ee
     outline:
-      color: '#e6e05a'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#27281b'
-    titleBg: '#e6e05a'
-    titleColor: '#14120a'
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
-    schemeId: yellow
+    schemeId: silver
     gate: false
   - id: group_11
     title: 'window: relic rewards'
@@ -7524,16 +7547,16 @@ layout:
     - prev:relic_rewards
     - vt:ds:relics_offered
     outline:
-      color: '#2c313c'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#0f1217'
-    titleBg: ''
-    titleColor: ''
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
-    schemeId: slate
+    schemeId: silver
   - id: group_12
     title: 'window: mods'
     members:
@@ -7566,16 +7589,16 @@ layout:
     - item:mod_window:drop_item
     - tell:mod_window:drop_item:tell_3
     outline:
-      color: '#8a9ae6'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#1b1f2d'
-    titleBg: '#8a9ae6'
-    titleColor: '#08121d'
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
-    schemeId: indigo
+    schemeId: silver
   - id: group_17
     title: 'price: stash'
     members:
@@ -7603,16 +7626,16 @@ layout:
     - trigger:owned_refresh
     - sub:master_prime_parts
     outline:
-      color: '#e69a5a'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#271f1b'
-    titleBg: '#e69a5a'
-    titleColor: '#1a0e08'
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
-    schemeId: orange
+    schemeId: silver
   - id: group_19
     title: 'window: equipment'
     members:
@@ -7629,16 +7652,16 @@ layout:
     - fld:equipment_window:arcane:arcane_level
     - fld:equipment_window:arcane:count
     outline:
-      color: '#5aa9e6'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#15212d'
-    titleBg: '#5aa9e6'
-    titleColor: '#08121d'
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
-    schemeId: blue
+    schemeId: silver
   - id: group_22
     title: 'window: relic select'
     members:
@@ -7655,16 +7678,16 @@ layout:
     - vt:sub:dataset_view
     - vt:ds:relics
     outline:
-      color: '#2c313c'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#0f1217'
-    titleBg: ''
-    titleColor: ''
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
-    schemeId: slate
+    schemeId: silver
   - id: group_25
     title: 'window: relic refinement'
     members:
@@ -7681,16 +7704,16 @@ layout:
     - det:relic_refinement:detect_1
     - fld:relic_refinement:relic_item:count
     outline:
-      color: '#2c313c'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#0f1217'
-    titleBg: ''
-    titleColor: ''
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
-    schemeId: slate
+    schemeId: silver
   - id: group_27
     title: data
     members:
@@ -7701,38 +7724,24 @@ layout:
     - producer:mod_catalog_producer
     - ds:mod_catalog
     outline:
-      color: '#3a4150'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#11141a'
-    titleBg: '#3a4150'
-    titleColor: '#dfe3ea'
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
-    schemeId: stone
+    schemeId: silver
     gate: false
   - id: group_28
     title: ability timer reads
     members:
-    - win:live_game_window
-    - det:live_game_window:hud
     - var:game:var_1
-    - ro:live_game_window:ability_1_cd
-    - ro:live_game_window:ability_2_cd
-    - ro:live_game_window:ability_3_cd
-    - ro:live_game_window:ability_4_cd
-    - ro:live_game_window:warframe_name_live
-    - ro:live_game_window:ro_92
-    - rohist:live_game_window:ro_92
     - process:process_renamed
-    - register:register
-    - reghist:register
-    - prochist:process_renamed
-    - rohist:live_game_window:ability_1_cd
-    - rohist:live_game_window:ability_2_cd
-    - rohist:live_game_window:ability_4_cd
-    - rohist:live_game_window:ability_3_cd
+    - register:ab_register
+    - reghist:ab_register
     - sound:bob
     - trigger:trigger
     - register:wf_name_live
@@ -7745,34 +7754,38 @@ layout:
     - gate:gate_ab2
     - gate:gate_ab3
     - gate:gate_ab4
-    - sound:test_sound
-    - gate:not_protea
+    - gate:gate_ab2_not
+    - gate:gate_ab3_not
+    - gate:gate_ab4_not
+    - gate:gate_ab1_not
     outline:
-      color: '#e6e05a'
+      color: '#5aa9e6'
       style: none
       width: 2
       offset: 0
-    bg: '#27281b'
-    titleBg: '#e6e05a'
-    titleColor: '#14120a'
+    bg: '#15212d'
+    titleBg: '#5aa9e6'
+    titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
-    schemeId: yellow
+    schemeId: blue
+    gate: false
   - id: group_31
     title: 'window: mission rewards (wip)'
     members:
     - win:mission_rewards
     - ds:mission_rewards
     outline:
-      color: '#262c37'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#10141c'
-    titleBg: ''
-    titleColor: ''
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
+    schemeId: silver
   - id: group_36
     title: 'slot: 1'
     members:
@@ -7978,16 +7991,16 @@ layout:
     - sub:loadout_wide
     - sub:empty_slots
     outline:
-      color: '#7ddc7d'
+      color: '#e0556b'
       style: none
       width: 2
       offset: 0
-    bg: '#1a2820'
-    titleBg: '#7ddc7d'
-    titleColor: '#08121d'
+    bg: '#27161e'
+    titleBg: '#e0556b'
+    titleColor: '#1a0a0e'
     titleAlign: left
     titlePos: tl
-    schemeId: green
+    schemeId: pink
   - id: group_48
     title: subsets
     members:
@@ -7996,16 +8009,16 @@ layout:
     - sub:empty_general_slots
     - sub:empty_aura_slot
     outline:
-      color: '#7ddc7d'
+      color: '#5ae6c2'
       style: none
       width: 2
       offset: 0
-    bg: '#1a2820'
-    titleBg: '#7ddc7d'
+    bg: '#152929'
+    titleBg: '#5ae6c2'
     titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
-    schemeId: green
+    schemeId: teal
     gate: false
   - id: group_49
     title: suggestions, owned mods
@@ -8015,16 +8028,16 @@ layout:
     - sub:mod_suggestions_ranked
     - sub:mod_suggestions
     outline:
-      color: '#5ad7e6'
+      color: '#5ae6c2'
       style: none
       width: 2
       offset: 0
-    bg: '#15272d'
-    titleBg: '#5ad7e6'
+    bg: '#152929'
+    titleBg: '#5ae6c2'
     titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
-    schemeId: cyan
+    schemeId: teal
   - id: group_50
     title: 'slot: 6'
     members:
@@ -8052,16 +8065,16 @@ layout:
     - sub:unowned_suggestions_aura
     - sub:unowned_suggestions_ranked
     outline:
-      color: '#5ad7e6'
+      color: '#5ae6c2'
       style: none
       width: 2
       offset: 0
-    bg: '#15272d'
-    titleBg: '#5ad7e6'
+    bg: '#152929'
+    titleBg: '#5ae6c2'
     titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
-    schemeId: cyan
+    schemeId: teal
   - id: group_64
     title: overframe
     members:
@@ -8082,47 +8095,48 @@ layout:
     - producer:overframe_mods
     - producer:overframe_build_mods
     outline:
-      color: '#8a9ae6'
+      color: '#5aa9e6'
       style: none
       width: 2
       offset: 0
-    bg: '#1b1f2d'
-    titleBg: '#8a9ae6'
+    bg: '#15212d'
+    titleBg: '#5aa9e6'
     titleColor: '#08121d'
     titleAlign: left
     titlePos: tl
-    schemeId: indigo
+    schemeId: blue
   - id: group_65
     title: subsets
     members:
     - sub:relics_refinement_with_contents
     - sub:contents_with_price
     outline:
-      color: '#e6685a'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#27191b'
-    titleBg: '#e6685a'
-    titleColor: '#1a0a08'
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
-    schemeId: red
+    schemeId: silver
   - id: group_66
     title: subsets
     members:
     - sub:relics_with_content
     - sub:relics_with_content_view
     outline:
-      color: '#262c37'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#10141c'
-    titleBg: ''
-    titleColor: ''
+    bg: '#d3d8e0'
+    titleBg: '#aeb4c0'
+    titleColor: '#1a1d24'
     titleAlign: left
     titlePos: tl
+    schemeId: silver
   - id: group_68
     title: group_68
     members:
@@ -8181,15 +8195,43 @@ layout:
     - register:loadout_register
     - win:arsenal_warframe
     outline:
-      color: '#262c37'
+      color: '#8fe65a'
       style: none
       width: 2
       offset: 0
-    bg: '#10141c'
-    titleBg: ''
-    titleColor: ''
+    bg: '#1c291b'
+    titleBg: '#8fe65a'
+    titleColor: '#0c1408'
     titleAlign: left
     titlePos: tl
+    schemeId: chartreuse
+    gate: false
+  - id: group_72
+    title: group_72
+    members:
+    - win:live_game_window
+    - det:live_game_window:hud
+    - ro:live_game_window:ability_1_cd
+    - rohist:live_game_window:ability_1_cd
+    - ro:live_game_window:ability_2_cd
+    - rohist:live_game_window:ability_2_cd
+    - ro:live_game_window:ability_3_cd
+    - rohist:live_game_window:ability_3_cd
+    - ro:live_game_window:ability_4_cd
+    - rohist:live_game_window:ability_4_cd
+    - ro:live_game_window:warframe_name_live
+    - rohist:live_game_window:warframe_name_live
+    outline:
+      color: '#5aa9e6'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#15212d'
+    titleBg: '#5aa9e6'
+    titleColor: '#08121d'
+    titleAlign: left
+    titlePos: tl
+    schemeId: blue
     gate: false
   float_windows: {}
   super_groups:
@@ -8199,13 +8241,13 @@ layout:
     - group_16
     - group_19
     outline:
-      color: '#5aa9e6'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#0e131a'
-    titleColor: '#5aa9e6'
-    schemeId: blue
+    bg: '#101218'
+    titleColor: '#aeb4c0'
+    schemeId: silver
   - id: sgroup_5
     title: MAIN
     members:
@@ -8213,12 +8255,13 @@ layout:
     - group_27
     - group_18
     outline:
-      color: '#2b323f'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#0d1017'
-    titleColor: ''
+    bg: '#101218'
+    titleColor: '#aeb4c0'
+    schemeId: silver
   - id: sgroup_7
     title: 'live: loadout'
     members:
@@ -8240,38 +8283,41 @@ layout:
     - group_49
     - group_48
     - group_70
+    - group_71
     outline:
-      color: '#7ddc7d'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#0f1516'
-    titleColor: '#7ddc7d'
-    schemeId: green
+    bg: '#101218'
+    titleColor: '#aeb4c0'
+    schemeId: silver
   - id: sgroup_9
     title: 'live: relic rewards'
     members:
     - group_11
     - group_68
     outline:
-      color: '#2b323f'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#0d1017'
-    titleColor: ''
+    bg: '#101218'
+    titleColor: '#aeb4c0'
+    schemeId: silver
   - id: sgroup_10
     title: 'live: relic select'
     members:
     - group_22
     - group_66
     outline:
-      color: '#2b323f'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#0d1017'
-    titleColor: ''
+    bg: '#101218'
+    titleColor: '#aeb4c0'
+    schemeId: silver
   - id: sgroup_11
     title: sgroup_11
     members:
@@ -8287,25 +8333,28 @@ layout:
     title: 'live: hud'
     members:
     - group_28
+    - group_72
     outline:
-      color: '#2b323f'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#0d1017'
-    titleColor: ''
+    bg: '#101218'
+    titleColor: '#aeb4c0'
+    schemeId: silver
   - id: sgroup_13
     title: 'live: relic refinement'
     members:
     - group_25
     - group_65
     outline:
-      color: '#2b323f'
+      color: '#8a91a0'
       style: none
       width: 2
       offset: 0
-    bg: '#0d1017'
-    titleColor: ''
+    bg: '#101218'
+    titleColor: '#aeb4c0'
+    schemeId: silver
   satellites:
   - vt:sub:statistic_prices_joined
   - vt:ds:ee_log_
@@ -8318,20 +8367,18 @@ layout:
   - vt:ds:relics_offered
   - vt:sub:relic_rewards_limit
   - vt:ds:relic_prices
-  - rohist:live_game_window:ro_92
-  - reghist:register
-  - prochist:process_renamed
   - rohist:live_game_window:ability_2_cd
   - rohist:live_game_window:ability_4_cd
   - rohist:live_game_window:ability_3_cd
   - rohist:live_game_window:ability_1_cd
+  - reghist:ab_register
+  - rohist:live_game_window:warframe_name_live
   sub_groups:
   - id: subgroup_5
     parent: group_22
     title: ''
     members:
     - item:relic_select:guard
-    - tell:relic_select:guard:tell_no_relic
     outline:
       color: '#e69a5a'
       style: none
@@ -8347,8 +8394,6 @@ layout:
     title: ''
     members:
     - item:relic_select:relic_item
-    - fld:relic_select:relic_item:name
-    - fld:relic_select:relic_item:count
     outline:
       color: '#e69a5a'
       style: none
@@ -8359,25 +8404,6 @@ layout:
     titleColor: '#e69a5a'
     titleAlign: left
     schemeId: orange
-  - id: subgroup_10
-    parent: group_25
-    title: ''
-    members:
-    - win:relic_refinement
-    - det:relic_refinement:detect_h
-    - sb:relic_refinement:scrollbar
-    - det:relic_refinement:detect_1
-    - ds:relics_refinement
-    outline:
-      color: '#2c313c'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#0f1117'
-    titleBg: ''
-    titleColor: '#2c313c'
-    titleAlign: left
-    schemeId: slate
   - id: subgroup_11
     parent: group_25
     title: ''
@@ -8393,56 +8419,6 @@ layout:
     titleColor: '#7ddc7d'
     titleAlign: left
     schemeId: green
-  - id: subgroup_16
-    parent: group_16
-    title: ''
-    members:
-    - item:mod_window:drop_item
-    - tell:mod_window:drop_item:tell_3
-    outline:
-      color: '#54571e'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#141613'
-    titleBg: ''
-    titleColor: '#ff1100'
-    titleAlign: left
-    schemeId: s_e3a0ee58-7f74-41c5-b25d-fa65cffe68a2
-  - id: subgroup_17
-    parent: group_16
-    title: ''
-    members:
-    - item:mod_window:mod
-    - fld:mod_window:mod:mod_name
-    - fld:mod_window:mod:mod_drain
-    - fld:mod_window:mod:mod_count
-    outline:
-      color: '#54571e'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#141613'
-    titleBg: ''
-    titleColor: '#ff1100'
-    titleAlign: left
-    schemeId: s_e3a0ee58-7f74-41c5-b25d-fa65cffe68a2
-  - id: subgroup_18
-    parent: group_16
-    title: ''
-    members:
-    - win:mod_window
-    - det:mod_window:detect_h
-    outline:
-      color: '#54571e'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#141613'
-    titleBg: ''
-    titleColor: '#ff1100'
-    titleAlign: left
-    schemeId: s_e3a0ee58-7f74-41c5-b25d-fa65cffe68a2
   - id: subgroup_19
     parent: group_19
     title: ''
@@ -8461,90 +8437,6 @@ layout:
     titleColor: '#e69a5a'
     titleAlign: left
     schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
-  - id: subgroup_20
-    parent: group_19
-    title: ''
-    members:
-    - item:equipment_window:normal
-    - fld:equipment_window:normal:name
-    - fld:equipment_window:normal:count
-    outline:
-      color: '#e69a5a'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#261e1b'
-    titleBg: ''
-    titleColor: '#e69a5a'
-    titleAlign: left
-    schemeId: orange
-  - id: subgroup_30
-    parent: group_25
-    title: ''
-    members:
-    - item:relic_refinement:not_owned
-    - tell:relic_refinement:not_owned:tell_3
-    - tell:relic_refinement:not_owned:tell_4
-    outline:
-      color: '#e69a5a'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#261e1b'
-    titleBg: ''
-    titleColor: '#e69a5a'
-    titleAlign: left
-    schemeId: orange
-  - id: subgroup_31
-    parent: group_11
-    title: ''
-    members:
-    - item:relic_rewards:item_1
-    - fld:relic_rewards:item_1:name
-    outline:
-      color: '#e69a5a'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#261e1b'
-    titleBg: ''
-    titleColor: '#e69a5a'
-    titleAlign: left
-    schemeId: orange
-  - id: subgroup_33
-    parent: group_11
-    title: ''
-    members:
-    - win:relic_rewards
-    - det:relic_rewards:detect_h
-    - prev:relic_rewards
-    outline:
-      color: '#5aa9e6'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#15202c'
-    titleBg: ''
-    titleColor: '#5aa9e6'
-    titleAlign: left
-    schemeId: blue
-  - id: subgroup_34
-    parent: group_25
-    title: ''
-    members:
-    - item:relic_refinement:relic_item
-    - fld:relic_refinement:relic_item:name
-    - fld:relic_refinement:relic_item:count
-    outline:
-      color: '#e69a5a'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#261e1b'
-    titleBg: ''
-    titleColor: '#e69a5a'
-    titleAlign: left
-    schemeId: orange
   - id: subgroup_35
     parent: group_19
     title: ''
@@ -8563,24 +8455,6 @@ layout:
     titleColor: '#5aa9e6'
     titleAlign: left
     schemeId: blue
-  - id: subgroup_38
-    parent: group_22
-    title: ''
-    members:
-    - win:relic_select
-    - det:relic_select:detect_h
-    - sb:relic_select:scrollbar
-    - ds:relics_select
-    outline:
-      color: '#3a4150'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#11131a'
-    titleBg: ''
-    titleColor: '#3a4150'
-    titleAlign: left
-    schemeId: stone
   schemes:
   - id: s_73972008-70b7-4159-add1-51fb9c3fd516
     name: loadout_groups
