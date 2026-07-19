@@ -9,24 +9,18 @@ fields:
   min_confidence: 0.0
   isolate: false
   glyph_check: false
-  stability_reads: 0
-  stability_min: 0
 - id: count
   type: number
   rules: []
   min_confidence: 0.0
   isolate: false
   glyph_check: false
-  stability_reads: 0
-  stability_min: 0
 - id: rank
   type: number
   rules: []
   min_confidence: 0.0
   isolate: false
   glyph_check: false
-  stability_reads: 0
-  stability_min: 0
 windows:
 - id: live_game_window
   fields:
@@ -36,16 +30,12 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   - id: rof_3
     type: number
     rules: []
     min_confidence: 0.8
     isolate: false
     glyph_check: false
-    stability_reads: 3
-    stability_min: 2
     preprocess:
       mode: color
       colors:
@@ -60,8 +50,6 @@ windows:
     min_confidence: 0.8
     isolate: false
     glyph_check: false
-    stability_reads: 3
-    stability_min: 2
     preprocess:
       mode: color
       colors:
@@ -76,8 +64,6 @@ windows:
     min_confidence: 0.8
     isolate: false
     glyph_check: false
-    stability_reads: 3
-    stability_min: 2
     preprocess:
       mode: color
       colors:
@@ -92,8 +78,6 @@ windows:
     min_confidence: 0.8
     isolate: false
     glyph_check: false
-    stability_reads: 3
-    stability_min: 2
     preprocess:
       mode: color
       colors:
@@ -108,8 +92,6 @@ windows:
     min_confidence: 0.8
     isolate: false
     glyph_check: false
-    stability_reads: 3
-    stability_min: 2
     preprocess:
       mode: color
       colors:
@@ -123,8 +105,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -195,9 +175,9 @@ windows:
     enabled: true
   - id: warframe_name_live
     box:
-      x: 0.876690813884643
+      x: 0.8693991472179767
       y: 0.09706910459801021
-      w: 0.08550724637681151
+      w: 0.09149682971014482
       h: 0.02904006453347674
     field: rof_90
     enabled: true
@@ -242,8 +222,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   - id: count
     type: number
     rules:
@@ -256,16 +234,12 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   - id: arcane_level
     type: diamonds
     rules: []
     min_confidence: 0.0
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   data_area:
     x: 0.031884303692792056
     y: 0.17565452653306793
@@ -479,8 +453,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   - id: mod_drain
     type: number
     rules:
@@ -491,8 +463,6 @@ windows:
     min_confidence: 0.5
     isolate: true
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   - id: mod_count
     type: number
     rules:
@@ -512,8 +482,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   data_area:
     x: 0.04033210220688822
     y: 0.4859775443166545
@@ -692,8 +660,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   data_area:
     x: 0.2472434730244972
     y: 0.19635388680544943
@@ -791,8 +757,6 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   - id: count
     type: number
     rules:
@@ -812,8 +776,6 @@ windows:
     min_confidence: 0.4
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   data_area:
     x: 0.04068236562341155
     y: 0.1729023165854181
@@ -984,8 +946,6 @@ windows:
     min_confidence: 0.75
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   - id: count
     type: number
     rules:
@@ -998,8 +958,6 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   data_area:
     x: 0.0449550474139316
     y: 0.17880592428756362
@@ -1235,32 +1193,24 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   - id: drain
     type: number
     rules: []
     min_confidence: 0.7
     isolate: true
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   - id: rank
     type: pips
     rules: []
     min_confidence: 0.6
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
   - id: rof_9
     type: text
     rules: []
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1273,8 +1223,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1287,8 +1235,6 @@ windows:
     min_confidence: 0.6
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1301,8 +1247,6 @@ windows:
     min_confidence: 0.6
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1315,8 +1259,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1329,8 +1271,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1343,8 +1283,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1357,8 +1295,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1371,8 +1307,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1385,8 +1319,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1399,8 +1331,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1413,8 +1343,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1427,8 +1355,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1441,8 +1367,6 @@ windows:
     min_confidence: 0.65
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1455,8 +1379,6 @@ windows:
     min_confidence: 0.6
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1469,8 +1391,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1483,8 +1403,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1497,8 +1415,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1511,8 +1427,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1525,8 +1439,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1539,8 +1451,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1553,8 +1463,6 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1567,8 +1475,6 @@ windows:
     min_confidence: 0.6
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1581,8 +1487,6 @@ windows:
     min_confidence: 0.6
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1595,8 +1499,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1609,8 +1511,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1623,8 +1523,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1637,8 +1535,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1651,8 +1547,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1665,8 +1559,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1679,8 +1571,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1693,8 +1583,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1707,8 +1595,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1721,8 +1607,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1735,8 +1619,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1749,8 +1631,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1763,8 +1643,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1777,8 +1655,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1791,8 +1667,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1805,8 +1679,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1819,8 +1691,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1833,8 +1703,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1847,8 +1715,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1861,8 +1727,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -1875,8 +1739,6 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
-    stability_reads: 0
-    stability_min: 0
     preprocess:
       mode: none
       colors: []
@@ -4531,11 +4393,8 @@ triggers:
   interval_s: 7200.0
   watch: []
   readout_watch: []
-  readout_op: gte
-  readout_value: 0.0
   register_watch: []
-  register_conds: {}
-  register_logic: or
+  gates: []
   targets:
   - wf_market_live
   enabled: true
@@ -4546,11 +4405,8 @@ triggers:
   watch:
   - relic_rewards_limit
   readout_watch: []
-  readout_op: gte
-  readout_value: 0.0
   register_watch: []
-  register_conds: {}
-  register_logic: or
+  gates: []
   targets:
   - wf_market_relic
   enabled: true
@@ -4563,50 +4419,112 @@ triggers:
   watch:
   - wf_market_relic
   readout_watch: []
-  readout_op: gte
-  readout_value: 0.0
   register_watch: []
-  register_conds: {}
-  register_logic: or
+  gates: []
   targets:
   - relic_sound
   - toast_2
   enabled: true
   ready_field: ''
-- id: trigger
+- id: trigger_ab1
   kind: on_register
   interval_s: 300.0
-  watch:
-  - relics_select
+  watch: []
   readout_watch: []
-  readout_op: gte
-  readout_value: 0.0
   register_watch:
   - register
-  register_conds:
-    register:
-    - key: ability_1_cd
-      when: lt
-      value: 3.0
-      value2: 0.0
-    - key: ability_2_cd
-      when: lt
-      value: 3.0
-      value2: 0.0
-    - key: ability_3_cd
-      when: lt
-      value: 3.0
-      value2: 0.0
-    - key: ability_4_cd
-      when: eq
-      value: 3.0
-      value2: 0.0
-  register_logic: or
+  gates:
+  - gate_ab1
   targets:
   - bob
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
+- id: trigger_ab2
+  kind: on_register
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch:
+  - register
+  gates:
+  - gate_ab2
+  - not_protea
+  targets:
+  - bob
+  enabled: true
+  throttle_ms: 3000.0
+  ready_field: ''
+- id: trigger_ab3
+  kind: on_register
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch:
+  - register
+  gates:
+  - gate_ab3
+  targets:
+  - bob
+  enabled: true
+  throttle_ms: 3000.0
+  ready_field: ''
+- id: trigger_ab4
+  kind: on_register
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch:
+  - register
+  gates:
+  - gate_ab4
+  targets:
+  - bob
+  enabled: true
+  throttle_ms: 3000.0
+  ready_field: ''
+gates:
+- id: gate_ab1
+  source: register:register#ability_1_cd
+  conds:
+  - when: lt
+    arg: '3'
+  logic: or
+  negate: false
+  enabled: true
+- id: gate_ab2
+  source: register:register#ability_2_cd
+  conds:
+  - when: lt
+    arg: '3'
+  logic: or
+  negate: false
+  enabled: true
+- id: gate_ab3
+  source: register:register#ability_3_cd
+  conds:
+  - when: lt
+    arg: '3'
+  logic: or
+  negate: false
+  enabled: true
+- id: gate_ab4
+  source: register:register#ability_4_cd
+  conds:
+  - when: eq
+    arg: '3'
+  logic: or
+  negate: false
+  enabled: true
+- id: not_protea
+  source: register:wf_name_live#warframe_name_live
+  conds:
+  - when: contains
+    arg: protea
+  logic: or
+  negate: true
+  enabled: true
+routers: []
 toasts:
 - id: toast_2
   title: ''
@@ -4944,6 +4862,24 @@ sounds:
     crush: 11
   volume: 0.7
   enabled: true
+- id: test_sound
+  file: ''
+  synth:
+    wave: square
+    points:
+    - t: 0.0
+      p: 0.565
+    - t: 0.5
+      p: 0.539
+    - t: 1.0
+      p: 0.862
+    length_ms: 596
+    attack: 15
+    decay: 63
+    vibrato: 43
+    crush: 0
+  volume: 1.0
+  enabled: true
 actions: []
 registers:
 - id: loadout_register
@@ -4966,17 +4902,17 @@ registers:
   - process:process_renamed
   title: ''
   enabled: true
-  capacity: 3
+  capacity: 20
   aggregate: stable
   ignore_empty: false
   persist: ''
-- id: register_2
+- id: wf_name_live
   sources:
   - process:proc_live_warframe_name
   title: ''
   enabled: true
-  capacity: 1
-  aggregate: ''
+  capacity: 5
+  aggregate: common
   ignore_empty: false
   persist: ''
 processes:
@@ -4989,7 +4925,7 @@ processes:
   - ref: readout:ability_4_cd
   rules:
   - when: no_digit
-    then: drop
+    then: blank
   - when: always
     then: extract
     strategy: number
@@ -4997,10 +4933,10 @@ processes:
   - when: always
     then: decimal
   - when: below
-    then: drop
+    then: blank
     arg: '0'
   - when: above
-    then: drop
+    then: blank
     arg: '200'
   enabled: true
 - id: proc_slot_name
@@ -5130,6 +5066,10 @@ processes:
     then: fold
   - when: always
     then: lowercase
+  - when: always
+    then: extract
+    strategy: alphanum_before
+    sep: '['
   enabled: true
 dictionaries:
 - id: wiki
@@ -6906,28 +6846,9 @@ layout:
       custH: true
       softW: false
       softH: true
-    trigger:trigger:
-      x: -1600.0
-      y: -5480.0
-      w: 380.0
-      h: 305.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-    register:register_2:
-      x: -1880.0
-      y: -4960.0
-      w: 400.0
-      h: 280.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: false
     process:proc_live_warframe_name:
-      x: -2280.0
-      y: -4960.0
+      x: -2360.0
+      y: -4940.0
       w: 360.0
       h: 280.0
       collapsed: false
@@ -6935,6 +6856,81 @@ layout:
       custH: true
       softW: true
       softH: true
+    trigger:trigger_ab1:
+      x: -800.0
+      y: -4640.0
+      collapsed: false
+    trigger:trigger_ab2:
+      x: -800.0
+      y: -4380.0
+      collapsed: false
+    trigger:trigger_ab3:
+      x: -800.0
+      y: -4120.0
+      collapsed: false
+    trigger:trigger_ab4:
+      x: -800.0
+      y: -3820.0
+      collapsed: false
+    gate:gate_ab1:
+      x: -1420.0
+      y: -4720.0
+      w: 340.0
+      h: 172.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    gate:gate_ab2:
+      x: -1420.0
+      y: -4380.0
+      w: 340.0
+      h: 172.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    gate:gate_ab3:
+      x: -1420.0
+      y: -4120.0
+      w: 340.0
+      h: 172.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    gate:gate_ab4:
+      x: -1420.0
+      y: -3820.0
+      w: 340.0
+      h: 172.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+    sound:test_sound:
+      x: -820.0
+      y: -5160.0
+      collapsed: false
+    register:wf_name_live:
+      x: -1960.0
+      y: -4940.0
+      w: 400.0
+      h: 300.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    gate:not_protea:
+      x: -1860.0
+      y: -4560.0
+      w: 380.0
+      h: 130.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
   tables:
     warframe:ds:master:
       sorts:
@@ -7326,63 +7322,67 @@ layout:
       sorts: []
     rohist:live_game_window:ability_1_cd:
       widths:
-        when: 151
-        raw: 40
+        when: 147
+        raw: 36
         empty→drop: 36
         always→extract: 43
         always→floor: 43
-        confidence: 40
+        confidence: 36
         consensus: 40
         no_digit→drop: 43
         below→drop: 43
         above→drop: 43
-        value: 40
+        value: 36
+        gap: 55
       sorts: []
     rohist:live_game_window:ability_2_cd:
       widths:
-        when: 150
-        raw: 39
+        when: 147
+        raw: 36
         always→extract: 43
         always→floor: 43
         empty→drop: 36
         consensus: 44
-        confidence: 39
+        confidence: 36
         no_digit→drop: 43
         below→drop: 43
         above→drop: 43
-        value: 39
+        value: 36
+        gap: 55
       sorts:
       - col: when
         dir: -1
     rohist:live_game_window:ability_3_cd:
       widths:
-        when: 151
-        raw: 40
+        when: 147
+        raw: 36
         always→extract: 43
         always→floor: 43
-        value: 40
+        value: 36
         empty→drop: 36
-        confidence: 40
+        confidence: 36
         consensus: 40
         no_digit→drop: 43
         below→drop: 43
         above→drop: 43
+        gap: 55
       sorts:
       - col: when
         dir: -1
     rohist:live_game_window:ability_4_cd:
       sorts: []
       widths:
-        when: 150
-        raw: 39
+        when: 147
+        raw: 36
         no_digit→drop: 43
         always→extract: 43
         always→floor: 43
-        value: 39
-        confidence: 39
+        value: 36
+        confidence: 36
         consensus: 44
         below→drop: 43
         above→drop: 43
+        gap: 55
       order: []
     prodhist:wf_market_relic:
       widths:
@@ -7735,8 +7735,18 @@ layout:
     - rohist:live_game_window:ability_3_cd
     - sound:bob
     - trigger:trigger
-    - register:register_2
+    - register:wf_name_live
     - process:proc_live_warframe_name
+    - gate:gate_ab1
+    - trigger:trigger_ab1
+    - trigger:trigger_ab2
+    - trigger:trigger_ab3
+    - trigger:trigger_ab4
+    - gate:gate_ab2
+    - gate:gate_ab3
+    - gate:gate_ab4
+    - sound:test_sound
+    - gate:not_protea
     outline:
       color: '#e6e05a'
       style: none
