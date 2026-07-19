@@ -29,6 +29,12 @@ const C = {
     laneGap: 12,     // separation between bundled parallel wires
     faceStick: 50,   // bias to keep a connector's previous face (hysteresis) — < bendCost, so a
                                       // clearly better route still switches, but ties/small margins don't flicker
+    bench: false,    // console.log per-phase timings each routeGraph call (window.__route.bench=true; __reroute())
+    occCong: 40,     // congestion penalty per line already occupying a corridor bucket a route would reuse
+    occCell: 20,     // px width of a congestion corridor bucket (lines within this count as sharing a run)
+    haloCost: 150,    // light soft penalty for skimming a node's halo (0 disables) — nudges lines to
+                     // keep a little clearance off node walls so bundles don't pile against them
+    nodeHalo: 30,    // px the halo extends past each node edge (the soft-avoid ring around the hard body)
     faceBias: 260,   // soft preference for the face pointing AT the other endpoint: a face is charged
                                       // up to this (px-equiv) when its normal points fully AWAY, 0 when it points
                                       // straight at the target. Competes with length+bends, so a genuinely
@@ -44,71 +50,242 @@ const DC = { N: 0, S: 1, E: 2, W: 3 };
 const outDir = (s) => (faceOut[s][0] !== 0 ? (faceOut[s][0] > 0 ? "E" : "W") : (faceOut[s][1] > 0 ? "S" : "N"));
 const inDirOf = (s) => (faceOut[s][0] !== 0 ? (faceOut[s][0] > 0 ? "W" : "E") : (faceOut[s][1] > 0 ? "N" : "S"));
 const rev = (d) => (d === "N" ? "S" : d === "S" ? "N" : d === "E" ? "W" : "E");
+// DC index of rev(d), by DC index of d — lets the hot loop compare directions as ints (see makeAStar).
+const REVI = [DC.S, DC.N, DC.W, DC.E];
 
-// Shared empty group-set so the (very common) no-group edge doesn't allocate a Set per option.
-// astar guards `e.gset && e.gset.size`, so an empty shared set is read-only-safe.
-const EMPTY = new Set();
-const mkSet = (a) => (a.length ? new Set(a) : EMPTY);
+// ---- interned soft-crossing sets ---------------------------------------------
+// Every edge carries the set of soft rects its segments cross. That used to be a real `Set` per
+// edge — ~258k of them on the warframe fixture, ~129k distinct, averaging 5 members. But the SAME
+// handful of crossing-sets recur over and over (all the edges threading one gap cross exactly the
+// same halos), so they are interned: identical member lists share one immutable record.
+//
+// The record also caches `sum` — the total penalty for crossing everything in it. astar needs that on
+// every expansion, and caching it on the shared record means it's computed once per DISTINCT set
+// rather than once per edge. `sum` is lazy (-1 = not yet computed) because softCost isn't in scope
+// here. Members are sorted and deduped so the key is canonical; astar only ever reads.
+const EMPTY_IDS = new Int32Array(0);
+const EMPTY_G = { n: 0, ids: EMPTY_IDS, sum: 0 };
+// Scratch buffer the softList calls of one edgeOpts option append into — interning reads it and, on a
+// hit (the overwhelmingly common case), copies nothing. Sized per pass in routeGraph.
+let SCR = new Int32Array(512);
+function internG(n, table) {
+    if (!n) return EMPTY_G;
+    if (n > 1) {   // insertion sort + dedupe in place: n averages ~5, so a comparator sort costs more
+        for (let i = 1; i < n; i++) { const v = SCR[i]; let j = i - 1; while (j >= 0 && SCR[j] > v) { SCR[j + 1] = SCR[j]; j--; } SCR[j + 1] = v; }
+        let w = 1;
+        for (let i = 1; i < n; i++) if (SCR[i] !== SCR[i - 1]) SCR[w++] = SCR[i];
+        n = w;
+    }
+    // key = the members packed straight into a string, one char each (soft indices are well under
+    // 2^16). Cheaper to build than a join, and canonical because the members are sorted.
+    const key = n === 1 ? SCR[0] : String.fromCharCode.apply(null, SCR.subarray(0, n));
+    let g = table.get(key);
+    if (!g) { g = { n, ids: SCR.slice(0, n), sum: -1 }; table.set(key, g); }
+    return g;
+}
+const gHas = (g, v) => { const ids = g.ids; for (let i = 0; i < g.n; i++) if (ids[i] === v) return true; return false; };
 
-// `hb` = flat obstacle bounds {n, x0,y0,x1,y1} (typed arrays), prebuilt once per routeGraph call.
-// Reading flats in the O(N^3) inner loop avoids object-property chasing and recomputing x+w / y+h
-// on every iteration — same overlap test, identical result as the old per-rect-object scan.
+// ---- band index over a rect set ---------------------------------------------
+// segHitsHard/softList used to scan EVERY rect on EVERY candidate segment. edgeOpts emits up to 3
+// segments per call and the whole router funnels through it (grid = 336k calls, ports = 672k, plus
+// every astar expansion), so those two linear scans were the dominant cost of a route pass.
+//
+// Every segment tested here is AXIS-ALIGNED, so its bbox is degenerate on one axis: a horizontal
+// segment can only hit rects straddling its single y, a vertical one rects straddling its single x.
+// So index each rect set TWICE — into thin y-bands and thin x-bands — and let a query use whichever
+// axis its bbox is thin on. That is one or two band lookups per query instead of a full scan.
+// A 2-D cell grid does NOT work here: a canvas-wide horizontal run crosses every column, so it drags
+// back the whole 256px band anyway.
+//
+// The band contents are a strict SUPERSET of what can match (built from raw rect bounds while the
+// overlap test shrinks each rect by eps) and the SAME exact test then runs on every candidate, so
+// results are identical to the full scan by construction — a lookup narrowing, not an approximation.
+// Layout is CSR: `start[k]..start[k+1]` indexes into `items`.
+const BAND = 64;   // px per band — ~2-4 entries per node-sized rect, 1-2 bands touched per query
+function buildAxisBands(lo, hi, n) {
+    let min = Infinity, max = -Infinity;
+    for (let i = 0; i < n; i++) { if (lo[i] < min) min = lo[i]; if (hi[i] > max) max = hi[i]; }
+    const nb = Math.max(1, Math.min(8192, Math.floor((max - min) / BAND) + 1));
+    const band = Math.max(BAND, (max - min) / nb);
+    const bi = (v) => { const k = Math.floor((v - min) / band); return k < 0 ? 0 : k >= nb ? nb - 1 : k; };
+    const start = new Int32Array(nb + 1);
+    for (let i = 0; i < n; i++) { const a = bi(lo[i]), b = bi(hi[i]); for (let k = a; k <= b; k++) start[k + 1]++; }
+    for (let k = 0; k < nb; k++) start[k + 1] += start[k];
+    const items = new Int32Array(start[nb]), fill = start.slice(0, nb);
+    for (let i = 0; i < n; i++) { const a = bi(lo[i]), b = bi(hi[i]); for (let k = a; k <= b; k++) items[fill[k]++] = i; }
+    return { nb, band, bi, start, items };
+}
+function buildRectGrid(rx0, ry0, rx1, ry1, n) {
+    if (!n) return null;
+    return { x0: rx0, y0: ry0, x1: rx1, y1: ry1, byX: buildAxisBands(rx0, rx1, n), byY: buildAxisBands(ry0, ry1, n) };
+}
+// Pick the axis whose query range spans fewer bands, and return [index, firstBand, lastBand].
+function pickBands(G, x0, x1, y0, y1) {
+    const bx = G.byX, by = G.byY;
+    const ax0 = bx.bi(x0), ax1 = bx.bi(x1), ay0 = by.bi(y0), ay1 = by.bi(y1);
+    return (ax1 - ax0) <= (ay1 - ay0) ? [bx, ax0, ax1] : [by, ay0, ay1];
+}
+
+// `hb` = flat obstacle bounds {n, x0,y0,x1,y1} (typed arrays) + `hb.grid`, prebuilt once per
+// routeGraph call. Reading flats in the hot loop avoids object-property chasing and recomputing
+// x+w / y+h on every iteration. Falls back to the full scan when there is no index.
 function segHitsHard(ax, ay, bx, by, hb, eps) {
     eps = eps == null ? 1 : eps;
     const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), y0 = Math.min(ay, by), y1 = Math.max(ay, by);
-    const n = hb.n, rx0 = hb.x0, ry0 = hb.y0, rx1 = hb.x1, ry1 = hb.y1;
-    for (let i = 0; i < n; i++) if (x1 > rx0[i] + eps && x0 < rx1[i] - eps && y1 > ry0[i] + eps && y0 < ry1[i] - eps) return true;
+    const rx0 = hb.x0, ry0 = hb.y0, rx1 = hb.x1, ry1 = hb.y1, G = hb.grid;
+    if (!G) { const n = hb.n; for (let i = 0; i < n; i++) if (x1 > rx0[i] + eps && x0 < rx1[i] - eps && y1 > ry0[i] + eps && y0 < ry1[i] - eps) return true; return false; }
+    const [B, b0, b1] = pickBands(G, x0, x1, y0, y1), st = B.start, it = B.items;
+    for (let k = b0; k <= b1; k++) for (let p = st[k], q = st[k + 1]; p < q; p++) {
+        const i = it[p];
+        if (x1 > rx0[i] + eps && x0 < rx1[i] - eps && y1 > ry0[i] + eps && y0 < ry1[i] - eps) return true;
+    }
     return false;
 }
-function softList(ax, ay, bx, by, soft) {
-    const out = []; const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), y0 = Math.min(ay, by), y1 = Math.max(ay, by);
-    for (let i = 0; i < soft.length; i++) { const g = soft[i]; if (x1 > g.x0 + 1 && x0 < g.x1 - 1 && y1 > g.y0 + 1 && y0 < g.y1 - 1) out.push(i); }
-    return out;
+// Returns indices into `soft` of every penalty rect the segment crosses. A rect spanning several
+// buckets can be reported twice — harmless, the caller always funnels the list through internG.
+// `soft.grid` is the index (see buildRectGrid); its flats mirror soft[i].x0/y0/x1/y1.
+// Appends the indices of every penalty rect the segment crosses into the shared SCR scratch, starting
+// at `at`, and returns the new count. Writing into scratch rather than returning a fresh array keeps
+// the hot path allocation-free — internG sorts/dedupes SCR in place and usually finds an existing
+// record, so nothing is retained.
+function softList(ax, ay, bx, by, soft, at) {
+    const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), y0 = Math.min(ay, by), y1 = Math.max(ay, by);
+    const G = soft.grid;
+    if (!G) { for (let i = 0; i < soft.length; i++) { const g = soft[i]; if (x1 > g.x0 + 1 && x0 < g.x1 - 1 && y1 > g.y0 + 1 && y0 < g.y1 - 1) SCR[at++] = i; } return at; }
+    const sx0 = G.x0, sy0 = G.y0, sx1 = G.x1, sy1 = G.y1;
+    const [B, b0, b1] = pickBands(G, x0, x1, y0, y1), st = B.start, it = B.items;
+    for (let k = b0; k <= b1; k++) for (let p = st[k], q = st[k + 1]; p < q; p++) {
+        const i = it[p];
+        if (x1 > sx0[i] + 1 && x0 < sx1[i] - 1 && y1 > sy0[i] + 1 && y0 < sy1[i] - 1) SCR[at++] = i;
+    }
+    return at;
 }
-// the 1-bend L (or straight) options A=(ax,ay)->B=(bx,by) that clear all hard rects
-function edgeOpts(ax, ay, bx, by, hb, soft) {
+// the 1-bend L (or straight) options A=(ax,ay)->B=(bx,by) that clear all hard rects.
+// `wantD1` (optional) = the only leave-direction the caller will keep. Every option's d1 follows from
+// the geometry alone, BEFORE any obstacle test, so a caller that filters on d1 anyway (the face-port
+// precompute, which forces a perpendicular exit, and the gate fallbacks) hands it in and the rejected
+// variant costs nothing instead of a full segHitsHard + softList pair. Same options out either way.
+function edgeOpts(ax, ay, bx, by, hb, soft, wantD1) {
     const out = [], len = Math.abs(ax - bx) + Math.abs(ay - by);
     if (len < 0.5) return out;
     const dh = bx > ax ? "E" : "W", dv = by > ay ? "S" : "N";
-    if (Math.abs(ax - bx) < 0.5) { if (!segHitsHard(ax, ay, bx, by, hb)) out.push({ d1: dv, d2: dv, corner: null, len, gset: mkSet(softList(ax, ay, bx, by, soft)) }); return out; }
-    if (Math.abs(ay - by) < 0.5) { if (!segHitsHard(ax, ay, bx, by, hb)) out.push({ d1: dh, d2: dh, corner: null, len, gset: mkSet(softList(ax, ay, bx, by, soft)) }); return out; }
-    const c1 = [bx, ay];
-    if (!segHitsHard(ax, ay, c1[0], c1[1], hb) && !segHitsHard(c1[0], c1[1], bx, by, hb))
-        out.push({ d1: dh, d2: dv, corner: c1, len, gset: mkSet(softList(ax, ay, c1[0], c1[1], soft).concat(softList(c1[0], c1[1], bx, by, soft))) });
-    const c2 = [ax, by];
-    if (!segHitsHard(ax, ay, c2[0], c2[1], hb) && !segHitsHard(c2[0], c2[1], bx, by, hb))
-        out.push({ d1: dv, d2: dh, corner: c2, len, gset: mkSet(softList(ax, ay, c2[0], c2[1], soft).concat(softList(c2[0], c2[1], bx, by, soft))) });
+    const ih = DC[dh], iv = DC[dv];
+    const gt = soft.intern;
+    if (Math.abs(ax - bx) < 0.5) { if (wantD1 && wantD1 !== dv) return out; if (!segHitsHard(ax, ay, bx, by, hb)) out.push({ d1: dv, d2: dv, i1: iv, i2: iv, corner: null, len, gset: internG(softList(ax, ay, bx, by, soft, 0), gt) }); return out; }
+    if (Math.abs(ay - by) < 0.5) { if (wantD1 && wantD1 !== dh) return out; if (!segHitsHard(ax, ay, bx, by, hb)) out.push({ d1: dh, d2: dh, i1: ih, i2: ih, corner: null, len, gset: internG(softList(ax, ay, bx, by, soft, 0), gt) }); return out; }
+    if (!wantD1 || wantD1 === dh) {
+        const c1 = [bx, ay];
+        if (!segHitsHard(ax, ay, c1[0], c1[1], hb) && !segHitsHard(c1[0], c1[1], bx, by, hb))
+            out.push({ d1: dh, d2: dv, i1: ih, i2: iv, corner: c1, len, gset: internG(softList(c1[0], c1[1], bx, by, soft, softList(ax, ay, c1[0], c1[1], soft, 0)), gt) });
+    }
+    if (!wantD1 || wantD1 === dv) {
+        const c2 = [ax, by];
+        if (!segHitsHard(ax, ay, c2[0], c2[1], hb) && !segHitsHard(c2[0], c2[1], bx, by, hb))
+            out.push({ d1: dv, d2: dh, i1: iv, i2: ih, corner: c2, len, gset: internG(softList(c2[0], c2[1], bx, by, soft, softList(ax, ay, c2[0], c2[1], soft, 0)), gt) });
+    }
     return out;
 }
 
 // A* over waypoints, state = (node, entryDir); cost = length + bendCost*bends + group penalty.
 // Returns the chain [{node, corner}] start->goal (corner = the L-bend used to reach that node).
-function astar(WP, edgesOf, start, goal, ownGroups, softCost) {
-    const sid = (n, d) => n * 5 + (d == null ? 4 : DC[d]);
-    const h = (i) => Math.abs(WP[i][0] - WP[goal][0]) + Math.abs(WP[i][1] - WP[goal][1]);
-    const dist = new Map(), prev = new Map();
-    const pq = [[h(start), 0, start, null]];
-    const push = (f, g, n, d) => { pq.push([f, g, n, d]); let k = pq.length - 1; while (k) { const p = (k - 1) >> 1; if (pq[p][0] <= pq[k][0]) break;[pq[p], pq[k]] = [pq[k], pq[p]]; k = p; } };
-    const pop = () => { const t = pq[0], l = pq.pop(); if (pq.length) { pq[0] = l; let k = 0; for (; ;) { let a = 2 * k + 1, b = a + 1, m = k; if (a < pq.length && pq[a][0] < pq[m][0]) m = a; if (b < pq.length && pq[b][0] < pq[m][0]) m = b; if (m === k) break;[pq[m], pq[k]] = [pq[k], pq[m]]; k = m; } } return t; };
-    dist.set(sid(start, null), 0);
-    let best = -1;
-    while (pq.length) {
-        const [, g, n, d] = pop(); const cur = sid(n, d);
-        if (g > (dist.get(cur) ?? 1e18)) continue;
-        if (n === goal) { best = cur; break; }
-        for (const e of edgesOf(n)) {
-            let bends = (e.d1 !== e.d2 ? 1 : 0);
-            if (d != null && e.d1 !== d) bends += 1;
-            let pen = 0; if (e.gset && e.gset.size) for (const gi of e.gset) if (!ownGroups.has(gi)) pen += softCost[gi];
-            const ng = g + e.len + C.bendCost * bends + pen, ns = sid(e.to, e.d2);
-            if (ng < (dist.get(ns) ?? 1e18)) { dist.set(ns, ng); prev.set(ns, { id: cur, corner: e.corner }); push(ng + h(e.to), ng, e.to, e.d2); }
+//
+// Built ONCE per routeGraph pass (`makeAStar`) and re-run per connector, because every per-line
+// allocation here is paid ~290 times over ~800 waypoints. The scratch state is therefore hoisted and
+// reused: dist/prev live in typed arrays indexed by state id (a Map keyed on a small int was the
+// single hottest thing in the profile), staleness is handled by a generation counter instead of
+// clearing, and the binary heap is four flat parallel arrays instead of an array of [f,g,n,d] tuples.
+//
+// SEARCH SEMANTICS ARE UNCHANGED — same costs, same strict `<` relaxation, same heap comparisons and
+// the same swap order, so ties break the same way and the chain returned is identical. This is purely
+// how the search is stored.
+function makeAStar(WP, baseAdj, baseN, cap) {
+    const SN = cap * 5;
+    const dist = new Float64Array(SN), prevId = new Int32Array(SN), seen = new Int32Array(SN);
+    const prevCorner = new Array(SN);
+    let gen = 0;
+    let hf = new Float64Array(2048), hg = new Float64Array(2048), hn = new Int32Array(2048), hd = new Int32Array(2048);
+    let hlen = 0;
+    const grow = () => {
+        const g2 = (A, T) => { const b = new T(A.length * 2); b.set(A); return b; };
+        hf = g2(hf, Float64Array); hg = g2(hg, Float64Array); hn = g2(hn, Int32Array); hd = g2(hd, Int32Array);
+    };
+    const swap = (a, b) => {
+        let t = hf[a]; hf[a] = hf[b]; hf[b] = t;
+        t = hg[a]; hg[a] = hg[b]; hg[b] = t;
+        t = hn[a]; hn[a] = hn[b]; hn[b] = t;
+        t = hd[a]; hd[a] = hd[b]; hd[b] = t;
+    };
+    // `d` is the entry direction as its DC index, 4 = none (start). Kept numeric end to end so the
+    // hot loop never touches the "N"/"S"/"E"/"W" strings; edges carry DC-coded d1/d2 as e.i1/e.i2.
+    return function search(overOf, start, goal, ownGroups, softCost, occCost) {
+        gen++; hlen = 0;
+        const gx = WP[goal][0], gy = WP[goal][1];
+        const h = (i) => Math.abs(WP[i][0] - gx) + Math.abs(WP[i][1] - gy);
+        const push = (f, g, n, d) => {
+            if (hlen === hf.length) grow();
+            let k = hlen++; hf[k] = f; hg[k] = g; hn[k] = n; hd[k] = d;
+            while (k) { const p = (k - 1) >> 1; if (hf[p] <= hf[k]) break; swap(p, k); k = p; }
+        };
+        // own-group exemption: at most two groups (source's and dest's), so subtract their share from
+        // a per-edge cached total instead of walking the whole gset on every expansion. softCost values
+        // are integers, so the subtraction is exact — no float drift that could flip a `<` comparison.
+        let own0 = -1, own1 = -1;
+        for (const g of ownGroups) { if (own0 < 0) own0 = g; else own1 = g; }
+        const s0 = start * 5 + 4;
+        dist[s0] = 0; seen[s0] = gen; prevId[s0] = -1;
+        push(h(start), 0, start, 4);
+        let best = -1;
+        while (hlen) {
+            const g = hg[0], n = hn[0], d = hd[0];
+            hlen--;
+            if (hlen) {   // move the tail into the root and sift down (same comparisons as before)
+                hf[0] = hf[hlen]; hg[0] = hg[hlen]; hn[0] = hn[hlen]; hd[0] = hd[hlen];
+                let k = 0;
+                for (; ;) { const a = 2 * k + 1, b = a + 1; let mi = k; if (a < hlen && hf[a] < hf[mi]) mi = a; if (b < hlen && hf[b] < hf[mi]) mi = b; if (mi === k) break; swap(mi, k); k = mi; }
+            }
+            const cur = n * 5 + d;
+            if (g > (seen[cur] === gen ? dist[cur] : 1e18)) continue;
+            if (n === goal) { best = cur; break; }
+            // base adjacency then overlay — concatenating them allocated an array per expansion; the
+            // two-list walk preserves that exact order, so equal-cost edges still resolve the same way.
+            const bl = n < baseN ? baseAdj[n] : null, ol = overOf(n);
+            for (let li = 0; li < 2; li++) {
+                const list = li === 0 ? bl : ol;
+                if (!list) continue;
+                for (let ei = 0; ei < list.length; ei++) {
+                    const e = list[ei];
+                    let bends = (e.i1 !== e.i2 ? 1 : 0);
+                    if (d !== 4 && e.i1 !== d) bends += 1;
+                    const ns = e.to * 5 + e.i2, cap = seen[ns] === gen ? dist[ns] : 1e18;
+                    // Penalties only ever ADD, so an edge that already loses on length+bends alone can
+                    // never win — bail before the group/occupancy work rather than after. Same outcome,
+                    // and in a graph this dense most expansions are exactly this case.
+                    const lb = g + e.len + C.bendCost * bends;
+                    if (lb >= cap) continue;
+                    let pen = 0;
+                    const gs = e.gset;
+                    if (gs.n) {
+                        let t = gs.sum;
+                        if (t < 0) { t = 0; for (let z = 0; z < gs.n; z++) t += softCost[gs.ids[z]]; gs.sum = t; }
+                        pen = t;
+                        if (own0 >= 0 && gHas(gs, own0)) pen -= softCost[own0];
+                        if (own1 >= 0 && gHas(gs, own1)) pen -= softCost[own1];
+                    }
+                    if (occCost) pen += occCost(n, e);   // congestion: steer AWAY from corridors earlier lines packed
+                    const ng = lb + pen;
+                    if (ng < cap) {
+                        dist[ns] = ng; seen[ns] = gen; prevId[ns] = cur; prevCorner[ns] = e.corner;
+                        push(ng + h(e.to), ng, e.to, e.i2);
+                    }
+                }
+            }
         }
-    }
-    if (best < 0) return null;
-    const chain = []; let s = best;
-    while (s !== undefined) { const p = prev.get(s); chain.push({ node: Math.floor(s / 5), corner: p ? p.corner : null }); s = p ? p.id : undefined; }
-    chain.reverse();
-    return chain;
+        if (best < 0) return null;
+        const chain = [];
+        for (let s = best; ;) { const p = prevId[s]; chain.push({ node: (s / 5) | 0, corner: p >= 0 ? prevCorner[s] : null }); if (p < 0) break; s = p; }
+        chain.reverse();
+        return chain;
+    };
 }
 
 // A 2-point line whose ends don't share an axis renders as a DIAGONAL — but every edge is an
@@ -141,6 +318,8 @@ export function simplify(pts) {
 // opts:{prevSides:Map(key->{d1,d2}), config}.  Returns Map(key -> {pts,p1,d1,p2,d2}).
 export function routeGraph(nodes, groups, edges, opts = {}) {
     if (opts.config) Object.assign(C, opts.config);
+    const bnow = () => (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
+    const BM = C.bench ? { t0: bnow() } : null;   // per-phase benchmark marks
     const prevSides = opts.prevSides || null;
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const rects = nodes.map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h, id: n.id }));
@@ -186,35 +365,66 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     const RN = rects.length;
     const rx0 = new Float64Array(RN), ry0 = new Float64Array(RN), rx1 = new Float64Array(RN), ry1 = new Float64Array(RN);
     for (let i = 0; i < rects.length; i++) { const r = rects[i]; rx0[i] = r.x; ry0[i] = r.y; rx1[i] = r.x + r.w; ry1[i] = r.y + r.h; }
-    const HB = { n: RN, x0: rx0, y0: ry0, x1: rx1, y1: ry1 };
+    const HB = { n: RN, x0: rx0, y0: ry0, x1: rx1, y1: ry1, grid: buildRectGrid(rx0, ry0, rx1, ry1, RN) };
 
     // stage 1: base waypoints = inflated node corners + group box corners; 1-bend adjacency
     const WP = [];
     for (const r of rects) { WP.push([r.x - m, r.y - m], [r.x + r.w + m, r.y - m], [r.x - m, r.y + r.h + m], [r.x + r.w + m, r.y + r.h + m]); }
     for (const g of soft) { WP.push([g.x0 - m, g.y0 - m], [g.x1 + m, g.y0 - m], [g.x0 - m, g.y1 + m], [g.x1 + m, g.y1 + m]); }
+    // light soft HALO around every node (penalty-only — its corners aren't added as waypoints, the node's
+    // own inflated corners already exist): a thin ring past each node so a segment skimming a node wall
+    // pays a tiny cost and prefers a hair of clearance, letting bundles sit off the walls. Bodies stay HARD.
+    if (C.haloCost > 0) for (const r of rects) { soft.push({ x0: r.x - C.nodeHalo, y0: r.y - C.nodeHalo, x1: r.x + r.w + C.nodeHalo, y1: r.y + r.h + C.nodeHalo }); softCost.push(C.haloCost); }
+    // expose the soft-penalty rects (group boxes, title bands, node halos) for the lab overlay
+    if (opts.softOut) for (let i = 0; i < soft.length; i++) opts.softOut.push({ x: soft[i].x0, y: soft[i].y0, w: soft[i].x1 - soft[i].x0, h: soft[i].y1 - soft[i].y0, cost: softCost[i] });
+    // index the soft rects too — built LAST, after the halo push, so it covers the final set. Hung on
+    // the array itself so every softList/edgeOpts call site picks it up without threading an argument.
+    {
+        const SN = soft.length, sx0 = new Float64Array(SN), sy0 = new Float64Array(SN), sx1 = new Float64Array(SN), sy1 = new Float64Array(SN);
+        for (let i = 0; i < SN; i++) { const g = soft[i]; sx0[i] = g.x0; sy0[i] = g.y0; sx1[i] = g.x1; sy1[i] = g.y1; }
+        soft.grid = buildRectGrid(sx0, sy0, sx1, sy1, SN);
+        soft.intern = new Map();   // crossing-set intern table for this pass (see internG)
+        // worst case one option touches every soft rect twice (both legs of the L)
+        if (SCR.length < SN * 2 + 8) SCR = new Int32Array(SN * 2 + 8);
+    }
     const baseN = WP.length;
     const baseAdj = Array.from({ length: baseN }, () => []);
     for (let i = 0; i < baseN; i++) for (let j = i + 1; j < baseN; j++) {
         const A = WP[i], B = WP[j];
         for (const e of edgeOpts(A[0], A[1], B[0], B[1], HB, soft)) {
-            baseAdj[i].push({ to: j, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset });
-            baseAdj[j].push({ to: i, d1: rev(e.d2), d2: rev(e.d1), corner: e.corner, len: e.len, gset: e.gset });
+            baseAdj[i].push({ to: j, d1: e.d1, d2: e.d2, i1: e.i1, i2: e.i2, corner: e.corner, len: e.len, gset: e.gset });
+            baseAdj[j].push({ to: i, d1: rev(e.d2), d2: rev(e.d1), i1: REVI[e.i2], i2: REVI[e.i1], corner: e.corner, len: e.len, gset: e.gset });
         }
     }
 
+    if (BM) BM.grid = bnow();
     // precompute each node's 4 face-port edges to the base waypoints (perpendicular-forced)
-    const FACES = ["L", "R", "T", "B"], EMPTY = new Set();
+    const FACES = ["L", "R", "T", "B"];
     const faceCenter = (n, f) => { const c = center(n); return f === "L" ? [n.x, c[1]] : f === "R" ? [n.x + n.w, c[1]] : f === "T" ? [c[0], n.y] : [c[0], n.y + n.h]; };
     const portPos = new Map(), portEdges = new Map();
     for (const n of nodes) {
         const pp = {}, pe = {};
         for (const f of FACES) {
             const sp = faceCenter(n, f); pp[f] = sp; const od = outDir(f), list = [];
-            for (let i = 0; i < baseN; i++) { const W = WP[i]; for (const e of edgeOpts(sp[0], sp[1], W[0], W[1], HB, soft)) if (e.d1 === od) list.push({ to: i, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); }
+            for (let i = 0; i < baseN; i++) { const W = WP[i]; for (const e of edgeOpts(sp[0], sp[1], W[0], W[1], HB, soft, od)) list.push({ to: i, d1: e.d1, d2: e.d2, i1: e.i1, i2: e.i2, corner: e.corner, len: e.len, gset: e.gset }); }
             pe[f] = list;
         }
         portPos.set(n.id, pp); portEdges.set(n.id, pe);
     }
+    if (BM) BM.ports = bnow();
+    // One A* instance for the whole pass — its scratch arrays are sized for the base graph plus the
+    // handful of per-line entry waypoints (S0 + <=4 src + <=4 dst + D0) and reused for every connector.
+    const search = makeAStar(WP, baseAdj, baseN, baseN + 16);
+    // Per-line overlay edges (entry ports -> base graph). A fresh Map of fresh arrays per connector
+    // meant ~800 array allocations x ~290 lines of pure garbage, so the buckets are allocated once and
+    // recycled: a generation stamp marks which are live this line, no clearing pass and no re-alloc.
+    const OVN = baseN + 16, ovGen = new Int32Array(OVN), ovList = new Array(OVN);
+    let ovg = 0;
+    const add = (from, e) => {
+        if (ovGen[from] !== ovg) { ovGen[from] = ovg; if (ovList[from]) ovList[from].length = 0; else ovList[from] = []; }
+        ovList[from].push(e);
+    };
+    const overOf = (i) => (ovGen[i] === ovg ? ovList[i] : null);
 
     // stage 2: route each line. Each endpoint is a TERMINAL: either a real NODE (a super-source over
     // its 4 face ports, A* picks the face) or a fixed GATE ({pt,dir,face}) — a single forced-direction
@@ -228,8 +438,70 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     }
     // super-source/sink anchor position for an endpoint (a node centre, or the gate point itself)
     const anchor = (id, gate) => (gate ? gate.pt : center(byId.get(id)));
+    // Congestion: each committed line STAMPS its runs into a coarse occupancy grid; later lines pay
+    // OCONG per already-used corridor bucket they'd traverse, so once a corridor fills up A* routes the
+    // NEXT line a DIFFERENT way (a nearby empty channel) instead of packing another wire 2px alongside.
+    const OCELL = C.occCell, OCONG = C.occCong;
+    const occ = new Map();
+    // Bucket id is an INT, not "H:12" — occCost runs on every A* expansion, and building a string key
+    // there (then hashing it) was the second-hottest thing in the router. Axis goes in bit 0, the
+    // rounded corridor index in the rest; same 1:1 bucket identity as the old string form.
+    const NOB = -2147483648;   // "this segment isn't an axis-aligned run" sentinel
+    const segBucket = (p, q) => (Math.abs(p[1] - q[1]) < 0.5 && Math.abs(p[0] - q[0]) > 0.5) ? (Math.round(p[1] / OCELL) * 2) : (Math.abs(p[0] - q[0]) < 0.5 && Math.abs(p[1] - q[1]) > 0.5) ? (Math.round(p[0] / OCELL) * 2 + 1) : NOB;
+    // An edge's buckets follow from its geometry alone (the endpoints of a base edge never move, and a
+    // per-line overlay edge is discarded with its line), so resolve them ONCE per edge and cache on it
+    // — the occupancy COUNTS still change every time a line is stamped, only the lookup key is fixed.
+    const occCost = (n, e) => {
+        let b1 = e._b1;
+        if (b1 === undefined) {
+            const A = WP[n], B = WP[e.to];
+            if (!A || !B) return 0;
+            if (e.corner) { b1 = e._b1 = segBucket(A, e.corner); e._b2 = segBucket(e.corner, B); }
+            else { b1 = e._b1 = segBucket(A, B); e._b2 = NOB; }
+        }
+        const b2 = e._b2;
+        let c = 0;
+        if (b1 !== NOB) c += occ.get(b1) || 0;
+        if (b2 !== NOB) c += occ.get(b2) || 0;
+        return c ? OCONG * c : 0;
+    };
+    const stamp = (pts) => { for (let i = 0; i + 1 < pts.length; i++) { const b = segBucket(pts[i], pts[i + 1]); if (b !== NOB) occ.set(b, (occ.get(b) || 0) + 1); } };
+    // FACING lines: the two endpoint nodes' spans overlap on an axis, so their facing sides line up and a
+    // direct connector is the natural route. These are excluded from the heavy crowd-avoidance — routed
+    // LAST with plain A* (no congestion, they don't stamp/contribute occupancy) so they stay direct
+    // instead of being shoved off their path. Overlaps among them are still fixed by deCollide afterwards.
+    // FACING = the two nodes genuinely face each other with a CLEAR direct corridor between them (their
+    // spans overlap on an axis AND no node sits in the gap) — a simple straight/L connector. NOT merely
+    // span-aligned across the whole canvas (distant aligned nodes with a crowd between are NOT facing).
+    const anyNodeIn = (x0, y0, x1, y1) => { for (let i = 0; i < RN; i++) if (rx1[i] > x0 + 1 && rx0[i] < x1 - 1 && ry1[i] > y0 + 1 && ry0[i] < y1 - 1) return true; return false; };
+    // Returns the facing FACES {src,dst} when the two nodes truly face with a clear gap between (a direct
+    // connector), else null. The sides are PINNED below so a facing line leaves/enters the facing faces
+    // and A* draws the straight/L directly, instead of the super-source picking odd sides and doglegging.
+    const facingLine = (ln) => {
+        if (ln.fromGate || ln.toGate) return null;
+        const a = byId.get(ln.from), b = byId.get(ln.to); if (!a || !b) return null;
+        if (a.y < b.y + b.h && b.y < a.y + a.h) {   // y overlap -> horizontally facing? straight line at coord y
+            const yo0 = Math.max(a.y, b.y), yo1 = Math.min(a.y + a.h, b.y + b.h), coord = (yo0 + yo1) / 2;
+            if (a.x + a.w <= b.x && !anyNodeIn(a.x + a.w, yo0, b.x, yo1)) return { horiz: true, src: "R", dst: "L", p0: a.x + a.w, p1: b.x, coord, lo: yo0, hi: yo1 };
+            if (b.x + b.w <= a.x && !anyNodeIn(b.x + b.w, yo0, a.x, yo1)) return { horiz: true, src: "L", dst: "R", p0: a.x, p1: b.x + b.w, coord, lo: yo0, hi: yo1 };
+        }
+        if (a.x < b.x + b.w && b.x < a.x + a.w) {   // x overlap -> vertically facing? straight line at coord x
+            const xo0 = Math.max(a.x, b.x), xo1 = Math.min(a.x + a.w, b.x + b.w), coord = (xo0 + xo1) / 2;
+            if (a.y + a.h <= b.y && !anyNodeIn(xo0, a.y + a.h, xo1, b.y)) return { horiz: false, src: "B", dst: "T", p0: a.y + a.h, p1: b.y, coord, lo: xo0, hi: xo1 };
+            if (b.y + b.h <= a.y && !anyNodeIn(xo0, b.y + b.h, xo1, a.y)) return { horiz: false, src: "T", dst: "B", p0: a.y, p1: b.y + b.h, coord, lo: xo0, hi: xo1 };
+        }
+        return null;
+    };
+    for (const ln of lines) ln._facing = facingLine(ln);
+    lines.sort((p, q) => (p._facing ? 1 : 0) - (q._facing ? 1 : 0));   // heavy (non-facing) first, facing last
+    // FACING pre-pass: emit each facing line's direct straight connector NOW and STAMP it, so the heavy
+    // lines (routed below, with congestion) see the facing lines' occupancy and steer clear of them.
+    const emitFacing = (ln) => { const f = ln._facing; ln.pts = f.horiz ? [[f.p0, f.coord], [f.p1, f.coord]] : [[f.coord, f.p0], [f.coord, f.p1]]; ln.srcSide = f.src; ln.dstSide = f.dst; };
+    for (const ln of lines) if (ln._facing) { emitFacing(ln); stamp(ln.pts); }
+    if (BM) BM.facing = bnow();
     for (const ln of lines) {
         const base0 = WP.length;
+        if (ln._facing) continue;   // already emitted + stamped in the facing pre-pass above
         const prev = prevSides && prevSides.get(ln.key);
         // Build the ENTRY waypoints for each end: [{idx, pt, dir, face, pe?}]. A node contributes its 4
         // face ports (pe = precomputed face->base edges); a gate contributes one point, exit/entry forced
@@ -244,28 +516,27 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
         else { const pp = portPos.get(ln.to), pe = portEdges.get(ln.to); for (const f of FACES) { const idx = WP.length; WP.push(pp[f].slice()); dstEntries.push({ idx, pt: pp[f], dir: inDirOf(f), face: f, pe: pe[f] }); } }
         const D0 = WP.length; WP.push(anchor(ln.to, ln.toGate).slice());
         const own = new Set(); const sg = ln.fromGate ? null : groupOfNode.get(ln.from), dg = ln.toGate ? null : groupOfNode.get(ln.to); if (sg != null) own.add(sg); if (dg != null) own.add(dg);
-        const overlay = new Map(); const add = (from, e) => { if (!overlay.has(from)) overlay.set(from, []); overlay.get(from).push(e); };
+        ovg++;   // recycle the overlay buckets (see above) — everything stamped below is this line's
         // directional face bias: charge each face by how much its outward normal points AWAY from the
         // other endpoint (0 = straight at it, C.faceBias = straight away), so A* prefers the face facing
         // the target unless obstacles make it genuinely costlier. `aFrom`/`aTo` are the endpoint anchors.
         const aFrom = anchor(ln.from, ln.fromGate), aTo = anchor(ln.to, ln.toGate);
         const faceAway = (face, from, to) => { const dx = to[0] - from[0], dy = to[1] - from[1], L = Math.hypot(dx, dy) || 1, n = faceOut[face]; return C.faceBias * (1 - (n[0] * dx + n[1] * dy) / L) / 2; };
         // hysteresis: non-previous faces cost a small stickiness bias, so the route keeps its face.
-        for (const se of srcEntries) add(S0, { to: se.idx, d1: se.dir, d2: se.dir, corner: null, len: (prev && prev.d1 !== se.face ? C.faceStick : 0) + faceAway(se.face, aFrom, aTo), gset: EMPTY });
-        for (const de of dstEntries) add(de.idx, { to: D0, d1: de.dir, d2: de.dir, corner: null, len: (prev && prev.d2 !== de.face ? C.faceStick : 0) + faceAway(de.face, aTo, aFrom), gset: EMPTY });
+        for (const se of srcEntries) add(S0, { to: se.idx, d1: se.dir, d2: se.dir, i1: DC[se.dir], i2: DC[se.dir], corner: null, len: (prev && prev.d1 !== se.face ? C.faceStick : 0) + faceAway(se.face, aFrom, aTo), gset: EMPTY_G });
+        for (const de of dstEntries) add(de.idx, { to: D0, d1: de.dir, d2: de.dir, i1: DC[de.dir], i2: DC[de.dir], corner: null, len: (prev && prev.d2 !== de.face ? C.faceStick : 0) + faceAway(de.face, aTo, aFrom), gset: EMPTY_G });
         // entries -> base visibility graph (node faces reuse the precompute; a gate scans the base once)
         for (const se of srcEntries) {
             if (se.pe) { for (const e of se.pe) add(se.idx, e); }
-            else for (let i = 0; i < baseN; i++) { const W = WP[i]; for (const e of edgeOpts(se.pt[0], se.pt[1], W[0], W[1], HB, soft)) if (e.d1 === se.dir) add(se.idx, { to: i, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); }
+            else for (let i = 0; i < baseN; i++) { const W = WP[i]; for (const e of edgeOpts(se.pt[0], se.pt[1], W[0], W[1], HB, soft, se.dir)) add(se.idx, { to: i, d1: e.d1, d2: e.d2, i1: e.i1, i2: e.i2, corner: e.corner, len: e.len, gset: e.gset }); }
         }
         for (const de of dstEntries) {
-            if (de.pe) { for (const e of de.pe) add(e.to, { to: de.idx, d1: rev(e.d2), d2: rev(e.d1), corner: e.corner, len: e.len, gset: e.gset }); }
-            else for (let i = 0; i < baseN; i++) { const W = WP[i]; for (const e of edgeOpts(W[0], W[1], de.pt[0], de.pt[1], HB, soft)) if (e.d2 === de.dir) add(i, { to: de.idx, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset }); }
+            if (de.pe) { for (const e of de.pe) add(e.to, { to: de.idx, d1: rev(e.d2), d2: rev(e.d1), i1: REVI[e.i2], i2: REVI[e.i1], corner: e.corner, len: e.len, gset: e.gset }); }
+            else for (let i = 0; i < baseN; i++) { const W = WP[i]; for (const e of edgeOpts(W[0], W[1], de.pt[0], de.pt[1], HB, soft)) if (e.d2 === de.dir) add(i, { to: de.idx, d1: e.d1, d2: e.d2, i1: e.i1, i2: e.i2, corner: e.corner, len: e.len, gset: e.gset }); }
         }
         // direct entry -> entry (short lines that never touch the base graph)
-        for (const se of srcEntries) for (const de of dstEntries) for (const e of edgeOpts(se.pt[0], se.pt[1], de.pt[0], de.pt[1], HB, soft)) if (e.d1 === se.dir && e.d2 === de.dir) add(se.idx, { to: de.idx, d1: e.d1, d2: e.d2, corner: e.corner, len: e.len, gset: e.gset });
-        const edgesOf = (i) => (i < baseN ? (overlay.has(i) ? baseAdj[i].concat(overlay.get(i)) : baseAdj[i]) : (overlay.get(i) || []));
-        const chain = astar(WP, edgesOf, S0, D0, own, softCost);
+        for (const se of srcEntries) for (const de of dstEntries) for (const e of edgeOpts(se.pt[0], se.pt[1], de.pt[0], de.pt[1], HB, soft, se.dir)) if (e.d2 === de.dir) add(se.idx, { to: de.idx, d1: e.d1, d2: e.d2, i1: e.i1, i2: e.i2, corner: e.corner, len: e.len, gset: e.gset });
+        const chain = search(overOf, S0, D0, own, softCost, ln._facing ? null : occCost);
         if (chain && chain.length >= 3) {
             ln.srcSide = (srcEntries.find((se) => se.idx === chain[1].node) || srcEntries[0]).face;
             ln.dstSide = (dstEntries.find((de) => de.idx === chain[chain.length - 2].node) || dstEntries[0]).face;
@@ -280,11 +551,15 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
             ln.srcSide = ln.fromGate ? ln.fromGate.face : (ln.pinSrc || (horiz ? (dc[0] >= sc[0] ? "R" : "L") : (dc[1] >= sc[1] ? "B" : "T")));
             ln.dstSide = ln.toGate ? ln.toGate.face : (horiz ? (dc[0] >= sc[0] ? "L" : "R") : (dc[1] >= sc[1] ? "T" : "B"));
         }
+        if (!ln._facing) stamp(ln.pts);   // heavy lines record their runs; facing lines contribute nothing
         WP.length = base0;
     }
 
-    // stage 3: nudging — split shared corridors into nested lanes, centred in their alley
-    nudge(lines, byId, rects, opts.outPorts || new Map(), bands);
+    if (BM) BM.astar = bnow();
+    // stage 3: nudging — split shared corridors into nested lanes, centred in their alley. FACING lines
+    // are excluded — they're already the clean direct connector; deCollide alone fans coincident ones apart.
+    nudge(lines.filter((l) => !l._facing), byId, rects, opts.outPorts || new Map(), bands);
+    if (BM) { const e = bnow(); const nf = lines.filter((l) => l._facing).length; console.log(`[route] ${(e - BM.t0).toFixed(0)}ms total | grid ${(BM.grid - BM.t0).toFixed(0)} ports ${(BM.ports - BM.grid).toFixed(0)} facing ${(BM.facing - BM.ports).toFixed(0)} astar ${(BM.astar - BM.facing).toFixed(0)} nudge ${(e - BM.astar).toFixed(0)} | ${lines.length} lines (${nf} facing, ${lines.length - nf} heavy), ${nodes.length} nodes, ${WP.length} wp`); }
 
     const out = new Map();
     for (const ln of lines) out.set(ln.key, { pts: ln.pts, p1: ln.pts[0].slice(), d1: ln.srcSide, p2: ln.pts[ln.pts.length - 1].slice(), d2: ln.dstSide });
@@ -317,7 +592,9 @@ function pinGate(pts, pt, last) {
 const MARG = 1;   // px of clearance baked onto every nudge alley wall (node + band) so lanes never sit flush
 const CORNER_CLEAR = 15;   // px a band/node eviction pushes a vertex PAST the edge: > the corner radius (14)
                            // so the rounded bend at the evicted vertex can never arc back across the edge
-const WIDE_GAP_MULT = 3;   // cap on how far a widened (grid-stepped) lane gap can grow past C.laneGap
+const FACE_SPREAD = 2.4;   // fan a same-source bundle this many lane-gaps apart on its node face (uses
+                           // the face's spare width so a fat bundle reads clearly), capped to the face
+const WIDE_GAP_MULT = 6;   // cap on how far a widened (grid-stepped) lane gap can grow past C.laneGap
                            // when an alley has spare room — keeps a loose group readably spaced without
                            // flinging tracks across a wide-open gutter
 function nudge(lines, byId, rects, outPorts, bands) {
@@ -692,7 +969,10 @@ function fanFaceEnds(lines, byId, outPorts) {
                 ? mid - PORT_MIN - (below - 1 - i) * step
                 : mid + PORT_MIN + (i - below) * step);
         } else {
-            const pref = Math.min(span - 2 * keep, (n - 1) * C.laneGap);
+            // spread endpoints to use the FACE's spare room (up to FACE_SPREAD lane-gaps apart), not the
+            // bare min — a fat same-source bundle then leaves its node visibly fanned instead of a
+            // laneGap-tight ribbon you can't read. Still capped to the face span (minus the corner keep).
+            const pref = Math.min(span - 2 * keep, (n - 1) * C.laneGap * FACE_SPREAD);
             const spread = Math.max(0, pref, (n - 1) * PORT_MIN);
             coords = arr.map((_, i) => mid - spread / 2 + (i * spread) / (n - 1));
         }
