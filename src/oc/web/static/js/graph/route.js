@@ -29,9 +29,14 @@ const C = {
     laneGap: 12,     // separation between bundled parallel wires
     faceStick: 50,   // bias to keep a connector's previous face (hysteresis) — < bendCost, so a
                                       // clearly better route still switches, but ties/small margins don't flicker
+    faceBias: 260,   // soft preference for the face pointing AT the other endpoint: a face is charged
+                                      // up to this (px-equiv) when its normal points fully AWAY, 0 when it points
+                                      // straight at the target. Competes with length+bends, so a genuinely
+                                      // blocked near face still yields, but a clear wrong-way face loses.
 };
 const PORT_MIN = 12;     // hard floor between fanned out-port dots on one face (dot is 8px) — no overlap
-const PORT_MARGIN = 12;  // keep the fan this far inside the face corners
+const PORT_END_KEEP = 18;// min distance a fanned endpoint stays off a node corner (> corner radius 14) so
+                         // the rounded bend can't swallow the stub; guarded on short faces (see kClamp)
 
 const center = (r) => [r.x + r.w / 2, r.y + r.h / 2];
 const faceOut = { L: [-1, 0], R: [1, 0], T: [0, -1], B: [0, 1] };
@@ -240,9 +245,14 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
         const D0 = WP.length; WP.push(anchor(ln.to, ln.toGate).slice());
         const own = new Set(); const sg = ln.fromGate ? null : groupOfNode.get(ln.from), dg = ln.toGate ? null : groupOfNode.get(ln.to); if (sg != null) own.add(sg); if (dg != null) own.add(dg);
         const overlay = new Map(); const add = (from, e) => { if (!overlay.has(from)) overlay.set(from, []); overlay.get(from).push(e); };
+        // directional face bias: charge each face by how much its outward normal points AWAY from the
+        // other endpoint (0 = straight at it, C.faceBias = straight away), so A* prefers the face facing
+        // the target unless obstacles make it genuinely costlier. `aFrom`/`aTo` are the endpoint anchors.
+        const aFrom = anchor(ln.from, ln.fromGate), aTo = anchor(ln.to, ln.toGate);
+        const faceAway = (face, from, to) => { const dx = to[0] - from[0], dy = to[1] - from[1], L = Math.hypot(dx, dy) || 1, n = faceOut[face]; return C.faceBias * (1 - (n[0] * dx + n[1] * dy) / L) / 2; };
         // hysteresis: non-previous faces cost a small stickiness bias, so the route keeps its face.
-        for (const se of srcEntries) add(S0, { to: se.idx, d1: se.dir, d2: se.dir, corner: null, len: prev && prev.d1 !== se.face ? C.faceStick : 0, gset: EMPTY });
-        for (const de of dstEntries) add(de.idx, { to: D0, d1: de.dir, d2: de.dir, corner: null, len: prev && prev.d2 !== de.face ? C.faceStick : 0, gset: EMPTY });
+        for (const se of srcEntries) add(S0, { to: se.idx, d1: se.dir, d2: se.dir, corner: null, len: (prev && prev.d1 !== se.face ? C.faceStick : 0) + faceAway(se.face, aFrom, aTo), gset: EMPTY });
+        for (const de of dstEntries) add(de.idx, { to: D0, d1: de.dir, d2: de.dir, corner: null, len: (prev && prev.d2 !== de.face ? C.faceStick : 0) + faceAway(de.face, aTo, aFrom), gset: EMPTY });
         // entries -> base visibility graph (node faces reuse the precompute; a gate scans the base once)
         for (const se of srcEntries) {
             if (se.pe) { for (const e of se.pe) add(se.idx, e); }
@@ -652,7 +662,9 @@ function fanFaceEnds(lines, byId, outPorts) {
         const lo = horiz ? nd.y : nd.x, span = horiz ? nd.h : nd.w, mid = lo + span / 2;
         arr.sort((a, b) => (horiz ? a.other[1] - b.other[1] : a.other[0] - b.other[0]));
         const n = arr.length;
-        const clamp = (c) => Math.max(lo + 4, Math.min(lo + span - 4, c));
+        // keep endpoints off the rounded corners; shrink the inset on a short face so the band never inverts.
+        const keep = Math.min(PORT_END_KEEP, Math.max(0, (span - PORT_MIN) / 2));
+        const clamp = (c) => Math.max(lo + keep, Math.min(lo + span - keep, c));
         // a node with an idle out-port on THIS face parks a (non-endpoint) dot at the centre — keep lines
         // off it. A real PORT line leaving the face owns the dot (its own start); a structural src does not.
         const reserveMid = outPorts.get(nodeId) === side && !arr.some((e) => e.end === "src" && (e.ln.pinSrc || e.ln.port));
@@ -680,7 +692,7 @@ function fanFaceEnds(lines, byId, outPorts) {
                 ? mid - PORT_MIN - (below - 1 - i) * step
                 : mid + PORT_MIN + (i - below) * step);
         } else {
-            const pref = Math.min(span - PORT_MARGIN, (n - 1) * C.laneGap);
+            const pref = Math.min(span - 2 * keep, (n - 1) * C.laneGap);
             const spread = Math.max(0, pref, (n - 1) * PORT_MIN);
             coords = arr.map((_, i) => mid - spread / 2 + (i * spread) / (n - 1));
         }
@@ -690,9 +702,11 @@ function fanFaceEnds(lines, byId, outPorts) {
 // keep a fanned port endpoint within its node face span (perp coord already correct)
 function clampEnds(pts, nd, side, last) {
     if (!nd || pts.length < 2) return;
-    const i = last ? pts.length - 1 : 0, j = last ? pts.length - 2 : 1, M = 6;
-    if (side === "T" || side === "B") { const x = Math.max(nd.x + M, Math.min(nd.x + nd.w - M, pts[i][0])); if (pts[j] && Math.abs(pts[j][0] - pts[i][0]) < 0.5) pts[j] = [x, pts[j][1]]; pts[i] = [x, pts[i][1]]; }
-    else { const y = Math.max(nd.y + M, Math.min(nd.y + nd.h - M, pts[i][1])); if (pts[j] && Math.abs(pts[j][1] - pts[i][1]) < 0.5) pts[j] = [pts[j][0], y]; pts[i] = [pts[i][0], y]; }
+    const i = last ? pts.length - 1 : 0, j = last ? pts.length - 2 : 1;
+    // keep the endpoint off the rounded corners; shrink the inset on a short face so it never inverts.
+    const keepFor = (span) => Math.min(PORT_END_KEEP, Math.max(0, (span - PORT_MIN) / 2));
+    if (side === "T" || side === "B") { const M = keepFor(nd.w), x = Math.max(nd.x + M, Math.min(nd.x + nd.w - M, pts[i][0])); if (pts[j] && Math.abs(pts[j][0] - pts[i][0]) < 0.5) pts[j] = [x, pts[j][1]]; pts[i] = [x, pts[i][1]]; }
+    else { const M = keepFor(nd.h), y = Math.max(nd.y + M, Math.min(nd.y + nd.h - M, pts[i][1])); if (pts[j] && Math.abs(pts[j][1] - pts[i][1]) < 0.5) pts[j] = [pts[j][0], y]; pts[i] = [pts[i][0], y]; }
 }
 
 // place a port-line endpoint at `coord` along its face (perp axis), carrying the collinear stub

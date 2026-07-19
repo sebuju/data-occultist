@@ -14,7 +14,7 @@
 //   crossing  — ends in different groups, or one free    -> split at a gate on each grouped end
 
 const PORT_MIN = 12;      // hard floor between adjacent fanned gates on one face (no overlap)
-const FACE_MARGIN = 12;   // keep the fan this far inside the face corners
+const FACE_MARGIN = 18;   // keep the fan this far inside the face corners (> corner radius 14)
 const SPACE_CAP = 300;    // px clearance treated as "wide open" — caps one distant node from swamping
                           // the score against a face that's merely mostly-clear
 const K_SPACE = 60;       // max px-equivalent bonus faceToward gives a fully-open face (space score
@@ -101,21 +101,6 @@ function faceToward(box, pt, band, nodeRects) {
     }
     return best;
 }
-// Move every single-exit face's end onto the busiest OTHER occupied face. Counts are recomputed live, so
-// two lone singles collapse onto one side rather than swapping. A single that has no company anywhere
-// (all other faces empty) stays put — one line, one gate.
-function mergeLonelyFaces(ends, band) {
-    const FACES = ["L", "R", "T", "B"];
-    const tally = () => { const m = { L: 0, R: 0, T: 0, B: 0 }; for (const e of ends) m[e.face]++; return m; };
-    for (const lf of FACES) {
-        const m = tally();
-        if (m[lf] !== 1) continue;                       // only a face with exactly one exit is merged
-        let target = null, best = 0;
-        for (const f of FACES) { if (f === lf) continue; if (m[f] > best) { best = m[f]; target = f; } }
-        if (!target) continue;                           // nothing to merge onto — leave the lone exit
-        for (const e of ends) if (e.face === lf) e.face = target;
-    }
-}
 // is a remembered face still geometrically reasonable (outside pt still on that side of the box centre)?
 function faceStillOk(box, pt, f) {
     const c = rectCenter(box);
@@ -199,10 +184,9 @@ export function classifyAndGate({ nodeRects, groupBox, groupOf, edges, laneGap =
             if (prevFace) { const pf = prevFace.get(en.cr.key + "|" + gid); if (pf && pf !== f && faceStillOk(box, en.outside, pf)) f = pf; }
             en.face = f;
         }
-        // consolidate: a face carrying only ONE exit is merged onto the busiest OTHER occupied face, so a
-        // group doesn't sprout lonely single-line gates on several sides — its crossings gather on as few
-        // sides as possible. A truly solitary crossing (nothing on any other face) is left where it is.
-        mergeLonelyFaces(ends, band);
+        // each end keeps its shortest-facing side (faceToward + hysteresis above): a crossing exits the
+        // face nearest its target rather than being consolidated onto the busiest side, so a line never
+        // wraps around the box to reach a merged gate. A group may show single-line gates on more sides.
         for (const en of ends) faces.set(en.cr.key + "|" + gid, en.face);
         // fan each face's ends along the face span (ordered by the outside end so stubs don't cross)
         const buckets = new Map();
