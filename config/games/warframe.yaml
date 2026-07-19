@@ -5371,8 +5371,8 @@ layout:
     item:relic_select:guard:
       x: 5600.0
       y: -4240.0
-      w: 380.0
-      h: 771.0
+      w: 400.0
+      h: 760.0
       collapsed: false
       custW: true
       custH: false
@@ -5531,9 +5531,9 @@ layout:
       custH: false
     item:relic_refinement:not_owned:
       x: 7900.0
-      y: -4280.0
+      y: -4240.0
       w: 380.0
-      h: 780.0
+      h: 760.0
       collapsed: false
       custW: true
       custH: false
@@ -5541,7 +5541,7 @@ layout:
       softH: false
     tell:relic_refinement:not_owned:tell_3:
       x: 7540.0
-      y: -3860.0
+      y: -3820.0
       w: 320.0
       h: 155.0
       collapsed: false
@@ -5550,7 +5550,7 @@ layout:
       softW: true
     tell:relic_refinement:not_owned:tell_4:
       x: 7540.0
-      y: -4280.0
+      y: -4240.0
       w: 320.0
       h: 365.0
       collapsed: false
@@ -5929,7 +5929,7 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_3_name:
-      x: 12700.0
+      x: 12720.0
       y: -5780.0
       w: 520.0
       h: 660.0
@@ -6095,7 +6095,7 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_3_po:
-      x: 13260.0
+      x: 13240.0
       y: -6260.0
       w: 240.0
       h: 440.0
