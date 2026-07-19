@@ -104,7 +104,7 @@ a.node.win:hover { border-color: var(--accent); }
    so match it here: the title fills the row and pushes the type tag to the right edge (the same
    right-push every normal node gets from its input title, rule 7), instead of the tag relying on a
    margin-left:auto that the dataset "removed" toggle can fight or overflow can collapse. */
-.gnode:is(.vttable, .preview, .atlas, .scrollbar) .gi-id { flex: 1; min-width: 0; color: var(--nt); padding: 6px 0px; }
+.gnode:is(.vttable, .preview, .atlas, .scrollbar) .gi-id { flex: 1; min-width: 0; color: var(--nt); }
 .gnode.vttable .gn-h:hover .gn-type { visibility: hidden;}
 /* vt-table satellite (dataset): [data | history] tabs sit ABOVE the table and pick which host shows */
 .ds-tabs { display: flex; gap: 4px; margin: 0; flex: 0 0 auto; position: absolute; right: 8px; }
@@ -187,12 +187,12 @@ a.node.win:hover { border-color: var(--accent); }
 .sub-row > span.muted { align-self: center; }
 .gnode .sub-rows > .sub-row > select.ss-dir { width: 50px; text-align: center; }
 .gnode .sub-rows > .sub-row > select.ss-op { width: 70px; text-align: center; }
-.sv-inputs { display: flex; flex-wrap: wrap; margin-bottom: 4px; align-items: center; column-gap: 1ch }
+.sv-inputs { display: flex; flex-wrap: wrap; align-items: center; column-gap: 1ch }
 .sv-input { position: relative; display: inline-flex; align-items: center; gap: 0px; box-sizing: border-box;
     color: var(--nt);
     font-size: var(--fs-sm); word-break: break-all;}
-.sv-input:before { content:"["; }
-.sv-input:after { content:"]"; }
+.sv-input:before { content:"{"; }
+.sv-input:after { content:"}"; }
 
 /* the remove button lives INSIDE the pill — the pill supplies the outline, so the button is a
    borderless glyph (no box-shadow ring, no border), even though it carries .btn-trash. The .gnode
@@ -222,15 +222,15 @@ a.node.win:hover { border-color: var(--accent); }
 /* the add control is a plain "+" glyph, not a pill: drop the .sv-input border/fill so only the
    node-coloured "+" shows. */
 .sv-add { padding: 0; overflow: hidden; border: 0; background: transparent; border-radius: 0 !important; }
-select.sv-addin:not(:hover) { opacity: 0.7; }
-.gnode .sv-add .sv-addin { max-width: 150px; border: 0; background: transparent; color: var(--nt, var(--accent));
-    font-weight: 700; font-size: calc(var(--fs-sm) + 2px); line-height: 1; padding: 0; cursor: pointer;
-    appearance: none; -webkit-appearance: none;   /* drop the native dropdown caret — the pill is the affordance */
-    field-sizing: content;   /* size to the SELECTED text ("+ source…"), not the widest option */
-    align-self: stretch; min-height: 0; box-sizing: border-box; background: unset !important; }   /* fill the pill, drop the select UA min-height */
-/* the dropdown popup inherits the select's bg — transparent renders white, so set the
-   options to the panel colour so they stay readable when opened */
-.sv-add .sv-addin option { background: var(--panel); color: var(--text); }
+.sv-add .sv-addin:not(:hover) { opacity: 0.7; }
+/* the add control is a readonly "+" trigger (input.sv-addin, sources_input.js); clicking it opens
+   the searchable combo popover below. Styled as the bare node-coloured "+" glyph — no field chrome. */
+.gnode .sv-add .sv-addin { max-width: 150px; border: 0; background: unset !important; color: var(--nt, var(--accent));
+    line-height: 1; padding: 0; cursor: pointer; text-align: center;
+    appearance: none; -webkit-appearance: none;
+    field-sizing: content;   /* size to the "+" placeholder, not a default text-input width */
+    align-self: stretch; min-height: 0; box-sizing: border-box; }
+.gnode .sv-add .sv-addin::placeholder { color: var(--nt, var(--accent)); opacity: 1; }
 /* the term list fills a .nodehost (resizable + wheel-scrolls); the textarea has no
    border/resize of its own — the host owns those */
 /* the inner host just FILLS the node now (no resize handle of its own) */

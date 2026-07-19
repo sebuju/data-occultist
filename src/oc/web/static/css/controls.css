@@ -28,9 +28,12 @@ input[type="range"] {
 }
 textarea { resize: vertical; min-height: 56px; line-height: 1.4; }
 .topbar input, .topbar select { width: auto; }
-:is(select, input, textarea):not(.sv-addin):focus-visible {
+:is(select, input, textarea):not(.sv-addin, .sv-addin > option):focus-visible {
     outline: 1px solid #bababa;
     outline-offset: -1px;
+}
+.sv-addin:focus-visible {
+    outline: unset;
 }
 
 /* ONE button, everywhere. Icon + text are centred and never make it taller than a

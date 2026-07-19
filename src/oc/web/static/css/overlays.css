@@ -15,6 +15,21 @@
 .ctx-ic svg { width: 18px; height: 18px; }
 .ctx-lbl { color: var(--ctx-tint, var(--text)); }
 
+/* searchable "add source" combo popover (graph sources-input "+" control) — js/graph/combo_popover.js.
+   Body-level like .ctxmenu so it escapes node clipping / the canvas zoom transform. */
+.sv-combo-pop { position: fixed; z-index: 1000; background: var(--float-panel); color: var(--text);
+    border: 1px solid var(--float-line); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    padding: 4px; min-width: 180px; max-width: 320px; display: flex; flex-direction: column; gap: 4px; }
+.sv-combo-search { width: 100%; box-sizing: border-box; padding: 4px 6px; background: var(--panel);
+    color: var(--text); border: 1px solid var(--float-line); border-radius: 4px; }
+/* plain block, NOT flex: a flex column with max-height shrinks its rows to fit (no scroll,
+   everything crammed) — block lets rows keep natural height and the list scrolls. */
+.sv-combo-list { max-height: 260px; overflow-y: auto; display: block; }
+.sv-combo-opt { padding: 5px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+.sv-combo-opt:hover, .sv-combo-opt.hl { background: var(--accent-bg); }
+.sv-combo-empty { padding: 5px 8px; color: var(--muted); font-style: italic; }
+
 /* modals */
 .modal-backdrop {
     position: fixed; inset: 0; z-index: 1000;

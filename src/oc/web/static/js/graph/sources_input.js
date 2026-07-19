@@ -23,14 +23,26 @@
 //   addinCls : class on the add <select>, the caller's own delegated "change" wiring hook
 //   rmTitle  : each chip trash's tooltip (default "remove input")
 import { h, trashBtn } from "../dom.js";
+import { comboPopover } from "./combo_popover.js";
 
 export function sourcesInput({ chips, free, addLabel = "+ source", rmCls = "sv-rmin", addinCls = "sv-addin", rmTitle = "remove input" }) {
     const pills = (chips || []).map((c) => h("span", { class: "sv-input", dataset: c.node ? { node: c.node } : null },
         c.label ?? c.value,
         trashBtn({ cls: rmCls, dataset: { val: c.value }, title: rmTitle })));
     const freeOpts = (free || []).map((f) => (typeof f === "string" ? { value: f, label: f } : f));
-    const addOpts = [h("option", { value: "" }, "+"), freeOpts.map((f) => h("option", { value: f.value }, f.label ?? f.value))];
+    // The add control is a readonly "+" trigger that carries addinCls (so every caller's delegated
+    // `change` handler still finds it, unchanged). Clicking opens the searchable combo popover; on
+    // pick we set the trigger's value + fire a `change` so the caller's existing wiring runs, then
+    // clear it back to "+" (the node usually rebuilds and drops the trigger anyway). This is the
+    // graph's ONE searchable dropdown (combo_popover.js) — the native <select> it replaced couldn't
+    // host a search field.
+    const trigger = h("input", { class: addinCls, type: "text", readOnly: true, placeholder: "+",
+        title: addLabel.replace(/^\+\s*/, "add "), spellcheck: false });
+    trigger.addEventListener("mousedown", (e) => {
+        e.preventDefault();   // don't focus the readonly trigger — the popover's search field takes focus
+        comboPopover({ anchor: trigger, options: freeOpts, placeholder: addLabel.replace(/^\+\s*/, "search "),
+            onPick: (val) => { trigger.value = val; trigger.dispatchEvent(new Event("change", { bubbles: true })); trigger.value = ""; } });
+    });
     return h("div", { class: "sv-inputs" }, pills,
-        h("span", { class: "sv-input sv-add" },
-            h("select", { class: addinCls, title: addLabel.replace(/^\+\s*/, "add ") }, addOpts)));
+        h("span", { class: "sv-input sv-add" }, trigger));
 }
