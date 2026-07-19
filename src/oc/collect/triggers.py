@@ -671,10 +671,11 @@ class TriggerRunner:
         return None
 
     def emit_gate_flow(self) -> None:
-        """Animate a gate's decision when its pass/block result FLIPS: a ``data`` blob source -> gate
-        (the value that changed it) and a ``watch`` blob gate -> each trigger it gates (the decision
-        propagating). Called each live tick; an unchanged result emits nothing, so a steady value
-        never spams the flow layer. First sight of a gate seeds its state without a blob."""
+        """Animate the value that flips a gate's decision: a ``data`` blob source -> gate on the tick
+        its pass/block result FLIPS. Called each live tick; an unchanged result emits nothing, so a
+        steady value never spams the flow layer. First sight of a gate seeds its state without a blob.
+        The gate -> trigger decision is NOT a blob — the graph tints that line ok/danger by live pass/
+        block instead (see :meth:`gate_states`), so nothing streams from a gate to its triggers here."""
         gates = getattr(self._profile, "gates", None)
         if not gates:
             return
@@ -690,9 +691,14 @@ class TriggerRunner:
             src = self._source_node(g.source)
             if src:
                 publish_flow(game, "data", src, f"gate:{g.id}", 1)
-            for t in self._profile.triggers:
-                if g.id in (getattr(t, "gates", None) or []):
-                    publish_flow(game, "watch", f"gate:{g.id}", f"trigger:{t.id}", 1)
+
+    def gate_states(self) -> dict[str, bool]:
+        """Per-gate live pass/block: ``{gate_id: holds}`` for every ENABLED gate, evaluated against
+        the live caches. ``True`` = the gate currently PASSES, ``False`` = it BLOCKS. A display hint —
+        the graph tints each gate -> trigger line ok (pass) / danger (block); disabled gates are
+        omitted (the line stays grey, as it does when live is off)."""
+        return {g.id: self._gate_holds(g) for g in (getattr(self._profile, "gates", None) or [])
+                if getattr(g, "enabled", True)}
 
     def gated_ids(self) -> list[str]:
         """Ids of enabled, gated triggers whose gates currently BLOCK them (evaluated against the
@@ -706,13 +712,18 @@ class TriggerRunner:
         (producer/file-source/toast/action) to fire now, and sound ids to name in the fire cue (the
         browser plays those). A router forwards its FIRST matching branch's targets (a branch with no
         conds matches always); a disabled router forwards nothing. Direct sound targets land in
-        ``sound_ids`` too, so the cue always carries the full set the client should play."""
+        ``sound_ids`` too, so the cue always carries the full set the client should play. A disabled
+        sound is dropped entirely (never played, never a phantom fire_id) — its ``enabled`` flag is
+        honored here since sounds are client-played off the fire cue, not dispatched in ``_fire_targets``."""
         by_router = {r.id: r for r in getattr(self._profile, "routers", [])}
         sound_set = {s.id for s in getattr(self._profile, "sounds", [])}
+        off_sounds = {s.id for s in getattr(self._profile, "sounds", []) if not getattr(s, "enabled", True)}
         fire_ids: list[str] = []
         sound_ids: list[str] = []
 
         def add(tid: str) -> None:
+            if tid in off_sounds:
+                return   # disabled sound: not played, and not a stray fire_id
             if tid in sound_set:
                 if tid not in sound_ids:
                     sound_ids.append(tid)

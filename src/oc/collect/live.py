@@ -469,6 +469,13 @@ class LiveSession:
         r = self._trigger_runner()
         return r.gated_ids() if r is not None else []
 
+    def gate_states(self) -> dict[str, bool]:
+        """Per-gate live pass/block map (``{gate_id: holds}``) for the activity snapshot — the graph
+        tints each gate -> trigger line ok (pass) / danger (block). Empty when no runner is built.
+        Read-only; safe to call from the activity thread while the tick thread updates the caches."""
+        r = self._trigger_runner()
+        return r.gate_states() if r is not None else {}
+
     def feed_readouts(self, detailed: dict, ro_trace: list, window,
                       window_id: str, registers=None, profile=None) -> None:
         """Full live-like readout fold for a caller OUTSIDE the collector loop — the teach-UI

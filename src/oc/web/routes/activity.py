@@ -42,6 +42,7 @@ def build_activity(game: str, settings) -> dict:
             precap = st
     live = None
     gated: list[str] = []
+    gate_states: dict[str, bool] = {}
     ls = _live_sessions.get(game)
     if ls is not None:
         lst = ls.status()
@@ -50,8 +51,11 @@ def build_activity(game: str, settings) -> dict:
             # triggers whose gates BLOCK them right now -> the UI flags these nodes 'gated off'
             # (a live-only cue; empty when idle). See LiveSession.gated_trigger_ids.
             gated = ls.gated_trigger_ids()
+            # per-gate pass/block -> the graph tints each gate->trigger line ok/danger (empty when
+            # idle -> the lines fall back to grey). See LiveSession.gate_states.
+            gate_states = ls.gate_states()
     return {"sweeps": active_sweeps(game, settings.data_dir), "blocked": recent_blocked(game),
-            "precapture": precap, "live": live, "gated": gated,
+            "precapture": precap, "live": live, "gated": gated, "gate_states": gate_states,
             "triggers": trigger_schedule(game, settings),
             "producer_history": producer_history_snapshot(game),
             # Readout + register history ride the beat TOP-LEVEL (like producer_history), NOT under

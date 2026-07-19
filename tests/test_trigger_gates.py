@@ -178,6 +178,18 @@ def test_direct_targets_bypass_router():
     assert tr._resolve_fire(prof.triggers[0]) == (["producer_x"], ["bob"])
 
 
+def test_disabled_sound_dropped_from_cue():
+    # a disabled sound is honored server-side (sounds are client-played off the fire cue): it must
+    # NOT reach sound_ids, and must NOT leak into fire_ids as a phantom server target.
+    prof = GameProfile(
+        name="g",
+        sounds=[SoundDef(id="on"), SoundDef(id="off", enabled=False)],
+        triggers=[TriggerDef(id="t", kind="interval", targets=["on", "off", "producer_x"])],
+    )
+    tr = _runner(prof)
+    assert tr._resolve_fire(prof.triggers[0]) == (["producer_x"], ["on"])
+
+
 # ---- manual fire (via _emit_fire) bypasses gates -------------------------------------------------
 
 def test_gated_ids_reports_currently_blocked_triggers():
@@ -195,6 +207,8 @@ def test_gated_ids_reports_currently_blocked_triggers():
 
 
 def test_emit_gate_flow_only_on_flip():
+    # The source->gate data blob fires only when the decision flips; the gate->trigger hop is NOT a
+    # blob anymore (the line is tinted ok/danger by gate_states instead), so no watch blob is emitted.
     import oc.store.flow_events as fl
     blobs = []
     off = fl.subscribe(lambda game, kind, src, dst, n: blobs.append((kind, src, dst)))
@@ -210,11 +224,24 @@ def test_emit_gate_flow_only_on_flip():
         tr.emit_gate_flow()                     # unchanged -> no blob
         assert blobs == []
         tr.set_registers({"reg": {"a": 2}})
-        tr.emit_gate_flow()                     # flip to pass -> blob source->gate + gate->trigger
+        tr.emit_gate_flow()                     # flip to pass -> data blob source->gate only
         assert ("data", "register:reg", "gate:gb") in blobs
-        assert ("watch", "gate:gb", "trigger:t") in blobs
+        assert not any(kind == "watch" for kind, *_ in blobs)   # no gate->trigger blob
     finally:
         off()
+
+
+def test_gate_states_reports_pass_block():
+    g = _gate("gb", "register:reg#a", ("lt", "3"))
+    prof = GameProfile(name="g", gates=[g], triggers=[
+        TriggerDef(id="t", kind="on_register", register_watch=["reg"], gates=["gb"])])
+    tr = _runner(prof)
+    tr.set_registers({"reg": {"a": 5}})         # 5 not < 3 -> gate BLOCKS
+    assert tr.gate_states() == {"gb": False}
+    tr.set_registers({"reg": {"a": 2}})         # 2 < 3 -> gate PASSES
+    assert tr.gate_states() == {"gb": True}
+    g.enabled = False                           # disabled gate omitted (line stays grey)
+    assert tr.gate_states() == {}
 
 
 def test_emit_fire_bypasses_gates():
