@@ -7531,7 +7531,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: silver
-    gate: false
   - id: group_11
     title: 'window: relic rewards'
     members:
@@ -7734,7 +7733,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: silver
-    gate: false
   - id: group_28
     title: ability timer reads
     members:
@@ -7769,7 +7767,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: blue
-    gate: false
   - id: group_31
     title: 'window: mission rewards (wip)'
     members:
@@ -8019,7 +8016,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: teal
-    gate: false
   - id: group_49
     title: suggestions, owned mods
     members:
@@ -8205,7 +8201,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: chartreuse
-    gate: false
   - id: group_72
     title: group_72
     members:
@@ -8232,7 +8227,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: blue
-    gate: false
   float_windows: {}
   super_groups:
   - id: sgroup_2

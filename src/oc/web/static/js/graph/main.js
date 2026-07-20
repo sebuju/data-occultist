@@ -316,7 +316,6 @@ groups.initGroups({
     moveMembers: (ids, ev) => { const lead = ids.find((id) => pos.get(id)); if (lead) moveNodes(lead, ids.filter((x) => x !== lead), ev); },
     persist: () => persist.layout(),
     afterChange: () => { syncMultiSelect(); },
-    reroute: () => requestEdges(),   // a group's gate flag flipped (no node moved) -> route cache needs a nudge
     // double-click a group → frame its bounding box (reuses groupBoxes() geometry)
     zoomToGroup: (gid) => { const gb = groups.groupBoxes().find((b) => b.id === gid); if (gb) panZoomToRect(gb.box, { onlyIn: true }); },
     // frame an arbitrary world rect (theme panel "used by" click → jump to that group/sub/super)

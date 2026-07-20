@@ -21,7 +21,7 @@
 //   • moveMembers(ids, ev) -> begin a multi-node drag (reuses main's move logic)
 //   • world/superWorld/subWorld() -> the three DOM layers
 //   • bonds()        -> {leader, follower} pairs (a preview follows its window in/out of a group)
-//   • startGroupResize(gid, ev), persist(), afterChange(), reroute() (route cache nudge, no node moved)
+//   • startGroupResize(gid, ev), persist(), afterChange()
 //
 // Geometry recomputes from live member rects every render, so a box always hugs its members.
 
@@ -361,7 +361,7 @@ const GROUP = {
     makeRecord: (id, ids) => ({
         id, title: defaultTitle(ids) || id, members: ids,
         outline: { color: DEF_OUTLINE, style: "none", width: 2, offset: 0 }, bg: DEF_BG, titleAlign: "left",
-        titleBg: "", titleColor: "", w: null, h: null, shadow: null, schemeId: null, gate: true,
+        titleBg: "", titleColor: "", w: null, h: null, shadow: null, schemeId: null,
     }),
     buildEl: (rec) => buildBoxEl(rec),
     beforeSize: (rec, el) => groupBeforeSize(rec, el),
@@ -926,7 +926,7 @@ function onSubPress(sid, ev) {
 // ---- external geometry readers (node map, router, canvas hit-tests) -------
 export function groupBoxes() {
     return groups
-        .map((g) => ({ id: g.id, title: g.title, outline: { ...g.outline }, bg: g.bg, titleAlign: g.titleAlign, bandH: g._titleH || TITLE_H, gate: g.gate !== false, box: boxOf(GROUP, g) }))
+        .map((g) => ({ id: g.id, title: g.title, outline: { ...g.outline }, bg: g.bg, titleAlign: g.titleAlign, bandH: g._titleH || TITLE_H, box: boxOf(GROUP, g) }))
         .filter((x) => x.box);
 }
 export function subGroupBoxes() {
@@ -1005,10 +1005,10 @@ function tryCopyFrom(src, tier) {
     return true;
 }
 // Every tier shows ONE colour input; its whole look (rim, fill, label) derives from it. Per-tier flags
-// gate only the layout extras (hasAlign/sizable/hasGating). There are no fill/title/shadow/offset
+// gate only the layout extras (hasAlign/sizable). There are no fill/title/shadow/offset
 // controls — those are all derived or dropped.
 function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband, defaults, sizable,
-        tier = "group", render = renderGroups, hasTitleBg = true, hasAlign = true, hasGating = false }) {
+        tier = "group", render = renderGroups, hasTitleBg = true, hasAlign = true }) {
     if (openPopover?.id === id) { closePopover(); return; }
     closePopover();
     const t = target;
@@ -1021,9 +1021,6 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
     pop.append(...[
         h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "title"),
             h("input", { class: "gp-title", value: t.title })),
-        hasGating ? h("label", { class: "flab", title: "route boundary lines through this group's enter/exit points" },
-            h("span", { class: "gp-lab" }, "gates"),
-            h("input", { type: "checkbox", class: "gp-gate", checked: t.gate !== false })) : null,
         (hasAlign || sizable) ? sub("layout") : null,
         hasAlign ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "align"),
             h("select", { class: "gp-pos" },
@@ -1064,7 +1061,7 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
     // Multi-select fan-out: when this group is part of a ctrl-selection (>=2 groups), every style
     // edit mirrors onto the other selected groups — the same "drag any selected item, the whole set
     // follows" rule the title-drag already uses (selIds above). Only the LOOK copies (outline/fill/
-    // title colours/scheme/align/shadow); title text, size and gate stay per-group. Group tier only
+    // title colours/scheme/align/shadow); title text and size stay per-group. Group tier only
     // (sub/super have no ctrl-selection). Runs inside paint(), so it covers colour-drag, scheme apply
     // and reset uniformly without wiring each site.
     const STYLE_KEYS = ["bg", "titleBg", "titleColor", "schemeId", "titleAlign"];
@@ -1109,7 +1106,6 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
         ocol.addEventListener("change", () => { if (raf) { cancelAnimationFrame(raf); live(); } ctx.persist(); });
     }
     if (hasAlign) pop.querySelector(".gp-pos").addEventListener("change", (e) => { t.titleAlign = e.target.value; commit(); });
-    if (hasGating) pop.querySelector(".gp-gate").addEventListener("change", (e) => { t.gate = e.target.checked; commit(); ctx.reroute?.(); });
     if (sizable) {
         const wireSize = (inpSel, axis) => {
             const inp = pop.querySelector(inpSel);
@@ -1150,7 +1146,7 @@ function togglePopover(gid, ev) {
     const g = byId(gid);
     if (!g) return;
     openOptionsPopover(`group:${gid}`, g, ev, {
-        ownerSel: ".ggroup-title", disbandLabel: "disband", sizable: true, tier: "group", hasGating: true,
+        ownerSel: ".ggroup-title", disbandLabel: "disband", sizable: true, tier: "group",
         defaults: { outline: { color: DEF_OUTLINE, style: "none", width: 2 }, bg: DEF_BG, titleBg: "", titleColor: "", titleAlign: "left" },
         onDisband: () => disbandIn(GROUP, gid),
     });
@@ -1189,7 +1185,6 @@ export function collect() {
         if (g.h > 0) o.h = g.h;
         if (g.shadow) o.shadow = cloneShadow(g.shadow);
         if (g.schemeId) o.schemeId = g.schemeId;
-        if (g.gate === false) o.gate = false;
         return o;
     });
 }
@@ -1234,7 +1229,6 @@ export function hydrate(arr) {
         h: g.h > 0 ? g.h : null,
         shadow: cloneShadow(g.shadow),
         schemeId: g.schemeId || null,
-        gate: g.gate !== false,
     })).filter((g) => g.members.length);
     for (const g of groups) reapplyScheme(g, "group");   // scheme = source of truth (retunes propagate)
     seq = groups.reduce((m, g) => { const n = /^group_(\d+)$/.exec(g.id); return n ? Math.max(m, +n[1]) : m; }, 0);
