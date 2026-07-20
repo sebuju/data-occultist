@@ -1133,6 +1133,13 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .mr-badge { flex: 0 0 auto; font-size: var(--fs-xs); padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); }
 .mr-val, .mr-mark { flex: 0 0 auto; min-width: 0; overflow-wrap: anywhere; text-align: right; }
 
+/* aggregate-picker trigger (register_node.js): a <button> standing in for the native <select> it
+   replaced (reg_agg_picker.js opens the grouped help popover instead), styled back to look like
+   the other .gi inputs on the row rather than the app's default filled button. */
+.reg-agg-btn { justify-content: space-between; text-align: left;
+    background: var(--bg); color: var(--text); border: 1px solid var(--line); font-size: inherit; }
+.reg-agg-btn::after { content: "\25be"; opacity: .6; margin-left: 6px; }   /* small dropdown affordance */
+
 /* register "memory bank": a fluid grid of square value-slots (one per held key). Column count
    follows the node width via auto-fill + a rem floor — no fixed px, so it reflows as the node is
    resized (narrow = 2 across, wide = 4-5). Confidence rides --cc (tile tint + a bottom bar whose
@@ -1152,12 +1159,23 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .mb-cell:hover { border-color: color-mix(in oklab, var(--cc) 100%, var(--card-2)); }   /* inset: no bleed into the grid gaps */
 .mb-k { font-size: 9px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted);
     overflow-wrap: anywhere; }   /* wrap the full key rather than clip it */
+/* which fold is exposed (register_node.js's mode chip) — a small corner label, absolute so it
+   never takes a flex slot / never pushes the stack. Shown only while an aggregate is active. */
+.mb-agg-tag { position: absolute; top: 3px; right: 5px; font-size: 7px; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--dim); pointer-events: none; }
 /* the ring stack: latest line big/bright on top, older lines dim below (see register_node.js).
    Fills the space between key and meta; the cell's overflow:hidden clips a very deep ring. */
 .mb-vstack { flex: 1; min-height: 0; overflow: hidden;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
-.mb-v { max-width: 100%; line-height: 1.15; color: var(--nt); text-align: right;
+/* a ring deeper than the cell has room for must CLIP, not squish -- flex's default shrink-to-fit
+   crushes each line below its line-height once the stack overflows, so glyphs overlap instead of
+   the excess simply disappearing under overflow:hidden. flex:0 0 auto opts every line out of that
+   shrink, so overflow:hidden clips whole lines cleanly. */
+.mb-v { flex: 0 0 auto; max-width: 100%; line-height: 1.15; color: var(--nt); text-align: right;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* register_node.js toggles this on the MULTI stack so it clips its OLDEST (bottom) lines instead
+   of centering (which would clip symmetrically and could hide the agg/latest lines up top). */
+.mb-vstack.mb-start { justify-content: flex-start; }
 .mb-v-latest { font-size: var(--fs-sm); font-weight: 600; }   /* latest (ring tail) */
 .mb-v-old { font-size: 9px; font-weight: 400; color: var(--dim); }   /* retained history */
 /* the exposed value under a <latest> fold (cursor slot): tint it nt like the agg line so the ring

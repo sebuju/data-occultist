@@ -29,6 +29,17 @@
     overflow: hidden; text-overflow: ellipsis; }
 .sv-combo-opt:hover, .sv-combo-opt.hl { background: var(--accent-bg); }
 .sv-combo-empty { padding: 5px 8px; color: var(--muted); font-style: italic; }
+/* the register aggregate picker (js/graph/reg_agg_picker.js) — a fixed, grouped, no-search browse
+   list built on the sv-combo-* shell above. Wider than the add-combo (descriptions run long) and
+   its rows wrap to two lines (label + description) instead of the add-combo's single-line clip. */
+.agg-pick-pop { max-width: 420px; }
+.sv-combo-group { padding: 5px 8px 2px; font-size: var(--fs-xs); letter-spacing: .04em;
+    text-transform: uppercase; color: var(--muted); }
+.agg-pick-opt { display: flex; flex-direction: column; gap: 1px; white-space: normal;
+    overflow: visible; text-overflow: clip; }
+.agg-pick-lbl { color: var(--text); }
+.agg-pick-opt.sel .agg-pick-lbl::before { content: "\203a  "; color: var(--accent); }   /* current mode marker */
+.sv-combo-meta { font-size: var(--fs-xs); color: var(--muted); white-space: normal; }
 
 /* modals */
 .modal-backdrop {

@@ -18,6 +18,7 @@ import { log, timed } from "../log.js";
 import { wireProducerNode, mapRow } from "./producer_node.js";
 import { renderTriggerHistory } from "./history_node.js";
 import { refreshRegister, populateRegister } from "./register_node.js";
+import { aggPickerPop } from "./reg_agg_picker.js";
 import { renderProcessHistory } from "./process_history_node.js";
 import { wireSlotRows } from "./reg_slots.js";
 import { makeArmed } from "./armbtn.js";
@@ -428,10 +429,22 @@ function wireRegister(div, n) {
     wireArmedRemove(div, ".reg-rmsrc", (val) => { model.removeRegisterSource(x.id, val); rebuild(); });
     // ring depth per key: coerce (blank -> 1) then rebuild so the normalised value re-renders.
     $(".reg-cap")?.addEventListener("change", (e) => { model.setRegisterCapacity(x.id, e.target.value); rebuildNode(n.id); autosave(null); });
-    // ring aggregate (shown only when capacity > 1): nothing structural changes — the native select
-    // already shows the pick — so DON'T rebuild the node body; just refetch so the membank's summary
-    // line repaints with the new fold (the server folds off the passed mode).
-    $(".reg-agg")?.addEventListener("change", (e) => { model.setRegisterAggregate(x.id, e.target.value); refreshRegister(x.id); autosave(null); });
+    // ring aggregate (shown only when capacity > 1): opens the grouped help popover (reg_agg_picker.js)
+    // instead of a native <select> (option tooltips don't render cross-browser). The picked mode
+    // gates whether the arg-tuning input shows at all (AGG_ARG in register_node.js), so rebuild the
+    // body like `.reg-cap` does for its own threshold — then refetch so the membank's summary line
+    // repaints with the new fold.
+    $(".reg-agg-btn")?.addEventListener("click", (e) => {
+        aggPickerPop({
+            anchor: e.currentTarget, current: x.aggregate || "",
+            onPick: (v) => { model.setRegisterAggregate(x.id, v); rebuildNode(n.id); refreshRegister(x.id); autosave(null); },
+        });
+    });
+    // the fold's tuning knob (RegisterDef.aggregate_arg): no structural change, just refetch so the
+    // summary repaints with the new arg (mirrors the plain `.reg-agg-btn` refresh, pre-rebuild).
+    $(".reg-aggarg")?.addEventListener("change", (e) => {
+        model.setRegisterAggregateArg(x.id, e.target.value); refreshRegister(x.id); autosave(null);
+    });
     // ignore-empty toggle: pure server-side write behaviour, no re-render needed.
     $(".reg-ignoreempty")?.addEventListener("change", (e) => { model.setRegisterIgnoreEmpty(x.id, e.target.checked); autosave(null); });
     // clear the held map server-side (armed two-click, no blocking dialog). Values live only in the

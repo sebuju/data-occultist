@@ -22,12 +22,29 @@ from datetime import datetime
 
 from ..engine import Engine
 from ..ocr.device_switch import enter_device, exit_device
-from ..profile.models import GameProfile
+from ..profile.models import FieldType, GameProfile
 from ..store import store_for
 from ..store.flow_events import publish_flow
 from . import process_history, readout_history, register_history
 from .collector import Collector, TickStatus
-from .fields import run_rule_pipeline
+from .fields import (
+    changes_count,
+    cluster_fold,
+    delta_fold,
+    distinct_count,
+    ema_fold,
+    mad_fold,
+    midrange_fold,
+    nonblank_count,
+    quality_fold,
+    range_fold,
+    run_rule_pipeline,
+    stdev_fold,
+    track_fold,
+    trimmed_fold,
+    winsor_fold,
+    wma_fold,
+)
 
 # How many recent debug entries the live session keeps for the panel's debug log. Bounded so a
 # long-running collector can't grow memory without limit; the UI polls incrementally by seq.
@@ -81,10 +98,18 @@ class LiveSession:
         # `_readouts`/`_readout_confs` above stay gated -- triggers/toasts must never see this.
         self._readouts_all: dict[str, object] = {}
         self._readout_confs_all: dict[str, float] = {}
-        # Register-node maps: {register_id: {readout_id: {value, conf, first_seen, last_seen}}}. Held
-        # in server memory only (never persisted). Fed from readouts each tick; deliberately NOT
-        # reset by start() — a register accumulates across runs and is wiped only by clear_register.
+        # Register-node maps: {register_id: {readout_id: {values, times, writes, conf, first_seen,
+        # last_seen}}} — `values` is the rolling ring (oldest -> newest, len <= capacity) and `times`
+        # is its per-sample wall clock, sliced in lockstep (the `track` fold fits against real time,
+        # since tick spacing is uneven). Held in server memory only (never persisted). Fed from
+        # readouts each tick; deliberately NOT reset by start() — a register accumulates across runs
+        # and is wiped only by clear_register.
         self._registers: dict[str, dict[str, dict]] = {}
+        # readout-id -> FieldType.value, for the `quality` fold (needs to know what "expected type"
+        # means for a ring). Memoized per profile OBJECT (a swap invalidates it, mirroring
+        # _triggers_for's pattern) since it's rebuilt from window/field wiring, not live data.
+        self._ftype_cache: dict[str, str] = {}
+        self._ftype_cache_for: GameProfile | None = None
         # Process-node output maps: {process_id: {key: value}}. Recomputed FRESH each tick from the
         # node's resolved inputs (a process is a pure key-preserved rules transform, no accumulation
         # unlike a register); held in server memory only. Downstream registers/processes read this.
@@ -377,30 +402,45 @@ class LiveSession:
         return m
 
     @classmethod
-    def _aggregate_ring(cls, values: list, mode: str):
+    def _aggregate_ring(cls, values: list, mode: str, ftype: str | None = None, arg: float = 0.0,
+                        times: list | None = None):
         """Collapse a key's ring of recent values to the ONE value the register exposes, per
-        ``RegisterDef.aggregate``. ``""``/``"latest"`` (or an unknown mode) -> the ring TAIL
-        unchanged. A numeric fold (min/max/avg/sum/median/stable) coerces each member to ``float``
-        and skips non-numeric ones -- including a dropped read's ``None`` (a ring ``[6, None, 8]``
-        sums to ``14``); with no numeric members (or an empty ring, or an all-dropped ring) it falls
-        back to the tail too, so an all-``None`` ring exposes ``None``. A non-numeric register never breaks — it just keeps showing its latest.
+        ``RegisterDef.aggregate`` (+ ``aggregate_arg``, this fold's per-mode tuning knob — see
+        :class:`~oc.profile.models.RegisterDef`). ``""``/``"latest"`` (or an unknown mode) -> the
+        ring TAIL unchanged. ``ftype`` (a :class:`~oc.profile.models.FieldType` value, or ``None``
+        -> treated as text) is only consulted by ``quality``; ``times`` (the ring's per-sample wall
+        clock) only by ``track``.
 
-        ``common`` is the one NON-numeric fold: it does not coerce — it exposes the most frequent ring
-        member by text form (ties -> newest of the tied), so a register of item names/states/labels
-        collapses to its dominant value.
+        Three families, dispatched below:
 
-        ``stable`` = the NEWEST ring value that agrees with the consensus: skip values deviating more
-        than ``_STABLE_K * MAD`` from the ring's median (walking newest->oldest), so a lone confident
-        misread (a ``400`` spike among ``4.00`` reads) is rejected in favour of the latest good read.
+        * SELECTOR folds (``first``/``stable``/``quality``/``cluster``/``common``/``track``) expose
+          an EXISTING ring member unrounded — they never synthesize a new number.
+        * COUNT folds (``distinct``/``changes``/``nonblank``) return a plain int over the raw ring
+          (blanks included), not the coerced-numeric ``nums`` below.
+        * NUMERIC folds coerce each member to ``float`` and skip non-numeric ones -- including a
+          dropped read's ``None`` (a ring ``[6, None, 8]`` sums to ``14``); with no numeric members
+          (or an empty/all-dropped ring) they fall back to the tail, so an all-``None`` ring exposes
+          ``None``. A fold that PRODUCES a float (avg/median/midrange/wma/ema/trimmed/winsor/range/
+          delta/stdev/mad, always; min/max/sum when the result isn't whole) is rounded to the ring's
+          own decimal precision PLUS ONE (no decimals in the inputs -> one), so an average of whole
+          reads reads ``20.0`` and of two-decimal reads ``x.xxx``. A whole min/max/sum stays an int
+          (it merely selected/added existing values — it didn't produce a float).
 
-        A fold that PRODUCES a float (avg/median always; min/max/sum when the result isn't whole)
-        is rounded to the ring's own decimal precision PLUS ONE (no decimals in the inputs -> one),
-        so an average of whole reads reads ``20.0`` and of two-decimal reads ``x.xxx``. A whole
-        min/max/sum stays an int (it merely selected/added existing values — it didn't produce a
-        float), so it reads ``20`` not ``20.0``."""
+        A non-numeric register never breaks a numeric fold — it just keeps showing its latest."""
         tail = values[-1] if values else None
         if not values or mode in ("", "latest"):
             return tail
+        if mode == "first":
+            return values[0]   # oldest retained -- unrounded, works on any ring (even non-numeric)
+        if mode == "quality":
+            # The restored per-readout consensus gate (see fields.quality_fold docstring).
+            return quality_fold(values, ftype or FieldType.text.value, arg)
+        if mode == "cluster":
+            return cluster_fold(values, arg)
+        if mode == "track":
+            # Time-aware trend gate: reject a read the elapsed time couldn't produce (see
+            # fields.track_fold). No times (a caller that didn't plumb them) -> the tail.
+            return track_fold(values, times or [], arg)
         if mode == "common":
             # Non-numeric fold: expose the most frequent ring member by TEXT form; return the
             # original value (a numeric ring still exposes a number). Tie -> newest of the tied.
@@ -413,6 +453,12 @@ class LiveSession:
             top = max(counts.values())
             winners = {k for k, c in counts.items() if c == top}
             return next((v for v in reversed(members) if str(v) in winners), members[-1])
+        if mode == "distinct":
+            return distinct_count(values)
+        if mode == "changes":
+            return changes_count(values)
+        if mode == "nonblank":
+            return nonblank_count(values)
         nums = []
         for v in values:
             try:
@@ -427,6 +473,24 @@ class LiveSession:
                 return round(statistics.fmean(nums), prec)
             if mode == "median":
                 return round(statistics.median(nums), prec)
+            if mode == "midrange":
+                return round(midrange_fold(nums), prec)
+            if mode == "wma":
+                return round(wma_fold(nums), prec)
+            if mode == "ema":
+                return round(ema_fold(nums, arg or 0.5), prec)
+            if mode == "trimmed":
+                return round(trimmed_fold(nums, arg or 1), prec)
+            if mode == "winsor":
+                return round(winsor_fold(nums, arg or 1), prec)
+            if mode == "range":
+                return round(range_fold(nums), prec)
+            if mode == "delta":
+                return round(delta_fold(nums), prec)
+            if mode == "stdev":
+                return round(stdev_fold(nums), prec)
+            if mode == "mad":
+                return round(mad_fold(nums), prec)
             if mode == "min":
                 r = min(nums)
             elif mode == "max":
@@ -435,7 +499,7 @@ class LiveSession:
                 r = sum(nums)
             elif mode == "stable":
                 center = statistics.median(nums)
-                thr = _STABLE_K * statistics.median([abs(x - center) for x in nums])
+                thr = (arg or _STABLE_K) * statistics.median([abs(x - center) for x in nums])
                 r = next((v for v in reversed(nums) if abs(v - center) <= thr), tail)
             else:
                 return tail
@@ -445,6 +509,44 @@ class LiveSession:
             return None
         # min/max/sum kept an existing value / total -> stay int when whole, else round like a fold
         return int(r) if float(r).is_integer() else round(r, prec)
+
+    def _reg_ftype(self, reg_id: str, key: str) -> str:
+        """The :class:`~oc.profile.models.FieldType` value backing one register key's readout, for
+        the ``quality`` fold. A key sourced from a process/register (not a readout), or a readout
+        whose id isn't found, defaults to ``"text"`` (the permissive type — quality_ok only demands
+        non-empty). ``reg_id`` is unused for lookup (every readout id is globally unique across
+        windows) — kept in the signature for symmetry with the other ``_reg_*`` helpers. Memoized
+        per profile OBJECT since it's rebuilt from window/field wiring, not live data; invalidated
+        the same way :meth:`_trigger_runner` invalidates its cache -- a profile swap (never a
+        mid-run edit, which doesn't reach here) clears it."""
+        if self._ftype_cache_for is not self._profile:
+            self._ftype_cache = {}
+            for win in getattr(self._profile, "windows", None) or []:
+                vfields = {f.id: f for f in self._profile.fields_for(win)}
+                for ro in getattr(win, "readouts", None) or []:
+                    f = vfields.get(ro.field)
+                    if f is not None:
+                        self._ftype_cache[ro.id] = f.type.value
+            self._ftype_cache_for = self._profile
+        return self._ftype_cache.get(key, FieldType.text.value)
+
+    def _exposed(self, reg_id: str, key: str, values: list,
+                 mode: str | None = None, arg: float | None = None, times: list | None = None):
+        """The ONE instance-level entry point every internal caller folds a register key's ring
+        through (rule 7 — the single funnel for :meth:`_aggregate_ring`'s ``ftype``/``arg``
+        plumbing, which the classmethod itself can't resolve). ``mode``/``arg`` default to the
+        register's OWN stored ``aggregate``/``aggregate_arg`` when omitted; a caller with a live,
+        possibly-stale-profile override (the detail route's client-passed select) passes both
+        explicitly instead. ``times`` is the ring's per-sample wall clock (only ``track`` reads it);
+        a caller without it — or an entry predating the field — just yields no time info, and
+        ``track`` falls back to the ring tail."""
+        rd = self._reg_def(reg_id)
+        if mode is None:
+            mode = getattr(rd, "aggregate", "") or ""
+        if arg is None:
+            arg = getattr(rd, "aggregate_arg", 0.0) or 0.0
+        ftype = self._reg_ftype(reg_id, key) if mode == "quality" else None
+        return self._aggregate_ring(values, mode, ftype, arg, times)
 
     def _trigger_runner(self):
         """The session's shared :class:`TriggerRunner`, lazily built from the current profile
@@ -588,6 +690,7 @@ class LiveSession:
                 continue
             cap = max(1, int(getattr(reg, "capacity", 1) or 1))
             mode = getattr(reg, "aggregate", "") or ""
+            arg = getattr(reg, "aggregate_arg", 0.0) or 0.0
             ignore_empty = bool(getattr(reg, "ignore_empty", False))
             dirty = False
             for src in reg.sources or []:
@@ -604,12 +707,20 @@ class LiveSession:
                     m = self._registers.setdefault(reg.id, {})
                     prev = m.get(key)
                     prev_vals = prev["values"] if prev else []
-                    prev_exposed = self._aggregate_ring(prev_vals, mode) if prev else None
+                    prev_times = (prev.get("times") if prev else None) or []
+                    prev_exposed = self._exposed(reg.id, key, prev_vals, mode=mode, arg=arg,
+                                                 times=prev_times) if prev else None
                     # append EVERY read (duplicates included) -> the ring is a true rolling window
                     full = prev_vals[:]
                     full.append(val)
                     vals = full[-cap:]
                     evicted = full[:-cap]   # samples the append pushed out of the ring (may be empty)
+                    # per-sample wall clock, sliced IDENTICALLY so it can never drift out of step with
+                    # `vals`. Sample spacing is genuinely non-uniform (the collector's OCR gate skips
+                    # heavy ticks), so a time-aware fold (`track`) can't use the sample index instead.
+                    full_t = prev_times[:]
+                    full_t.append(now)
+                    ts = full_t[-cap:]
                     # ring_index = the circular write cursor (0,1,..,cap-1,0,..) — WHICH slot this write
                     # lands in, so the push-history shows a rotating slot (not a constant cap-1 tail). The
                     # value it overwrote is that slot's prior content = the evicted-oldest (None until full).
@@ -619,12 +730,13 @@ class LiveSession:
                         ts=datetime.now().isoformat(timespec="milliseconds"),
                         key=key, value=val, ring_index=(writes - 1) % cap,
                         overwritten=(evicted[-1] if evicted else None))
-                    exposed = self._aggregate_ring(vals, mode)
+                    exposed = self._exposed(reg.id, key, vals, mode=mode, arg=arg, times=ts)
                     if prev is None or prev_exposed != exposed:
                         dirty = True   # exposed value moved -> persist (skips a static non-aggregate)
                         changed.append({"reg": reg.id, "key": key, "value": exposed})
                     m[key] = {
                         "values": vals,
+                        "times": ts,
                         "writes": writes,
                         "conf": confs.get(key) if is_readout else None,
                         "first_seen": prev["first_seen"] if prev else now,
@@ -641,9 +753,8 @@ class LiveSession:
         Caller holds ``self._lock`` (read straight off ``self._registers``)."""
         snap: dict = {}
         for reg_id, m in self._registers.items():
-            rd = self._reg_def(reg_id)
-            mode = getattr(rd, "aggregate", "") or "" if rd else ""
-            snap[reg_id] = {k: self._aggregate_ring(e["values"], mode) for k, e in m.items()}
+            snap[reg_id] = {k: self._exposed(reg_id, k, e["values"], times=e.get("times"))
+                            for k, e in m.items()}
         return snap
 
     def _register_rings_snapshot(self) -> dict:
@@ -665,9 +776,7 @@ class LiveSession:
         register twin of :meth:`_register_snapshot`, so a process consuming a register reads exactly
         what the register exposes. Caller holds ``self._lock``."""
         m = self._registers.get(reg_id) or {}
-        rd = self._reg_def(reg_id)
-        mode = getattr(rd, "aggregate", "") or "" if rd else ""
-        return {k: self._aggregate_ring(e["values"], mode) for k, e in m.items()}
+        return {k: self._exposed(reg_id, k, e["values"], times=e.get("times")) for k, e in m.items()}
 
     # ---- processes: standalone key-preserved rules pipelines (see ProcessDef) --------
 
@@ -846,19 +955,22 @@ class LiveSession:
         try:
             dataset = reg.persist
             mode = getattr(reg, "aggregate", "") or ""
+            arg = getattr(reg, "aggregate_arg", 0.0) or 0.0
             store = self._persist_stores.get(dataset)
             if store is None:
                 store = store_for(self._engine.settings.data_dir, self._profile.name,
                                   dataset, profile=self._profile)
                 self._persist_stores[dataset] = store
-            rows = [{"name": rid, "value": self._aggregate_ring(e["values"], mode)}
+            rows = [{"name": rid, "value": self._exposed(reg.id, rid, e["values"], mode=mode, arg=arg,
+                                                        times=e.get("times"))}
                     for rid, e in self._registers.get(reg.id, {}).items()]
             if rows:
                 store.record_many(rows)
         except Exception:  # pragma: no cover - defensive, mirrors _save_frame
             pass
 
-    def register_records(self, reg_id: str, aggregate: str | None = None) -> list[dict]:
+    def register_records(self, reg_id: str, aggregate: str | None = None,
+                         arg: float | None = None) -> list[dict]:
         """Current held map for one register as table rows (newest last_seen first). ``value`` is
         the ring tail (latest); ``values`` is the full ring (oldest->newest) the membank stacks;
         ``writes`` is the total sample count -> the circular write cursor ``(writes-1) % cap`` the
@@ -866,16 +978,18 @@ class LiveSession:
         ``agg`` is the aggregated value (fold over the ring) or None when no aggregate is set;
         ``depth`` is how many recent values the key currently holds.
 
-        ``aggregate`` overrides the fold mode (the teach UI passes the node's LIVE select so the
-        summary repaints instantly — the session profile is frozen mid-run). ``None`` -> use the
-        stored ``RegisterDef.aggregate``."""
+        ``aggregate``/``arg`` override the fold mode / its tuning knob (the teach UI passes the
+        node's LIVE select + arg input so the summary repaints instantly — the session profile is
+        frozen mid-run). ``None`` -> use the stored ``RegisterDef.aggregate``/``aggregate_arg``."""
         mode = aggregate if aggregate is not None else (getattr(self._reg_def(reg_id), "aggregate", "") or "")
         with self._lock:
             m = self._registers.get(reg_id) or {}
             rows = [{"key": rid, "value": e["values"][-1], "conf": e["conf"],
                      "values": list(e["values"]),   # full ring, oldest -> newest (membank stack)
                      "writes": e["writes"],   # total writes -> circular cursor (which slot was last written)
-                     "agg": self._aggregate_ring(e["values"], mode) if mode not in ("", "latest") else None,
+                     "agg": self._exposed(reg_id, rid, e["values"], mode=mode, arg=arg,
+                                          times=e.get("times"))
+                            if mode not in ("", "latest") else None,
                      "depth": len(e["values"]),
                      "first_seen": e["first_seen"], "last_seen": e["last_seen"]}
                     for rid, e in m.items()]
@@ -890,10 +1004,9 @@ class LiveSession:
     def register_latest(self, reg_id: str, key: str):
         """Latest exposed value for one key of a register (``RegisterDef.aggregate`` fold over the
         ring when set, else the ring tail), or None if not held."""
-        mode = getattr(self._reg_def(reg_id), "aggregate", "") or ""
         with self._lock:
             e = (self._registers.get(reg_id) or {}).get(key)
-            return self._aggregate_ring(e["values"], mode) if e else None
+            return self._exposed(reg_id, key, e["values"], times=e.get("times")) if e else None
 
     def clear_register_keys(self, reg_id: str, keys) -> None:
         """Drop only the named keys from a register's held map (action clear/move slot targeting).

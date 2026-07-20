@@ -508,11 +508,15 @@ export const live = {
 };
 
 // A register node's held in-memory map (live session memory only). registerDetail → { records };
-// empty when no session runs. clearRegister wipes the held map. `aggregate` is the node's CURRENT
-// fold selection — passed so the server folds the ring with it right away (the session's own profile
-// is frozen mid-run, so it would otherwise lag the select); the ONE fold lives server-side (rule 7).
-export async function registerDetail(game, id, aggregate = "") {
-    const q = aggregate ? `?aggregate=${encodeURIComponent(aggregate)}` : "";
+// empty when no session runs. clearRegister wipes the held map. `aggregate`/`arg` are the node's
+// CURRENT fold selection + its tuning knob — passed so the server folds the ring with them right
+// away (the session's own profile is frozen mid-run, so it would otherwise lag the select); the
+// ONE fold lives server-side (rule 7).
+export async function registerDetail(game, id, aggregate = "", arg = 0) {
+    const params = new URLSearchParams();
+    if (aggregate) params.set("aggregate", aggregate);
+    if (arg) params.set("arg", arg);
+    const q = params.toString() ? `?${params}` : "";
     const r = await tfetch(`/api/live/${encodeURIComponent(game)}/register/${encodeURIComponent(id)}${q}`);
     if (!r.ok) throw new Error(`register: ${r.status} ${await r.text()}`);
     return r.json();

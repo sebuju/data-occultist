@@ -152,18 +152,19 @@ def status(game: str):
 
 
 @router.get("/{game}/register/{register_id}")
-def register(game: str, register_id: str, aggregate: str | None = None):
+def register(game: str, register_id: str, aggregate: str | None = None, arg: float | None = None):
     """Current held map of a register node — ``{records: [...]}``. Empty list when no live
     session runs (the map lives only in the running session's memory; graceful like status).
 
-    ``aggregate`` overrides the fold used for each row's ``agg`` (min/max/avg/sum/median, or
-    "" / "latest" = none). The teach UI passes the node's LIVE selection so the summary repaints
-    the instant the select changes — the session's own profile is frozen mid-run, so the stored
-    mode would otherwise lag. Omitted -> fall back to the session profile's mode."""
+    ``aggregate``/``arg`` override the fold used for each row's ``agg`` and its tuning knob (the
+    roster in :class:`~oc.profile.models.RegisterDef` — min/max/avg/stable/quality/... , or ""
+    / "latest" = none). The teach UI passes the node's LIVE select + arg input so the summary
+    repaints the instant either changes — the session's own profile is frozen mid-run, so the
+    stored mode/arg would otherwise lag. Omitted -> fall back to the session profile's."""
     s = _sessions.get(game)
     if s is None:
         return {"records": []}
-    return {"records": s.register_records(register_id, aggregate=aggregate)}
+    return {"records": s.register_records(register_id, aggregate=aggregate, arg=arg)}
 
 
 @router.post("/{game}/register/{register_id}/clear")

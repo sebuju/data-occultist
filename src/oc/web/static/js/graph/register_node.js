@@ -25,10 +25,75 @@ import { sourcesInput } from "./sources_input.js";
 import { liveCollecting } from "./panels/livewin.js";
 
 // The register's own ring-aggregate vocabulary (its exposed/persisted value = this fold over the
-// ring). "" is the default `<latest>` option (no fold — expose the ring tail). Deliberately its
-// OWN list (uses "avg", the user's word) — not the dataset node's collapse policy (which says
-// "mean"); the two concepts are unrelated, so they don't share a select.
-const REG_AGGREGATES = [["", "latest"], ["min", "min"], ["max", "max"], ["avg", "avg"], ["sum", "sum"], ["median", "median"], ["stable", "stable"], ["common", "common"]];
+// ring) — grouped for the select's <optgroup>s. Deliberately its OWN list (uses "avg", the user's
+// word) — not the dataset node's collapse policy (which says "mean"); the two concepts are
+// unrelated, so they don't share a select. "" is the default `<latest>` option (no fold — expose
+// the ring tail). The DENOISE group is the point of the roster — algorithms that filter OCR noise
+// out of the exposed value (see RegisterDef.aggregate's doc for what each one does).
+export const REG_AGGREGATES = [
+    ["basic", [["", "latest"], ["first", "first"], ["min", "min"], ["max", "max"], ["sum", "sum"]]],
+    ["central", [["avg", "avg"], ["median", "median"], ["midrange", "midrange"], ["wma", "wma"]]],
+    ["denoise", [["ema", "ema"], ["trimmed", "trimmed"], ["winsor", "winsor"], ["stable", "stable"],
+                 ["cluster", "cluster"], ["quality", "quality"], ["track", "track"], ["common", "common"]]],
+    ["spread", [["range", "range"], ["delta", "delta"], ["stdev", "stdev"], ["mad", "mad"]]],
+    ["count", [["distinct", "distinct"], ["changes", "changes"], ["nonblank", "nonblank"]]],
+];
+
+// One-line explanation per mode (mirrors RegisterDef.aggregate's doc, models.py) — shown under each
+// row in the aggregate picker popover (reg_agg_picker.js) so a mode's meaning is visible while
+// browsing, not just after picking (native <option title> tooltips don't render cross-browser).
+export const AGG_DESC = {
+    "": "expose the ring tail unchanged (newest read)",
+    first: "oldest retained value (ring head)",
+    min: "smallest numeric value",
+    max: "largest numeric value",
+    sum: "sum of numeric values",
+    avg: "mean of the numeric ring",
+    median: "middle value; robust to a lone spike",
+    midrange: "(min + max) / 2",
+    wma: "weighted mean, newest weighted most",
+    ema: "exponential moving average (knob: alpha)",
+    trimmed: "mean with N highest/lowest dropped (knob: N per end)",
+    winsor: "mean with N extremes clamped in, not dropped (knob: N per end)",
+    stable: "newest within k·MAD of median; skips misread spikes (knob: k)",
+    cluster: "newest of the largest value-within-tolerance group (knob: tolerance)",
+    quality: "newest right-type read, held while K-of-M reads matched type (knob: K)",
+    track: "newest read that fits the ring's own trend line — time-aware, rejects impossible jumps (knob: tolerance)",
+    common: "most frequent value as text (categorical denoiser)",
+    range: "max minus min (spread)",
+    delta: "newest minus oldest (net change)",
+    stdev: "standard deviation of the ring",
+    mad: "median absolute deviation",
+    distinct: "count of distinct values",
+    changes: "count of value changes",
+    nonblank: "count of non-blank reads",
+};
+
+// display label for a mode value ("" -> "latest"), looked up from REG_AGGREGATES rather than a
+// second table — the trigger button (registerParts) and the picker's row order both read the one
+// roster.
+function aggLabel(v) {
+    for (const [, opts] of REG_AGGREGATES) for (const [ov, lbl] of opts) if (ov === v) return lbl;
+    return v;
+}
+
+// Modes whose fold takes a tuning knob (RegisterDef.aggregate_arg) — shown as one extra input next
+// to the aggregate select, label + a placeholder naming that mode's own default (mirrors the
+// backend defaults documented on RegisterDef.aggregate_arg).
+const AGG_ARG = {
+    ema: { label: "alpha", placeholder: "0.5" },
+    trimmed: { label: "trim n / end", placeholder: "1" },
+    winsor: { label: "clamp n / end", placeholder: "1" },
+    stable: { label: "k·MAD", placeholder: "3" },
+    cluster: { label: "tolerance", placeholder: "0 (exact)" },
+    quality: { label: "min good (K)", placeholder: "⌈M/2⌉" },
+    track: { label: "tolerance", placeholder: "3·MAD" },
+};
+
+// Short chip text for the agg-line mode tag (register_node.js's own self-describing label — see
+// applyCell). Modes not listed here just show their own name.
+const MODE_TAG = { avg: "x̄", sum: "Σ", delta: "Δ", stdev: "σ", nonblank: "nb" };
+const modeTag = (mode) => MODE_TAG[mode] || mode;
 
 // Most decimal places any numeric ring member carries (mirrors LiveSession._ring_decimals): "1.50"
 // -> 2, "10" -> 0. Drives the aggregate's display precision.
@@ -42,13 +107,18 @@ function ringDecimals(values) {
     return m;
 }
 
+// Folds that always PRODUCE a computed float (mirrors LiveSession._aggregate_ring's own rounding
+// rule) rather than merely selecting/summing existing ring members -- these never collapse to a
+// bare int even when the result is whole.
+const FLOATY_MODES = new Set(["avg", "median", "midrange", "wma", "ema", "trimmed", "winsor",
+                              "range", "delta", "stdev", "mad"]);
+
 // Display of an aggregate value for the tiny summary slot. Mirrors the backend fold's rounding
-// (LiveSession._aggregate_ring): a value that PRODUCED a float (avg/median always; min/max/sum when
-// not whole) shows at the ring's own decimals PLUS ONE (JSON drops the trailing ".0", so we re-add
-// it here); a whole min/max/sum stays an int.
+// (LiveSession._aggregate_ring): a value that PRODUCED a float shows at the ring's own decimals
+// PLUS ONE (JSON drops the trailing ".0", so we re-add it here); a whole min/max/sum stays an int.
 function fmtAgg(v, mode, ringVals) {
     if (typeof v !== "number") return String(v);
-    const floaty = mode === "avg" || mode === "median" || !Number.isInteger(v);
+    const floaty = FLOATY_MODES.has(mode) || !Number.isInteger(v);
     return floaty ? v.toFixed(ringDecimals(ringVals) + 1) : String(v);
 }
 
@@ -116,16 +186,18 @@ function layout(b, host) {
 function makeCell(id, key) {
     const ref = `readout:${key}`;
     const kEl = h("div", { class: "mb-k" });
+    const tagEl = h("span", { class: "mb-agg-tag" });   // which fold is exposed — corner chip, absolute (no flex slot)
     const vstack = h("div", { class: "mb-vstack" });   // one .mb-v line per ring value (latest first)
     const seenEl = h("span", { class: "mb-seen" });
     const confEl = h("span", { class: "mb-conf" });
     const row = h("div", { class: "mb-cell", dataset: { k: key, ref } },
-        kEl, vstack, h("div", { class: "mb-meta" }, seenEl, confEl));
+        kEl, tagEl, vstack, h("div", { class: "mb-meta" }, seenEl, confEl));
     row.addEventListener("click", () => {
         const nodeId = model.refNode(ref);
         if (nodeId) panZoomTo(nodeId);
     });
-    return { row, kEl, vstack, vlines: [], seenEl, confEl, tier: "", k: "", vkey: "", seen: "", conf: "", multi: null };
+    return { row, kEl, tagEl, vstack, vlines: [], seenEl, confEl,
+             tier: "", k: "", vkey: "", tag: "", seen: "", conf: "", multi: null };
 }
 
 // Update only the text / class / style that actually changed for one slot (rule 1). Toggles the
@@ -204,6 +276,10 @@ function applyCell(rec, r) {
         rec.vkey = vkey;
     }
 
+    // mode chip: which fold is exposed, so the cell is self-describing without opening the select.
+    const tagTxt = (!dead && r.agg != null && r.aggMode) ? modeTag(r.aggMode) : "";
+    if (tagTxt !== rec.tag) { rec.tagEl.textContent = tagTxt; rec.tag = tagTxt; }
+
     const seenTxt = r.seen || "";
     if (seenTxt !== rec.seen) {
         rec.seenEl.textContent = seenTxt;
@@ -267,16 +343,26 @@ export function registerParts(x, model) {
                 sourcesRow,
                 kv("recent values", h("input", { class: "gi reg-cap", type: "number", min: "1", step: "1",
                     value: x.capacity ?? 1, title: "how many recent values to hold per key" })),
+                // ignore empty: don't write a null/empty read to a keyslot (always available, so it
+                // sits above the capacity-gated aggregate rows below rather than between them).
+                kv("ignore empty", slideToggle({ on: !!x.ignore_empty, cls: "reg-ignoreempty",
+                    title: "ignore null / empty reads — don't write them to a keyslot" })),
                 // aggregate: collapse the ring to the ONE value the register exposes/persists — only
                 // meaningful (and only offered) once the ring holds more than one sample. The raw
                 // ring is always still shown in the membank (a summary line adds below it).
+                // native <option title> tooltips don't render cross-browser, so the mode roster is
+                // browsed in a grouped popover (reg_agg_picker.js) instead of a plain <select> —
+                // each mode's meaning is visible while choosing (io_wire.js wires the click -> pick).
                 (x.capacity ?? 1) > 1 && kv("aggregate",
-                    h("select", { class: "gi reg-agg", title: "collapse the ring to one exposed/persisted value (raw samples stay shown)" },
-                        REG_AGGREGATES.map(([v, lbl]) => h("option", { value: v, selected: v === (x.aggregate || "") },
-                            v === (x.aggregate || "") ? `<${lbl}>` : lbl)))),
-                // ignore empty: don't write a null/empty read to a keyslot (always available).
-                kv("ignore empty", slideToggle({ on: !!x.ignore_empty, cls: "reg-ignoreempty",
-                    title: "ignore null / empty reads — don't write them to a keyslot" }))),
+                    h("button", { class: "gi reg-agg-btn", type: "button",
+                        title: "collapse the ring to one exposed/persisted value (raw samples stay shown)" },
+                        `<${aggLabel(x.aggregate || "")}>`)),
+                // per-mode tuning knob (RegisterDef.aggregate_arg) — only shown for a fold that has
+                // one (AGG_ARG); 0/blank -> that mode's own default (the placeholder names it).
+                (x.capacity ?? 1) > 1 && AGG_ARG[x.aggregate || ""] && kv(AGG_ARG[x.aggregate || ""].label,
+                    h("input", { class: "gi reg-aggarg", type: "number", step: "any",
+                        value: x.aggregate_arg || "", placeholder: AGG_ARG[x.aggregate || ""].placeholder,
+                        title: `tune the "${x.aggregate}" fold — blank/0 = its own default` }))),
             h("div", { class: "nodehost data-host" })),
         foot: h("button", { class: "regclear danger" }, "clear data"),
     };
@@ -317,10 +403,12 @@ export function refreshRegister(id) {
     if (!host) return;
     // the register's full wired key set (readout ids + process output keys), in stable wiring order.
     const wired = scaffoldKeys(id);
-    // pass the node's LIVE fold selection: the server folds the ring with it right away (its own
-    // profile is frozen mid-run, so the stored mode lags the select). The fold itself is server-side.
+    // pass the node's LIVE fold selection + its tuning knob: the server folds the ring with them
+    // right away (its own profile is frozen mid-run, so the stored mode/arg lags the select). The
+    // fold itself is server-side.
     const aggMode = model.registerNode(id)?.aggregate || "";
-    api.registerDetail(model.profile.name, id, aggMode)
+    const aggArg = model.registerNode(id)?.aggregate_arg || 0;
+    api.registerDetail(model.profile.name, id, aggMode, aggArg)
         .then((r) => {
             const byKey = new Map((r.records || []).map((e) => [e.key, e]));
             const cap = model.registerNode(id)?.capacity ?? 1;

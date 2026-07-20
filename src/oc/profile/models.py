@@ -1413,12 +1413,33 @@ class RegisterDef(BaseModel):
     capacity: int = Field(default=1, ge=1)
     # How a key's ring of recent values collapses to the ONE value the register EXPOSES (persist
     # flush, register_latest, the membank's summary line). "" / "latest" -> expose the ring tail
-    # (latest) unchanged. Otherwise a numeric fold over the ring: min | max | avg | sum | median |
-    # stable (newest value within k*MAD of the ring median — skips lone misread spikes). "common" is
-    # the one NON-numeric fold: expose the most frequent ring member as text (ties -> newest tied).
+    # (latest) unchanged. A numeric fold over the ring — min | max | sum | avg | median | midrange |
+    # wma | range | delta | stdev | mad. A DENOISER — the point of this roster, algorithms that
+    # filter OCR noise out of the exposed value: stable (newest value within k*MAD of the ring
+    # median — skips lone misread spikes) | quality (the restored per-readout consensus gate: newest
+    # expected-TYPE read, held while >=K of the last M reads matched the field's type — a fast-
+    # changing number never lags, only a burst of wrong-type reads suppresses it) | cluster (newest
+    # member of the ring's largest value-within-tolerance bucket — kills a non-repeating misread
+    # even when it's the latest read) | trimmed (mean with the N highest/lowest dropped) | winsor
+    # (mean with the N highest/lowest clamped in, not dropped) | ema (exponential moving average) |
+    # track (the TIME-aware one: fits the ring's own trend line against the per-sample clock and
+    # exposes the newest read that fits it — a countdown read as 4 and then 1 a quarter-second later
+    # is rejected because the elapsed time couldn't produce it, which `quality` misses since a bare
+    # 1 is a perfectly valid NUMBER. Needs >=4 numeric samples; capacity 6-8+ fits robustly).
+    # A count over the ring — distinct | changes | nonblank. Plus first (the ring HEAD, oldest
+    # retained — unrounded, works on any ring). "common" is the one NON-numeric fold: expose the
+    # most frequent ring member as text (ties -> newest tied) — the categorical-noise denoiser.
     # Only meaningful when capacity > 1 (the UI only offers it then); a numeric fold over a
     # non-numeric ring, or one with no numeric members, falls back to the tail. Raw ring always kept.
     aggregate: str = ""
+    # Generic per-mode tuning knob for `aggregate` — 0 (default) means "use the mode's own
+    # default". Meaning depends on the mode: stable -> MAD multiplier k (def 3.0); quality -> min
+    # good reads K within the ring (def ceil(capacity/2)); cluster -> value tolerance epsilon (def
+    # 0, exact match); trimmed/winsor -> how many extremes to drop/clamp per end (def 1); ema ->
+    # smoothing alpha 0..1 (def 0.5); track -> how far a read may miss the predicted value (def
+    # 3*MAD of the trend residuals, floored at half the ring's typical step). Ignored by every
+    # other mode.
+    aggregate_arg: float = 0.0
     # Ignore null / None / empty ("") reads instead of writing them to a keyslot, so a momentary
     # blank read can't displace a good held value. Off (default) appends every read, blanks included.
     ignore_empty: bool = False

@@ -1324,9 +1324,17 @@ export class GraphModel {
         x.capacity = (Number.isNaN(n) || n < 1) ? 1 : n;
     }
     // How a key's ring collapses to the ONE exposed/persisted value. "" (the `<latest>` option) or
-    // any unknown mode -> the ring tail; else a numeric fold (min/max/avg/sum/median). Only offered
-    // when capacity > 1.
+    // any unknown mode -> the ring tail; else a fold from the REG_AGGREGATES roster (register_node.js)
+    // — min/max/avg/median/stable/quality/... Only offered when capacity > 1.
     setRegisterAggregate(id, v) { const x = this.registerNode(id); if (x) x.aggregate = v === "latest" ? "" : (v || ""); }
+    // The fold's per-mode tuning knob (RegisterDef.aggregate_arg) — 0 = that mode's own default.
+    // Parse float, floor at 0 (blank/garbage/negative -> 0, "use the default").
+    setRegisterAggregateArg(id, v) {
+        const x = this.registerNode(id);
+        if (!x) return;
+        const n = parseFloat(v);
+        x.aggregate_arg = (Number.isNaN(n) || n < 0) ? 0 : n;
+    }
     // Ignore null / empty reads instead of writing them to a keyslot.
     setRegisterIgnoreEmpty(id, on) { const x = this.registerNode(id); if (x) x.ignore_empty = !!on; }
 

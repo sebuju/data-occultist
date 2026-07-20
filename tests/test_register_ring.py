@@ -5,9 +5,10 @@ retained history. Complements test_registers.py (which covers the depth-1 defaul
 
 from types import SimpleNamespace
 
+from oc.collect import live as live_mod
 from oc.collect import register_history
 from oc.collect.live import LiveSession
-from oc.profile.models import GameProfile, RegisterDef
+from oc.profile.models import Box, FieldDef, FieldType, GameProfile, ReadoutDef, RegisterDef, WindowDef
 
 
 def _session(cap=3):
@@ -353,3 +354,152 @@ def test_clear_register_wipes_push_history():
     assert register_history.recent("g", "hp")
     s.clear_register("hp")
     assert register_history.recent("g", "hp") == []
+
+
+# ---- the aggregate roster: new modes + aggregate_arg -------------------------
+
+def _agg_session2(mode, cap=4, arg=0.0):
+    profile = GameProfile(name="g", registers=[
+        RegisterDef(id="hp", sources=["readout:health"], capacity=cap, aggregate=mode, aggregate_arg=arg),
+    ])
+    return LiveSession(None, profile)
+
+
+def _qual_session(cap=4, arg=0.0):
+    # `quality` needs a real readout -> field wiring to resolve the expected TYPE (number here).
+    profile = GameProfile(
+        name="g",
+        windows=[WindowDef(id="win", fields=[FieldDef(id="hpfield", type=FieldType.number)],
+                           readouts=[ReadoutDef(id="health", box=Box(x=0, y=0, w=1, h=1), field="hpfield")])],
+        registers=[RegisterDef(id="hp", sources=["readout:health"], capacity=cap,
+                               aggregate="quality", aggregate_arg=arg)],
+    )
+    return LiveSession(None, profile)
+
+
+def test_quality_restores_consensus_hold_and_recovery():
+    # the restored per-readout misfire filter, now a register fold: a burst of non-numeric reads
+    # holds the last good value; the exposed value recovers once enough reads are numeric again.
+    s = _qual_session(cap=4)
+    for v in (10, "garbage", "garbage", "garbage"):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == 10   # held -- 1 of 4 good, below default K=2
+
+    s = _qual_session(cap=4)
+    for v in (1, 2, "garbage", 4):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == 4   # 3 of 4 good, meets default K=2 -> surfaces
+
+
+def test_quality_arg_overrides_min_good():
+    # K explicitly 1 -> a single good read anywhere in the window is enough to keep surfacing
+    s = _qual_session(cap=4, arg=1)
+    for v in (1, "garbage", "garbage", 4):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == 4
+
+
+def test_stable_arg_overrides_mad_multiplier():
+    # median 11.5, MAD 1.0 -> the newest read (13.5) deviates 2.0, which a tight k=1.0*MAD (thr
+    # 1.0) rejects (falls back to the newest value that DOES agree, 12) but the default k=3.0*MAD
+    # (thr 3.0) still admits.
+    tight = _agg_session2("stable", arg=1.0)
+    loose = _agg_session2("stable", arg=0)   # 0 -> the module default (3.0)
+    for v in (10, 11, 12, 13.5):
+        tight._feed_registers({"health": v}, {})
+        loose._feed_registers({"health": v}, {})
+    assert tight.register_latest("hp", "health") == 12
+    assert loose.register_latest("hp", "health") == 13.5
+
+
+def test_new_selector_and_spread_modes():
+    cases = {
+        "first": 10, "min": 10, "max": 40, "range": 30, "delta": 30,
+        "midrange": 25.0, "wma": 30.0, "distinct": 4, "nonblank": 4, "changes": 3,
+    }
+    for mode, want in cases.items():
+        s = _agg_session2(mode)
+        for v in (10, 20, 30, 40):
+            s._feed_registers({"health": v}, {})
+        assert s.register_latest("hp", "health") == want, mode
+
+
+def test_ema_trimmed_winsor_cluster_modes():
+    s = _agg_session2("ema", arg=0.5)
+    for v in (10, 20):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == 15.0
+
+    s = _agg_session2("trimmed", cap=5, arg=1)
+    for v in (1, 2, 3, 4, 100):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == 3.0
+
+    s = _agg_session2("winsor", cap=5, arg=1)
+    for v in (1, 2, 3, 4, 100):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == 3.0
+
+    s = _agg_session2("cluster", arg=0.0)
+    for v in (4, 4, 4, 400):
+        s._feed_registers({"health": v}, {})
+    got = s.register_latest("hp", "health")
+    assert got == 4 and isinstance(got, int)   # the repeated-value bucket wins over the lone spike
+
+
+def test_stdev_and_mad_modes():
+    s = _agg_session2("stdev", cap=3)
+    for v in (1, 1, 1):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == 0.0
+
+    s = _agg_session2("mad", cap=5)
+    for v in (1, 2, 3, 4, 100):
+        s._feed_registers({"health": v}, {})
+    assert s.register_latest("hp", "health") == 1.0
+
+
+def _feed_at(s, monkeypatch, samples):
+    """Feed (value, time) samples with the register write clock pinned to each given time.
+
+    Every other test here feeds in a tight loop, so all samples land within microseconds of each
+    other — useless for a fold that reasons about ELAPSED time. Patching the clock (rather than
+    sleeping) mirrors the injectable `clock` TriggerRunner already takes for its throttle windows.
+    """
+    for value, t in samples:
+        monkeypatch.setattr(live_mod.time, "time", lambda t=t: t)
+        s._feed_registers({"health": value}, {})
+
+
+def test_track_holds_a_read_the_elapsed_time_could_not_produce(monkeypatch):
+    # a countdown falling 1.0/s: reading 1 a quarter-second after 3.50 is impossible. `quality`
+    # would pass it (1 is a valid NUMBER); `track` fits the ring's trend against the real clock.
+    s = _agg_session2("track", cap=8)
+    _feed_at(s, monkeypatch, [(4.00, 0.0), (3.75, 0.25), (3.50, 0.50), (1, 0.75)])
+    assert s.register_latest("hp", "health") == 3.50          # exposed value held
+    assert s._registers["hp"]["health"]["values"][-1] == 1    # raw ring still keeps the bad read
+
+
+def test_track_accepts_an_on_trend_read(monkeypatch):
+    s = _agg_session2("track", cap=8)
+    _feed_at(s, monkeypatch, [(4.00, 0.0), (3.75, 0.25), (3.50, 0.50), (3.25, 0.75)])
+    assert s.register_latest("hp", "health") == 3.25
+
+
+def test_track_ring_carries_per_sample_times(monkeypatch):
+    # the times list is sliced in lockstep with values, so the two can never drift out of step
+    s = _agg_session2("track", cap=3)
+    _feed_at(s, monkeypatch, [(4.00, 0.0), (3.75, 0.25), (3.50, 0.50), (3.25, 0.75)])
+    e = s._registers["hp"]["health"]
+    assert e["times"] == [0.25, 0.50, 0.75]      # oldest evicted alongside its value
+    assert len(e["times"]) == len(e["values"])
+
+
+def test_register_records_arg_override_repaints_instantly():
+    # register_records' `arg` param mirrors `aggregate` — a client-passed override wins over the
+    # stored RegisterDef.aggregate_arg (the teach UI's arg input, before the profile reloads).
+    s = _agg_session2("stable", arg=3.0)
+    for v in (10, 11, 10, 40):
+        s._feed_registers({"health": v}, {})
+    rows = {x["key"]: x for x in s.register_records("hp", aggregate="stable", arg=1.0)}
+    assert rows["health"]["agg"] == 10   # the tighter override arg rejects the spike

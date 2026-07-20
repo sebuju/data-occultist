@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import re
+import statistics
 import unicodedata
 from dataclasses import dataclass
 
@@ -299,3 +300,261 @@ def run_rule_pipeline(rules: list, ftype: str, raw: str, *, dict_hook=None,
 def coerce(field: FieldDef, raw: str) -> object:
     """Convenience: the final value from the rule pipeline (no dictionary)."""
     return run_rules(field, raw).value
+
+
+# ---------------------------------------------------------------------------
+# Register ring folds — the algorithms behind RegisterDef.aggregate, collapsing a key's rolling
+# ring of held values (oldest -> newest) to the ONE value the register exposes. Pure, ring-
+# plumbing-free: the caller (LiveSession._aggregate_ring) builds the ring/coerces numbers/applies
+# the ring's own decimal-precision rounding; these functions just implement each fold's algorithm.
+# Kept here (not live.py) per rule 7 — one home, unit-testable off-Windows, same story
+# run_rule_pipeline already tells for field correction.
+# ---------------------------------------------------------------------------
+
+def quality_ok(value: object, ftype: str) -> bool:
+    """Whether one ring entry is expected-QUALITY for its field ``ftype`` — the restored
+    ``readout_stability`` misfire check, now scoped to a ring member instead of a live tick. The
+    confidence floor is NOT re-checked here: a sub-floor/dropped read never reaches the ring (it's
+    recorded as an explicit ``None`` gap by ``LiveSession._feed_registers``), so a gap is already
+    not-ok. Numeric-typed (number/pips/diamonds): the value must actually parse as a number.
+    Text/symbol: any non-empty value is the expected type."""
+    if value is None or value == "":
+        return False
+    if ftype in (FieldType.number.value, FieldType.pips.value, FieldType.diamonds.value):
+        return _to_number(_first_number(str(value))) is not None
+    return str(value).strip() != ""
+
+
+def quality_fold(values: list, ftype: str, k: float = 0) -> object:
+    """The restored per-readout consensus gate (``readout_stability.gate_readouts``), reframed as
+    a ring fold: surface the ring TAIL when at least ``k`` of the ring's entries are
+    :func:`quality_ok` for ``ftype``; otherwise HOLD -- expose the newest entry that IS
+    quality-ok (the last good read still retained in the ring). An all-bad ring falls back to the
+    tail, like every other fold's empty-input case. Keys on TYPE not value, so a legitimately
+    fast-changing number never lags -- only a burst where reads stop looking like the field's type
+    suppresses the exposed value. ``k`` <= 0 -> default to ``ceil(len(values)/2)``; clamped to
+    ``1..len(values)``."""
+    if not values:
+        return None
+    tail = values[-1]
+    n = len(values)
+    kk = int(k) if k and k > 0 else -(-n // 2)   # ceil(n/2) default
+    kk = max(1, min(kk, n))
+    good = sum(1 for v in values if quality_ok(v, ftype))
+    if good >= kk:
+        return tail
+    for v in reversed(values):
+        if quality_ok(v, ftype):
+            return v
+    return tail
+
+
+def cluster_fold(values: list, tol: float = 0.0) -> object:
+    """Numeric majority-within-tolerance: bucket the ring's numeric members within +/-``tol``
+    (default 0 = exact match) of each other, and expose the NEWEST member of the LARGEST bucket --
+    the numeric cousin of the ``common`` fold's text majority vote, and the sharpest reject of a
+    non-repeating OCR misread (a lone ``400`` among ``4.00`` reads loses even when it's the latest
+    read). Falls back to the ring tail when nothing in it parses as a number."""
+    idxed = [(i, v) for i, v in enumerate(values) if v is not None and v != ""]
+    nums = [(i, n) for i, v in idxed if (n := _to_number(_first_number(str(v)))) is not None]
+    if not nums:
+        return values[-1] if values else None
+    buckets: list[list[tuple[int, float]]] = []
+    for i, n in nums:
+        for b in buckets:
+            if abs(b[-1][1] - n) <= tol:
+                b.append((i, n))
+                break
+        else:
+            buckets.append([(i, n)])
+    # largest bucket wins; a SIZE TIE breaks to the bucket holding the newest member (mirrors the
+    # `common` fold's own tie -> newest rule).
+    best = max(buckets, key=lambda b: (len(b), max(i for i, _ in b)))
+    newest_i = max(i for i, _ in best)
+    return values[newest_i]
+
+
+def _ring_quantum(values: list) -> float:
+    """Half the smallest step the ring's own reads can express — ``4.00``/``3.75`` carry two
+    decimals, so the display quantum is ``0.01`` and this returns ``0.005``. Used as the FLOOR on
+    :func:`track_fold`'s tolerance: a perfectly-linear ring has zero residual spread, and without a
+    floor every legitimate quantization wobble would miss the prediction and be rejected. Mirrors
+    ``LiveSession._ring_decimals``'s string scan rather than importing it (these folds stay pure)."""
+    dec = 0
+    for v in values or []:
+        if v is None or v == "":
+            continue
+        s = str(v)
+        dot = s.find(".")
+        if dot >= 0:
+            dec = max(dec, len(s) - dot - 1)
+    return 0.5 * (10.0 ** -dec)
+
+
+def track_fold(values: list, times: list, tol: float = 0.0) -> object:
+    """Time-aware plausibility gate: expose the newest read that fits the ring's OWN trend line.
+
+    Where ``quality`` only asks "does this parse as the right TYPE" (so a noise ``1`` among ``4.00``
+    reads sails through), this fold asks "could the value have GOT here in the time that passed".
+    A countdown read as ``4`` and then ``1`` a quarter-second later is impossible; that impossibility
+    is what identifies the bad read. Nothing here is game-specific -- the ring teaches the fold its
+    own rate.
+
+    ``times`` is the per-sample wall clock parallel to ``values`` (see ``LiveSession._feed_registers``).
+    Sample spacing is genuinely non-uniform (the collector's OCR gate skips heavy ticks), so the fit
+    is against TIME, never sample index.
+
+    The model is fitted on the PRIOR samples and used to judge the newest one -- never on the whole
+    ring at once, or the very read under test would contaminate the model meant to catch it:
+
+    1. numeric ``(t, v)`` points, oldest -> newest (blanks / non-numerics / timeless points dropped);
+    2. fewer than 3 prior points -> return the tail (nothing to model yet);
+    3. Theil-Sen fit on the prior: ``slope`` = median of pairwise slopes, ``intercept`` =
+       ``median(v - slope*t)``. Median-based, so a bad sample already sitting in the ring can't
+       drag the line;
+    4. ``tol`` (when > 0) wins outright; else ``3 * MAD`` of the prior's residuals, floored at half
+       the ring's typical step (MAD is degenerate on a short prior -- see the comment below) and at
+       :func:`_ring_quantum`;
+    5. newest within ``tol`` of ``intercept + slope*t_newest`` -> expose it; otherwise HOLD -- the
+       newest PRIOR sample whose own residual fits;
+    6. nothing fits -> the tail, like every other fold's fallback.
+
+    A SELECTOR fold: it returns an existing ring member unrounded and never the synthesized
+    prediction -- the register exposes a value that was actually read.
+
+    Needs >= 4 numeric samples to do anything at all (3 prior + the newest); a capacity of 6-8+
+    gives the Theil-Sen fit enough pairs to be genuinely robust.
+
+    RESET behaviour (a countdown hits 0 and restarts): the ring straddles two lines, the fit
+    degrades, and typically nothing fits -- step 6 then falls back to the tail, so the fold
+    degrades to plain ``latest`` for a few ticks rather than locking onto a stale pre-reset value.
+    That is why step 6 returns the tail instead of holding."""
+    tail = values[-1] if values else None
+    if not values or not times:
+        return tail
+    # (time, number, ring index) — the index rides along so the HOLD below can return the RAW ring
+    # member (unrounded, as read) rather than the coerced float.
+    pts: list[tuple[float, float, int]] = []
+    for i, (v, t) in enumerate(zip(values, times)):
+        if v is None or v == "" or t is None:
+            continue
+        n = _to_number(_first_number(str(v)))
+        if n is None:
+            continue
+        pts.append((float(t), float(n), i))
+    if len(pts) < 4:   # 3 prior + the newest
+        return tail
+    prior, (t_new, v_new, _) = pts[:-1], pts[-1]
+    slopes = [(b[1] - a[1]) / (b[0] - a[0])
+              for i, a in enumerate(prior) for b in prior[i + 1:] if b[0] != a[0]]
+    if not slopes:
+        return tail
+    slope = statistics.median(slopes)
+    intercept = statistics.median([v - slope * t for t, v, _ in prior])
+    resid = [v - (intercept + slope * t) for t, v, _ in prior]
+    mad = statistics.median([abs(r) for r in resid])
+    # MAD alone is DEGENERATE on a short prior: a Theil-Sen line through 3 points passes exactly
+    # through most of them, so the residuals come out [0, x, 0] and the median is 0 -- collapsing
+    # the window onto the quantum floor, which is tighter than any real OCR jitter. Floor it at
+    # half the ring's own typical STEP instead, so the tolerance scales with how fast the value
+    # actually moves (a 0.25/sample countdown tolerates 0.125; a static ring falls back to MAD).
+    steps = [abs(b[1] - a[1]) for a, b in zip(prior, prior[1:])]
+    step_floor = 0.5 * statistics.median(steps) if steps else 0.0
+    window = tol if tol and tol > 0 else max(3.0 * mad, step_floor, _ring_quantum(values))
+    if abs(v_new - (intercept + slope * t_new)) <= window:
+        return values[-1]
+    # HOLD: the newest prior sample that fits the trend itself.
+    fitted = [p[2] for p, r in zip(prior, resid) if abs(r) <= window]
+    return values[fitted[-1]] if fitted else tail
+
+
+def ema_fold(nums: list, alpha: float = 0.5) -> float | None:
+    """Exponential moving average over the ring, oldest -> newest, newest-weighted. ``alpha`` in
+    (0, 1] (a non-positive/out-of-range arg falls back to 0.5); ``alpha=1`` reduces to the tail."""
+    if not nums:
+        return None
+    a = alpha if 0 < alpha <= 1 else 0.5
+    acc = nums[0]
+    for v in nums[1:]:
+        acc = a * v + (1 - a) * acc
+    return acc
+
+
+def wma_fold(nums: list) -> float | None:
+    """Linear weighted moving average: each ring value weighted by its position (1..N, oldest to
+    newest), so the newest sample carries the most weight without a full exponential decay."""
+    if not nums:
+        return None
+    weights = range(1, len(nums) + 1)
+    return sum(v * w for v, w in zip(nums, weights)) / sum(weights)
+
+
+def trimmed_fold(nums: list, trim: float = 1) -> float | None:
+    """Trimmed mean: drop the ``trim`` highest and ``trim`` lowest values, then average what's
+    left -- kills a symmetric spike (a wrong-direction OCR misread) without median's all-or-
+    nothing quantization. Falls back to the plain mean when trimming would empty the set."""
+    if not nums:
+        return None
+    t = max(0, int(trim))
+    s = sorted(nums)
+    core = s[t: len(s) - t] if len(s) > 2 * t else s
+    return statistics.fmean(core) if core else statistics.fmean(nums)
+
+
+def winsor_fold(nums: list, clamp: float = 1) -> float | None:
+    """Winsorized mean: clamp the ``clamp`` highest/lowest values IN to the nearest surviving
+    bound instead of dropping them, then average -- keeps the sample count but blunts outliers."""
+    if not nums:
+        return None
+    c = max(0, int(clamp))
+    s = sorted(nums)
+    if c == 0 or len(s) <= 2 * c:
+        return statistics.fmean(s)
+    lo, hi = s[c], s[-c - 1]
+    return statistics.fmean([min(max(v, lo), hi) for v in nums])
+
+
+def midrange_fold(nums: list) -> float | None:
+    """(min + max) / 2 -- the cheapest spread-agnostic center."""
+    return (max(nums) + min(nums)) / 2 if nums else None
+
+
+def range_fold(nums: list) -> float | None:
+    """max - min -- the ring's spread this window."""
+    return max(nums) - min(nums) if nums else None
+
+
+def delta_fold(nums: list) -> float | None:
+    """newest - oldest (signed) -- net change / direction over the ring."""
+    return nums[-1] - nums[0] if nums else None
+
+
+def stdev_fold(nums: list) -> float | None:
+    """Population standard deviation of the ring (0.0 for a single sample)."""
+    if not nums:
+        return None
+    return statistics.pstdev(nums) if len(nums) > 1 else 0.0
+
+
+def mad_fold(nums: list) -> float | None:
+    """Median absolute deviation from the ring's median -- a robust spread measure."""
+    if not nums:
+        return None
+    center = statistics.median(nums)
+    return statistics.median([abs(x - center) for x in nums])
+
+
+def distinct_count(values: list) -> int:
+    """# of distinct non-blank values (by text form) in the ring."""
+    return len({str(v) for v in values if v not in (None, "")})
+
+
+def changes_count(values: list) -> int:
+    """# of adjacent non-blank value changes in the ring -- a cheap volatility signal."""
+    members = [v for v in values if v not in (None, "")]
+    return sum(1 for a, b in zip(members, members[1:]) if str(a) != str(b))
+
+
+def nonblank_count(values: list) -> int:
+    """# of non-blank (non-None, non-empty) reads currently retained in the ring."""
+    return sum(1 for v in values if v not in (None, ""))
