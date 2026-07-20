@@ -446,6 +446,18 @@ export const video = {
     close: () => tfetch("/api/video/close", { method: "POST" }).then((r) => r.json()),
 };
 
+// Testing inspector: feed synthetic readout values into a game's live session as if they
+// had just been OCR'd off that window (no image, no OCR) — same fold `/api/preview?feed=1`
+// uses, so registers/gates/routers/on_readout triggers all react exactly as they would live.
+export const testfeed = {
+    readouts: (game, profile, windowId, values) =>
+        tfetch(`/api/test/feed_readouts?game=${encodeURIComponent(game)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ profile, window_id: windowId, values }),
+        }).then((r) => ok(r, "feed").then((x) => x.json())),
+};
+
 // Capture benchmark: measure raw grab throughput (no OCR) for the live window, and
 // list which capture backends this machine has (wgc only if windows-capture is
 // installed). run() blocks ~`seconds` server-side, so give it a long deadline.

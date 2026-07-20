@@ -35,6 +35,7 @@ from .routes import (
     sounds,
     sources,
     stats,
+    testfeed,
     toasts,
     triggers,
     video,
@@ -377,6 +378,7 @@ def create_app() -> FastAPI:
     app.include_router(pretty.router)
     app.include_router(events.router)
     app.include_router(video.router)
+    app.include_router(testfeed.router)
     app.include_router(bench.router)
     app.include_router(stats.router)
     app.include_router(screenshot.router)

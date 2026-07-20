@@ -269,6 +269,48 @@ class RegionDef(BaseModel):
     enabled: bool = True  # disabled regions are skipped during reads
 
 
+class TestFeedDef(BaseModel):
+    """How the testing inspector should synthesise a value for ONE feedable input — entirely
+    optional scaffolding, absent from a profile that was never test-fed.
+
+    Stored ON the thing it feeds (a :class:`ReadoutDef`'s ``test``, a :class:`DatasetDef`'s
+    ``test_row``) rather than in a central keyed table, so renaming the readout/dataset carries
+    the config with it instead of needing another repoint site.
+
+    Numbers are held as STRINGS because they mirror the panel's text inputs verbatim (a blank
+    means "unset", and a hand-authored ``min: 0`` coerces cleanly) — the generator parses them.
+    """
+
+    __test__ = False          # not a pytest test class despite the name (dunder: pydantic ignores it)
+
+    # Off keeps the row's config but stops it being fed — send-all / the loop / its own send button
+    # all skip it (a dataset column that's off is left out of the written row entirely). Same
+    # `enabled` idiom every other def here uses, so a row can be muted without losing its tuning.
+    enabled: bool = True
+    # Everything but `mode`/`enabled` defaults to None rather than ""/False so `exclude_none` keeps
+    # the unset knobs out of the file — a countdown row writes min/max/step and nothing else.
+    mode: str = "fixed"           # fixed | random | countup | countdown
+    # value type to roll for inputs with no FieldDef to read one off (dataset columns): text|number
+    type: str | None = None
+    value: str | None = None      # the `fixed` value
+    pool: str | None = None       # `random` text pool, comma separated
+    min: str | None = None        # `random` low bound / counter end
+    max: str | None = None        # `random` high bound / counter end
+    step: str | None = None       # counter increment
+    integer: bool | None = None   # `random` number rolls whole, not fractional
+
+
+class TestingDef(BaseModel):
+    """Panel-level testing-inspector knobs (optional; absent until changed from the defaults)."""
+
+    __test__ = False              # not a pytest test class despite the name
+
+    loop_ms: int = 500            # repeat-send interval
+    garble: bool = False          # inject the WRONG value type on some sends
+    garble_pct: int = 20          # ...at this rate
+    include_datasets: bool = False  # let send-all/loop also write dataset rows (persistent!)
+
+
 class ReadoutDef(BaseModel):
     """A definable area that reads a LIVE, EPHEMERAL scalar off a window box — health, a
     buff counter — into an in-memory value that is never stored in a dataset nor written to
@@ -284,6 +326,7 @@ class ReadoutDef(BaseModel):
     box: Box                             # window-fraction area
     field: str = ""                      # FieldDef.id carrying the read config
     enabled: bool = True                 # disabled readouts are skipped during reads
+    test: TestFeedDef | None = None      # optional testing-inspector feed config
 
 
 class MatchMode(str, Enum):
@@ -739,6 +782,10 @@ class DatasetDef(BaseModel):
     #              (over confirm_frames clean frames) is removed (soft). A partial/occluded
     #              frame contributes no evidence, so it can never cause a false removal.
     sync_mode: str = "accumulate"
+    # Optional testing-inspector row template: {column: how to synthesise that cell}. Only the
+    # columns the user configured appear; the rest fall back to the panel's defaults. None (not {})
+    # by default so `exclude_none` keeps it out of a profile that was never test-fed.
+    test_row: dict[str, TestFeedDef] | None = None
 
 
 class DictFeed(BaseModel):
@@ -1818,6 +1865,10 @@ class GameProfile(BaseModel):
     # Teach-UI node layout (positions/sizes/collapse/tables/open-images). Pure UI
     # data; the collector ignores it. Lives here so layout travels with the profile.
     layout: GraphLayout = Field(default_factory=GraphLayout)
+    # Testing-inspector panel knobs. None until the user changes one, so a profile that was
+    # never test-fed carries no `testing:` block at all. Per-input feed configs do NOT live
+    # here — they ride the readout/dataset they feed (see TestFeedDef).
+    testing: TestingDef | None = None
 
     @model_validator(mode="before")
     @classmethod

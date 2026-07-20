@@ -2177,6 +2177,54 @@ export class GraphModel {
     readout(winId, vid) { const w = this.window(winId); return w && (w.readouts || []).find((v) => v.id === vid); }
     setReadoutBox(winId, vid, box) { const v = this.readout(winId, vid); if (v) v.box = { x: box.x, y: box.y, w: box.w, h: box.h }; }
     setReadoutEnabled(winId, vid, on) { const v = this.readout(winId, vid); if (v) v.enabled = !!on; }
+    // ---- testing-inspector feed configs (all OPTIONAL; absent until the user edits one) ----
+    // Each config rides the def it feeds, so a rename carries it along instead of needing another
+    // repoint site (rule 5). `patch` is a partial TestFeedDef; an all-default patch REMOVES the
+    // block so an untouched profile stays free of empty `test:` noise.
+    static _TEST_KEYS = ["mode", "type", "value", "pool", "min", "max", "step", "integer"];
+    static _testEmpty(t) {
+        // `enabled: false` is itself configuration (a deliberately muted row), so a block carrying
+        // only that is NOT empty — otherwise muting a stock row would silently un-mute on save.
+        return !t || (t.enabled !== false && (t.mode || "fixed") === "fixed" && !t.type && !t.value
+            && !t.pool && !t.min && !t.max && !t.step && !t.integer);
+    }
+    static _testPatch(cur, patch) {
+        const out = {};
+        for (const k of GraphModel._TEST_KEYS) {
+            const v = patch[k] !== undefined ? patch[k] : (cur || {})[k];
+            if (v !== undefined && v !== null && v !== "" && v !== false) out[k] = v;
+        }
+        // enabled is the one flag whose FALSE is the meaningful state; true is the default the
+        // model fills back in, so it's only written when off.
+        const en = patch.enabled !== undefined ? patch.enabled : (cur || {}).enabled;
+        if (en === false) out.enabled = false;
+        return out;
+    }
+    readoutTest(winId, vid) { return this.readout(winId, vid)?.test || null; }
+    setReadoutTest(winId, vid, patch) {
+        const v = this.readout(winId, vid);
+        if (!v) return;
+        const next = GraphModel._testPatch(v.test, patch);
+        if (GraphModel._testEmpty(next)) delete v.test; else v.test = next;
+    }
+    datasetTest(ds, col) { return this.datasetDef(ds)?.test_row?.[col] || null; }
+    setDatasetTest(ds, col, patch) {
+        const d = this.datasetDef(ds);
+        if (!d) return;
+        const next = GraphModel._testPatch(d.test_row && d.test_row[col], patch);
+        if (GraphModel._testEmpty(next)) { if (d.test_row) delete d.test_row[col]; }
+        else { d.test_row = d.test_row || {}; d.test_row[col] = next; }
+        if (d.test_row && !Object.keys(d.test_row).length) delete d.test_row;
+    }
+    // Panel-level knobs (one optional block on the profile).
+    testing() { return this.profile.testing || null; }
+    setTesting(patch) {
+        const t = { loop_ms: 500, garble: false, garble_pct: 20, include_datasets: false,
+                    ...(this.profile.testing || {}), ...patch };
+        // back to stock -> drop the block entirely rather than persist defaults
+        if (t.loop_ms === 500 && !t.garble && t.garble_pct === 20 && !t.include_datasets) delete this.profile.testing;
+        else this.profile.testing = t;
+    }
     // Rename a readout: its id IS its identity (like every other node — no separate name). Ids are
     // GLOBAL (model.readouts() spans all windows, the toast token {{id}} is global), so uniqueness
     // is checked across every window. Repoints the refs that key off the id: {{id}} tokens in a

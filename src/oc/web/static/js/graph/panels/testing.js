@@ -5,9 +5,10 @@ import * as api from "../../api.js";
 import * as conn from "../../conn.js";
 import { log, timed } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
-import { h } from "../../dom.js";
+import { h, fieldset } from "../../dom.js";
 import { persist } from "../persist.js";
 import { $, model } from "../state.js";
+import { buildInspector, stopLoop as stopInspectorLoop } from "./inspector.js";
 
 // ---- testing harness: play a recorded video through the live OCR pipeline ----
 // Import a screen-capture clip and step/play it as the live frame source so live
@@ -62,33 +63,40 @@ function buildTesting() {
         id: "testing", title: "testing", state: testState, bothAxes: true,   // auto-fit height; user can still resize
         onShow: () => { $("testingBtn")?.classList.toggle("active", true);
             api.video.status().then(testRender).catch(() => {}); },
-        onHide: () => { $("testingBtn")?.classList.toggle("active", false); testStopPlay(); },
+        onHide: () => { $("testingBtn")?.classList.toggle("active", false); testStopPlay(); stopInspectorLoop(); },
         onPersist: () => persist.layout(),
     });
+    // Three independent collapsible sections (shared `fieldset` disclosure, rule 7). The node
+    // inspector is the one you reach for per-node, so it opens by default; the two older harnesses
+    // start folded away.
+    // collapsing a section changes the body height — re-fit the auto-sized panel after each toggle
+    const refit = () => testWin?.fitHeight?.();
     testWin.body.replaceChildren(
         h("div", { class: "test-panel" },
-            h("input", { type: "file", class: "test-file", accept: "video/*" }),
-            h("div", { class: "test-name" }, "no video loaded"),
-            h("div", { class: "test-bar" },
-                h("button", { class: "test-ctl test-back", title: "step back one frame" }, "◀"),
-                h("button", { class: "test-ctl test-play", title: "play / pause" }, "▶ play"),
-                h("button", { class: "test-ctl test-fwd", title: "step forward one frame" }, "▶"),
-            ),
-            h("input", { type: "range", class: "test-ctl test-seek", min: "0", max: "0", value: "0" }),
-            h("div", { class: "test-frame" }, "– / –"),
-            h("label", { class: "test-feed" },
-                h("input", { type: "checkbox", class: "test-ctl test-feed-cb" }), " feed live mode from video"),
-            h("div", { class: "test-hint" }, "enable feed, open a window, then turn on ", h("b", "live"), " to OCR each frame."),
-            h("div", { class: "test-sep" }),
-            h("div", { class: "test-cap" },
-                h("div", { class: "test-cap-head" }, "capture rate",
+            fieldset("node inspector", buildInspector(), "test-inspector", { open: true, onToggle: refit }),
+            fieldset("video harness", h("div", { class: "test-video" },
+                h("input", { type: "file", class: "test-file", accept: "video/*" }),
+                h("div", { class: "test-name" }, "no video loaded"),
+                h("div", { class: "test-bar" },
+                    h("button", { class: "test-ctl test-back", title: "step back one frame" }, "◀"),
+                    h("button", { class: "test-ctl test-play", title: "play / pause" }, "▶ play"),
+                    h("button", { class: "test-ctl test-fwd", title: "step forward one frame" }, "▶"),
+                ),
+                h("input", { type: "range", class: "test-ctl test-seek", min: "0", max: "0", value: "0" }),
+                h("div", { class: "test-frame" }, "– / –"),
+                h("label", { class: "test-feed" },
+                    h("input", { type: "checkbox", class: "test-ctl test-feed-cb" }), " feed live mode from video"),
+                h("div", { class: "test-hint" }, "enable feed, open a window, then turn on ", h("b", "live"), " to OCR each frame."),
+            ), "test-video", { open: false, onToggle: refit }),
+            fieldset("capture rate", h("div", { class: "test-cap" },
+                h("div", { class: "test-cap-head" },
                     h("select", { class: "test-cap-be", title: "capture backend to measure" }),
                     h("button", { class: "test-cap-run" }, "measure"),
                 ),
                 h("div", { class: "test-cap-out" }, "– not measured –"),
                 h("div", { class: "test-hint" }, h("b", "grabs/s"), " = how fast capture returns. ", h("b", "frames/s"),
                     " = real new frames (WGC is capped at the monitor refresh; a static screen yields ~0). PrintWindow forces a game re-render per grab — WGC does not."),
-            ),
+            ), "test-capture", { open: false, onToggle: refit }),
         ));
     const b = testWin.body;
     b.querySelector(".test-file").addEventListener("change", async (ev) => {

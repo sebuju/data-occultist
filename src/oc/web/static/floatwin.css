@@ -402,6 +402,55 @@
 .test-cap-out { color: var(--text); font-size: var(--fs-xs); line-height: 1.5; font-variant-numeric: tabular-nums;
     background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
 
+/* ---- node inspector (feed synthetic readout values into the live session) -- */
+.insp-panel { display: flex; flex-direction: column; gap: 8px; }
+.insp-head { color: var(--text); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+.insp-body { display: flex; flex-direction: column; gap: 8px; }
+.insp-empty { color: var(--muted); font-size: var(--fs-xs); }
+.insp-target { color: var(--text); font-size: var(--fs-xs); font-weight: 500; }
+.insp-tip { color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }
+.insp-row { display: flex; flex-direction: column; gap: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
+.insp-row-head { display: flex; align-items: center; gap: 6px; }
+.insp-en { flex: none; margin: 0; }
+/* a muted row keeps its settings visible but reads as inert */
+.insp-off { opacity: 0.5; }
+.insp-off .insp-en { opacity: 1; }
+.insp-ro-id { color: var(--text); font-size: var(--fs-xs); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.insp-ro-type { color: var(--muted); font-size: var(--fs-xs); }
+.insp-mode { margin-left: auto; font-size: var(--fs-xs); width: auto; }
+.insp-row-body { display: flex; align-items: center; gap: 6px; }
+.insp-val, .insp-pool { flex: 1; min-width: 0; font-size: var(--fs-xs); }
+/* min/max(/step) wrap rather than squash: three number fields in a ~300px panel used to clip
+   their own text (a "100" rendered as "10"), which reads as the wrong value, not as a layout bug.
+   Spinner arrows are stripped for the width — same reason graph.css strips them on node fields. */
+.insp-range { display: flex; align-items: center; gap: 4px 6px; flex: 1; min-width: 0; flex-wrap: wrap; }
+.insp-rangelbl { color: var(--muted); font-size: var(--fs-xs); }
+.insp-min, .insp-max, .insp-step { width: 0; flex: 1 0 56px; min-width: 56px; font-size: var(--fs-xs); }
+.insp-panel input[type="number"]::-webkit-outer-spin-button,
+.insp-panel input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.insp-intlbl { display: flex; align-items: center; gap: 3px; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+.insp-intlbl input { margin: 0; }
+.insp-send { flex: none; }
+.insp-type { font-size: var(--fs-xs); }
+.insp-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.insp-act { flex: 1; min-width: 72px; }
+.insp-dsbar { display: flex; }
+.insp-rec { flex: 1; }
+.insp-controls { display: flex; flex-direction: column; gap: 6px; }
+.insp-ctlrow { display: flex; align-items: center; gap: 6px; }
+.insp-sendall { flex: 1; }
+.insp-loop-wrap { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+.insp-loopms { width: 60px; font-size: var(--fs-xs); }
+.insp-loopbtn { flex: none; }
+.insp-dsopt { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: var(--fs-xs); line-height: 1.3; cursor: pointer; }
+.insp-dsopt input[type="checkbox"] { flex: none; margin: 0; }
+.insp-garblepct { width: 48px; font-size: var(--fs-xs); }
+.insp-garblepct:disabled { opacity: 0.45; }
+.insp-last { color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; font-variant-numeric: tabular-nums; min-height: 1.4em; }
+/* the testing panel's sections are the shared .panel-fs disclosure — tighten its body padding */
+.test-panel > .panel-fs > .fs-body { padding: 6px 2px 2px; }
+.test-video { display: flex; flex-direction: column; gap: 8px; }
+
 /* ---- precapture (now floating, was a centred modal) ------------------------ */
 #precap .fw-body { padding: 0; }
 .precap { padding: 6px; display: flex; flex-direction: column; gap: 10px; height: 100%; }
