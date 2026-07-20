@@ -56,8 +56,15 @@ export function wireSound(div, n) {
 // it. Not persisted — purely a tweak aid.
 const forgePreview = new Map();   // soundId -> { ctl, btn, off }
 const forgeAnim = new Map();      // soundId -> () => kick the plot's playhead-sweep rAF (set by wireForge)
+// Starting a loop is ASYNC (playSynth awaits the offline render). A stop/restart landing during that
+// await used to leave the finished source attached to an already-dropped entry — a loop nothing held
+// a reference to, so it played until a page reload. Every start/stop bumps this epoch; a start that
+// finds its epoch superseded stops its own source and drops it.
+const forgeGen = new Map();       // soundId -> monotonic epoch
+const bumpForge = (id) => { const g = (forgeGen.get(id) || 0) + 1; forgeGen.set(id, g); return g; };
 function stopForgePreview(id) {
     const p = forgePreview.get(id);
+    bumpForge(id);
     if (!p) return;
     p.ctl?.stop(); p.off?.();
     p.btn && (p.btn.classList.remove("on"), p.btn.lastChild.textContent = "play");
@@ -71,7 +78,9 @@ async function toggleForgePreview(div, id, btn) {
     if (forgePreview.get(id)) { stopForgePreview(id); return; }
     const s = model.soundNode(id);
     if (!s?.synth) return;
+    const gen = bumpForge(id);
     const ctl = await playSynth(s.synth, s.volume ?? 1, { loop: true });
+    if (forgeGen.get(id) !== gen) { ctl.stop(); return; }   // stopped/restarted while rendering
     // stop the preview when focus leaves the node — a pointerdown anywhere outside this node's card
     // (another node, empty canvas, a panel). Capture phase so a graph handler that stops propagation
     // can't swallow it. Clicks INSIDE the node (knobs, plot, presets, the button itself) are ignored
@@ -86,8 +95,12 @@ async function refreshForgePreview(id) {
     const p = forgePreview.get(id);
     if (!p) return;
     const s = model.soundNode(id);
-    p.ctl?.stop();
-    p.ctl = s?.synth ? await playSynth(s.synth, s.volume ?? 1, { loop: true }) : null;
+    p.ctl?.stop(); p.ctl = null;
+    const gen = bumpForge(id);
+    const ctl = s?.synth ? await playSynth(s.synth, s.volume ?? 1, { loop: true }) : null;
+    // superseded while rendering (stopped, or a faster edit already restarted it) => discard ours
+    if (forgeGen.get(id) !== gen || forgePreview.get(id) !== p) { ctl?.stop(); return; }
+    p.ctl = ctl;
     forgeAnim.get(id)?.();   // new source => new start time; ensure the sweep loop is running
 }
 
@@ -184,11 +197,16 @@ function wireForge(div, id) {
     let raf2 = 0;
     const playhead = () => {
         raf2 = 0;
-        if (!canvas.isConnected) { forgeAnim.delete(id); return; }
+        if (!canvas.isConnected) { dropAnim(); return; }
         draw();
         if (forgePreview.get(id)) raf2 = requestAnimationFrame(playhead);
     };
-    forgeAnim.set(id, () => { if (!raf2 && canvas.isConnected) raf2 = requestAnimationFrame(playhead); });
+    const kick = () => { if (!raf2 && canvas.isConnected) raf2 = requestAnimationFrame(playhead); };
+    // forgeAnim is keyed by sound id, but a node rebuild runs wireForge AGAIN over new DOM — so a
+    // stale closure's cleanup must never evict the LIVE kicker the newer wireForge installed (that
+    // left the sweep dead: audio looped, no playhead line). Only drop the entry if it's still ours.
+    const dropAnim = () => { if (forgeAnim.get(id) === kick) forgeAnim.delete(id); };
+    forgeAnim.set(id, kick);
     // restart the loop preview live while dragging a point/knob, throttled so a fast drag doesn't
     // machine-gun the audio source — you hear the shape change as you move (no-op if not previewing).
     let lastLive = 0;
@@ -265,7 +283,7 @@ function wireForge(div, id) {
     if (gworld) {
         let raf = 0, lastScale = "";
         const mo = new MutationObserver(() => {
-            if (!canvas.isConnected) { mo.disconnect(); cancelAnimationFrame(raf2); forgeAnim.delete(id); return; }   // node removed → self-clean
+            if (!canvas.isConnected) { mo.disconnect(); cancelAnimationFrame(raf2); dropAnim(); return; }   // node removed → self-clean
             const sc = (/scale\(([^)]*)\)/.exec(gworld.style.transform) || [, "1"])[1];
             if (sc === lastScale || raf) return;   // pan (scale unchanged) → zero layout work
             lastScale = sc;
