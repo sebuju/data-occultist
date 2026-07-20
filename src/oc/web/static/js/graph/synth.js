@@ -84,7 +84,21 @@ export function volGain(pos) {
     return p <= 0 ? 0 : Math.pow(10, 2 * (p - 1));
 }
 
-export async function playSynth(spec, volume = 1, { loop = false } = {}) {
+// The shared AudioContext, for a caller that needs to SCHEDULE against it (playing several cues at
+// one common start time). Null if Web Audio is unavailable — callers fall back to "start now".
+export function audioCtx() { try { return ctx(); } catch { return null; } }
+
+// Render a cue into the buffer cache WITHOUT playing it. Playing several cues together has to warm
+// every buffer first: an uncached spec renders offline (milliseconds), so a cold cue would start
+// late and the batch would sound staggered instead of simultaneous. Best-effort -> null.
+export async function prepareCue(spec) {
+    if (!spec || !(spec.points || []).length) return null;
+    try { return await renderCue(spec); } catch { return null; }
+}
+
+// `at` schedules the start at an absolute AudioContext time (0 = now) so a batch of cues can be
+// sample-aligned; without it each cue starts whenever its own await happens to resolve.
+export async function playSynth(spec, volume = 1, { loop = false, at = 0 } = {}) {
     const noop = { stop() {}, ctx: null, startedAt: null, duration: 0 };
     if (!spec || !(spec.points || []).length) return noop;
     try {
@@ -94,13 +108,15 @@ export async function playSynth(spec, volume = 1, { loop = false } = {}) {
         src.buffer = buf; g.gain.value = volGain(volume);
         if (loop) { src.loop = true; src.loopStart = 0; src.loopEnd = buf.duration; }
         src.connect(g).connect(c.destination);
-        src.start();
+        // a scheduled time already in the past would throw; clamp to "now"
+        const t0 = at && at > c.currentTime ? at : 0;
+        src.start(t0);
         // setVolume adjusts the live gain WITHOUT restarting — a looping preview's volume tracks the
         // node's meter in real time (the buffer bakes in no volume, so this is the only gain stage).
         return {
             stop() { try { src.stop(); } catch { /* already stopped */ } },
             setVolume(v) { try { g.gain.value = volGain(v); } catch { /* dead node */ } },
-            ctx: c, startedAt: c.currentTime, duration: buf.duration,
+            ctx: c, startedAt: t0 || c.currentTime, duration: buf.duration,
         };
     } catch { return noop; }
 }

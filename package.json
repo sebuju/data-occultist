@@ -5,7 +5,8 @@
   "scripts": {
     "test:e2e": "node tests/e2e/route-no-through-nodes.mjs",
     "test:e2e:node-txn": "node tests/e2e/node-txn.mjs",
-    "test:model": "node tests/e2e/model-refsites.mjs"
+    "test:model": "node tests/e2e/model-refsites.mjs",
+    "test:action-targets": "node tests/e2e/action-targets.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1"

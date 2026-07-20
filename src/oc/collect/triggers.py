@@ -27,7 +27,8 @@ Kinds:
 
 A trigger ``target`` is a price-node id, a file-source id, a toast/sound id, OR an action id:
 pricing nodes sweep the market, file sources read a log/config file, toasts/sounds notify, and an
-action node clears/clones/moves a dataset (see :class:`oc.profile.models.ActionDef` and
+action node does whatever is wired into it — clear/clone/move a dataset or register, cue a sound,
+fire another action (see :class:`oc.profile.models.ActionDef`, :func:`fire_action` and
 :func:`oc.store.dataset_ops.fire_dataset_target`). The runner dispatches by which kind owns the id.
 
 ``fire`` and ``clock`` are injectable so the scheduling logic is unit-testable without sleeping
@@ -1076,27 +1077,76 @@ def fire_toast(game: str, toast, notifier, *, trigger_id: str, values: dict | No
     return True
 
 
-def fire_action(game: str, action, data_dir, *, profile, trigger_id: str | None = None) -> bool:
-    """Fire ONE action-node target of a trigger — run its op (clear/clone/move) on each of its
-    ``sources``, which are prefixed refs naming DATASETS (``"dataset:<id>"``) and/or REGISTERS
-    (``"register:<id>"``). The single funnel both the collector dispatch and the web fire-now route
-    use, so automatic and manual fires can't drift (the action node is fired via ``targets`` exactly
-    like a toast). Emits the trigger->action control pulse, then each action->target pulse (inside
+def _arm_delay(timer_factory: Callable[..., object], wait: float, fn: Callable[[], None]) -> None:
+    """Run ``fn`` once, ``wait`` seconds from now, on a daemon timer. The one deferral primitive the
+    action node uses for both its ``delay_ms`` and its repeated sound cues — same shape (and same
+    tolerant ``.daemon``) as :meth:`TriggerRunner._arm_timer_locked`, so an injected fake timer
+    drives it deterministically in tests instead of sleeping."""
+    timer = timer_factory(max(0.0, wait), fn)
+    try:
+        timer.daemon = True
+    except Exception:  # noqa: BLE001 - injected fake timers need not support .daemon
+        pass
+    timer.start()
+
+
+def fire_action(game: str, action, data_dir, *, profile, trigger_id: str | None = None,
+                seen: set[str] | None = None,
+                timer_factory: Callable[..., object] = threading.Timer) -> bool:
+    """Fire ONE action node — do whatever is wired into its ``sources``, ``delay_ms`` after being
+    fired. The single funnel the collector dispatch, the trigger fire-now route and the action's own
+    fire-now route all use, so no path drifts.
+
+    ``sources`` are prefixed refs: DATASETS (``"dataset:<id>"``) and REGISTERS (``"register:<id>"``)
+    get the node's op (clear/clone/move) run on them; SOUNDS (``"sound:<id>"``) are cued to the
+    browser; ACTIONS (``"action:<id>"``) are fired downstream (chaining), each with their own delay,
+    so chain delays accumulate without any accumulation logic. ``seen`` guards a hand-edited YAML
+    cycle from recursing forever.
+
+    ALL scheduling happens here, server-side, never in the browser: a backgrounded tab throttles its
+    timers (~1s clamp) but not its SSE delivery, so client-side spacing would silently stretch
+    whenever the game has focus. The browser only ever plays a cue that just arrived.
+
+    Emits the trigger->action control pulse immediately (the wire should flash when the TRIGGER
+    fires, not ``delay_ms`` later), then each action->target pulse inside
     :func:`oc.store.dataset_ops.fire_dataset_target` / :func:`oc.collect.register_ops.
-    fire_register_target`). A disabled / actionless node is a no-op. A register source needs a live
-    session holding its map — resolved here; with none, register ops are a graceful no-op. Returns
-    True if it ran on any source."""
-    if action is None or not getattr(action, "enabled", True) or not getattr(action, "action", ""):
+    fire_register_target`. A disabled node is a no-op. A register source needs a live session holding
+    its map — resolved lazily; with none, register ops are a graceful no-op. Returns True if
+    anything ran or was scheduled."""
+    if action is None or not getattr(action, "enabled", True):
         return False
     # a manual web fire has no trigger node (trigger_id is None), so skip the trigger->action
     # control pulse — the action->target pulses inside the funnels still fire.
     if trigger_id:
         publish_flow(game, "trigger", f"trigger:{trigger_id}", f"action:{action.id}", 1)
+    seen = set(seen or ())
+    if action.id in seen:
+        return False   # chain cycle — already fired in this cascade
+    seen.add(action.id)
+
+    def run() -> bool:
+        return _run_action(game, action, data_dir, profile=profile, seen=seen,
+                           timer_factory=timer_factory)
+    delay = max(0, int(getattr(action, "delay_ms", 0) or 0))
+    if not delay:
+        return run()
+    # a delay, not a debounce: every fire arms its own timer, so a burst of fires lands as a burst
+    # of delayed runs (settle/throttle on the TRIGGER is where coalescing belongs).
+    _arm_delay(timer_factory, delay / 1000.0, run)
+    return True
+
+
+def _run_action(game: str, action, data_dir, *, profile, seen: set[str],
+                timer_factory: Callable[..., object]) -> bool:
+    """The action's actual work, run either inline or off its delay timer — dataset/register ops,
+    then the sound cue, then the chained action nodes. Split out so ``delay_ms`` defers ONE thing."""
     from ..store.dataset_ops import fire_dataset_target
     from .register_ops import fire_register_target
     from .live import active_session
     session = None
     ran = False
+    sounds: list[str] = []
+    chained: list[str] = []
     for ref in getattr(action, "sources", []):
         kind, _, rid = ref.partition(":")
         if kind == "dataset":
@@ -1107,7 +1157,46 @@ def fire_action(game: str, action, data_dir, *, profile, trigger_id: str | None 
                 session = active_session(game)
             if fire_register_target(game, data_dir, profile, session, action, rid):
                 ran = True
+        elif kind == "sound":
+            sounds.append(rid)
+        elif kind == "action":
+            chained.append(rid)
+    if sounds and _cue_sounds(game, action, sounds, profile=profile, timer_factory=timer_factory):
+        ran = True
+    by_action = {x.id: x for x in (getattr(profile, "actions", None) or [])}
+    for rid in chained:
+        nxt = by_action.get(rid)
+        if nxt is not None and fire_action(game, nxt, data_dir, profile=profile, seen=seen,
+                                           timer_factory=timer_factory):
+            ran = True
     return ran
+
+
+def _cue_sounds(game: str, action, sound_ids: list[str], *, profile,
+                timer_factory: Callable[..., object]) -> bool:
+    """Cue this action's sound sources to the browser ``action.repeat`` times, ``repeat_ms`` apart.
+    Sounds are client-played, so a "fire" is exactly a push on the fire-event bus — the same one a
+    trigger's own sound targets ride (:func:`oc.store.fire_events.publish_fire`); the cue names the
+    action rather than a trigger because a delayed / manual fire has no live trigger to name (the
+    client uses that id only for its empty-``sounds`` fallback). Disabled sounds are dropped here,
+    exactly as :meth:`TriggerRunner._resolve_fire` drops them. Returns True if anything was cued."""
+    off = {s.id for s in (getattr(profile, "sounds", None) or []) if not getattr(s, "enabled", True)}
+    known = {s.id for s in (getattr(profile, "sounds", None) or [])}
+    ids = [s for s in sound_ids if s in known and s not in off]
+    if not ids:
+        return False
+    tid = f"action:{action.id}"
+    repeat = max(1, int(getattr(action, "repeat", 1) or 1))
+    every = max(10, int(getattr(action, "repeat_ms", 300) or 300)) / 1000.0
+    publish_fire(game, tid, list(ids))
+
+    def again(n: int) -> None:
+        publish_fire(game, tid, list(ids))
+        if n + 1 < repeat:
+            _arm_delay(timer_factory, every, lambda: again(n + 1))
+    if repeat > 1:
+        _arm_delay(timer_factory, every, lambda: again(1))
+    return True
 
 
 def read_source_target(game: str, source, data_dir, *, profile, trigger_id: str) -> bool:

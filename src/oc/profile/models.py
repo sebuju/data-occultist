@@ -1342,9 +1342,10 @@ class SoundDef(BaseModel):
 
 
 class ActionDef(BaseModel):
-    """An *action node*: runs a dataset operation (clear, or clone/move data into ``dest``) when
-    fired. A trigger names its ``id`` in ``targets`` (like a toast/sound/producer), so any trigger
-    condition can act on datasets — the shared :func:`oc.store.dataset_ops.fire_dataset_target`
+    """An *action node*: does something to everything wired into ``sources`` when fired — a dataset
+    operation (clear, or clone/move data into ``dest``), a browser sound cue, and/or a downstream
+    action node. A trigger names its ``id`` in ``targets`` (like a toast/sound/producer), so any
+    trigger condition can act on datasets — the shared :func:`oc.store.dataset_ops.fire_dataset_target`
     funnel does the work, both from the collector dispatch and the web fire-now route.
 
     ``action`` ∈ "" (none) | clear | clone_batches | clone_resolved | move_batches | move_resolved.
@@ -1359,15 +1360,32 @@ class ActionDef(BaseModel):
 
     ``slots`` narrows a register source to a subset of its wired-readout keys — ``{register id ->
     [readout key, ...]}``. An absent / empty list means ALL of that register's keys.
+
+    ``sources`` also holds two NON-dataset kinds, which the dataset-op fields (``action`` / ``slots``
+    / ``dest``) simply don't apply to:
+
+    * ``"sound:<id>"`` — a sound node cued to the browser when this node runs, ``repeat`` times
+      ``repeat_ms`` apart. The cue rides the same :func:`oc.store.fire_events.publish_fire` bus a
+      trigger's own sound targets use, so the browser only ever plays a cue that JUST arrived.
+    * ``"action:<id>"`` — another action node, fired downstream once this one has run (chaining).
+      The chained node's own ``delay_ms`` applies to its fire, so chain delays accumulate naturally.
+
+    ``delay_ms`` waits that long after being fired before doing ANY of the above. All scheduling is
+    server-side on purpose: a backgrounded browser tab throttles its timers (~1s clamp) but not its
+    SSE delivery, so client-side spacing would silently stretch whenever the game has focus.
     """
 
     id: str
     action: str = ""                        # "" | clear | clone_batches | clone_resolved | move_batches | move_resolved
-    # prefixed refs "dataset:<id>" / "register:<id>" — the datasets AND registers this action acts on
+    # prefixed refs "dataset:<id>" / "register:<id>" / "sound:<id>" / "action:<id>" — everything this
+    # node operates on when fired (dataset ops, browser sound cues, and chained action nodes)
     sources: list[str] = Field(default_factory=list)
     # register id -> targeted readout keys (absent/empty = all of that register's keys)
     slots: dict[str, list[str]] = Field(default_factory=dict)
     dest: str = ""                          # destination dataset for clone/move actions
+    delay_ms: int = Field(default=0, ge=0, le=600_000)      # wait before running (0 = run now)
+    repeat: int = Field(default=1, ge=1, le=99)             # how many times to cue the sound sources
+    repeat_ms: int = Field(default=300, ge=10, le=10_000)   # gap between those cues
     enabled: bool = True
 
     @model_validator(mode="before")

@@ -379,17 +379,32 @@ function wireAction(div, n) {
         after: () => { rebuildNode(n.id); autosave(null); },
     });
     $(".ac-dest")?.addEventListener("change", (e) => { model.setActionDest(x.id, e.target.value); drawEdges(); autosave(null); });
-    // manual fire: run the action NOW on its target dataset(s) via the same funnel a trigger uses.
+    // timing knobs — persisted only; the SERVER schedules the delay and the repeated sound cues (a
+    // backgrounded tab throttles its timers but not its SSE cue delivery), so nothing here runs a clock.
+    $(".ac-delay")?.addEventListener("change", (e) => { model.setActionDelay(x.id, e.target.value); autosave(null); });
+    $(".ac-repms")?.addEventListener("change", (e) => { model.setActionRepeatMs(x.id, e.target.value); autosave(null); });
+    // repeat crossing 1 reveals/hides the "every ms" row -> rebuild, not a bare autosave
+    $(".ac-repeat")?.addEventListener("change", (e) => { model.setActionRepeat(x.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    // manual fire: run the action NOW on its targets via the same funnel a trigger uses — including
+    // its delay and its sound cues, which the server owns (the cue comes BACK over SSE and plays
+    // through the same path an automatic fire uses; nothing is played locally).
     // Transient feedback by swapping the button label (no progress line on the node).
     $(".ac-fire")?.addEventListener("click", async (e) => {
         const btn = e.currentTarget; btn.disabled = true; btn.textContent = "firing…";
+        // register sources aren't in /api/flow, so repaint each one this action touches directly
+        // (clear/move mutate the in-memory held map server-side but publish no dataset-change push,
+        // so refreshLive would never reach them). A COSMETIC repaint, not a cue: with a delay set it
+        // has to run after the server's timer, hence the local wait — the sound cue never rides this.
+        const repaint = () => {
+            refreshLive();
+            for (const s of model.actionSources(x.id)) if (s.kind === "register") refreshRegister(s.id);
+        };
         try {
             const r = await api.actions.fire(model.profile.name, x.id);
-            btn.textContent = r.ran ? "fired ✓" : "no-op";
-            refreshLive();   // dataset sources: refetch /api/flow. register sources aren't in flow, so
-            // repaint each register this action touches directly (clear/move mutate the in-memory held
-            // map server-side but publish no dataset-change push, so refreshLive would never reach them).
-            for (const s of model.actionSources(x.id)) if (s.kind === "register") refreshRegister(s.id);
+            const delay = Math.max(0, Number(x.delay_ms) || 0);
+            btn.textContent = r.ran ? (delay ? `in ${delay}ms…` : "fired ✓") : "no-op";
+            repaint();
+            if (delay) setTimeout(repaint, delay + 50);
         }
         catch (err) { btn.textContent = String(err.message || err); }
         finally { setTimeout(() => { btn.textContent = "↻ fire"; btn.disabled = false; }, 1500); }

@@ -14,6 +14,7 @@ from ...collect.triggers import (
     fire_action, fire_target, fire_toast, read_source_target, record_fire)
 from ...enrich.price_runner import start_sweep, sweep_status
 from ...profile import list_profiles, load_profile
+from ...store.fire_events import publish_fire
 from ..deps import get_notifier, get_settings
 from .live import live_readouts
 
@@ -77,6 +78,7 @@ def fire_trigger(game: str, trigger_id: str):
     # producer already sweeping is reported in ``skipped`` (not an error) so the UI can say
     # "already sweeping" instead of a bare "0 sweeps" that reads as a broken button.
     started, skipped = [], []
+    sound_ids: list[str] = []
     fired = False
     for pid in effective_targets:
         pn = by_producer.get(pid)
@@ -109,14 +111,19 @@ def fire_trigger(game: str, trigger_id: str):
             started.append({"action": pid})
             fired = True
             continue
-        # sound nodes are played CLIENT-SIDE (the activity heartbeat's fire-detector), never here —
-        # but the fire must still be RECORDED (stamp last_fired) so that detector notices it and
-        # plays. Count an enabled sound as fired; the browser does the actual playback.
+        # sound nodes are played CLIENT-SIDE, never here — they ride the instant fire cue published
+        # below (ALL of them, so a trigger wired to several sounds plays the whole set at once).
+        # Count an enabled sound as fired; the browser does the actual playback.
         snd = by_sound.get(pid)
         if snd is not None and getattr(snd, "enabled", True):
+            sound_ids.append(pid)
             started.append({"sound": pid})
             fired = True
     if fired:
+        # Push the live cue so a MANUAL fire sounds exactly like an automatic one. Without this the
+        # browser never hears about a manual fire at all (the old polled fire-detector this route's
+        # comment referred to is gone) -- the collector path publishes via TriggerRunner._emit_fire.
+        publish_fire(game, trigger_id, sound_ids)
         record_fire(data_dir, game, trigger_id)   # stamp the sidecar so the fire countdown is right
         from datetime import datetime, timezone
 

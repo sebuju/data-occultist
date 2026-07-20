@@ -113,6 +113,9 @@ export class GraphModel {
             delete x.datasets;
             x.slots = x.slots || {};   // register id -> targeted readout keys (absent/[] = all)
             x.action = x.action || ""; x.dest = x.dest || ""; if (x.enabled == null) x.enabled = true;
+            if (x.delay_ms == null) x.delay_ms = 0;        // wait this long after being fired
+            if (x.repeat == null) x.repeat = 1;            // how many times to cue sound sources
+            if (x.repeat_ms == null) x.repeat_ms = 300;    // gap between those cues
         }
         this.profile.registers = this.profile.registers || [];
         for (const r of this.profile.registers) {
@@ -324,7 +327,7 @@ export class GraphModel {
                 lists.push({ arr: () => pick(o), empty: (r) => !r.slice(r.indexOf(":") + 1) });
             }
         };
-        prefixedList(this.profile.actions, (x) => x.sources);      // dataset: | register:
+        prefixedList(this.profile.actions, (x) => x.sources);      // dataset: | register: | sound: | action:
         prefixedList(this.profile.toasts, (x) => x.sources);       // dataset: | subset: | readout:
         prefixedList(this.profile.registers, (x) => x.sources);    // readout:
         // process inputs (ProcessInput {ref,out}) — like prefixedList but the id lives in `.ref`, and a
@@ -651,6 +654,8 @@ export class GraphModel {
             case "process": return `process:${bare}`;
             case "dataset": return `ds:${bare}`;
             case "subset": return `sub:${bare}`;
+            case "sound": return `sound:${bare}`;
+            case "action": return `action:${bare}`;
             case "readout": { const site = this.readoutSite(bare); return site ? `ro:${site.win}:${bare}` : null; }
         }
         // bare id: try every kind a wired-source chip can point at, same precedence the edge
@@ -766,11 +771,12 @@ export class GraphModel {
                     if (to) es.push({ from: `router:${r.id}`, to, kind: "trigger" });
                 }
         }
-        // an action node ACTS ON its dataset AND register sources (action -> ds/register), and
-        // WRITES into its clone/move destination dataset (action -> dest).
+        // an action node ACTS ON its dataset AND register sources, CUES its sound sources and FIRES
+        // its chained action sources (all control, hence kind "trigger"), and WRITES into its
+        // clone/move destination dataset (action -> dest, the only data edge here).
         for (const x of this.profile.actions || []) {
             for (const s of this.actionSources(x.id)) {
-                const to = this.refNode(s.ref);   // ds:<id> or register:<id>
+                const to = this.refNode(s.ref);   // ds: / register: / sound: / action:
                 if (to) es.push({ from: `action:${x.id}`, to, kind: "trigger" });
             }
             if (x.dest && (x.action || "").match(/^(clone|move)_/)) es.push({ from: `action:${x.id}`, to: `ds:${x.dest}`, kind: "data" });
@@ -1155,7 +1161,8 @@ export class GraphModel {
         this.profile.actions = this.profile.actions || [];
         let n = 1, id = "action";
         while (this.actionNode(id)) id = `action_${++n}`;
-        this.profile.actions.push({ id, action: "", sources: [], slots: {}, dest: "", enabled: true });
+        this.profile.actions.push({ id, action: "", sources: [], slots: {}, dest: "",
+            delay_ms: 0, repeat: 1, repeat_ms: 300, enabled: true });
         return id;
     }
     removeAction(id) { this.profile.actions = (this.profile.actions || []).filter((x) => x.id !== id); this._unwire("action", id); }
@@ -1174,13 +1181,18 @@ export class GraphModel {
             return i < 0 ? { kind: "", id: ref, ref } : { kind: ref.slice(0, i), id: ref.slice(i + 1), ref };
         }).filter((s) => s.kind && s.id);
     }
-    // Add a dataset/register source by prefixed ref. Validates the kind + that the target exists.
+    // Add a target by prefixed ref — a DATASET/REGISTER the op runs on, a SOUND to cue, or another
+    // ACTION to fire downstream (chaining). Validates the kind + that the target exists; a chain
+    // that would close a cycle (or point at itself) is refused here, and the server guards too.
     addActionSource(id, ref) {
         const x = this.actionNode(id);
         if (!x || !ref) return false;
         const i = ref.indexOf(":");
         const kind = i < 0 ? "" : ref.slice(0, i), rid = i < 0 ? ref : ref.slice(i + 1);
-        const ok = (kind === "dataset" && this.datasets().includes(rid)) || (kind === "register" && !!this.registerNode(rid));
+        const ok = (kind === "dataset" && this.datasets().includes(rid))
+            || (kind === "register" && !!this.registerNode(rid))
+            || (kind === "sound" && !!this.soundNode(rid))
+            || (kind === "action" && !!this.actionNode(rid) && rid !== id && !this._actionReaches(rid, id));
         if (!ok) return false;
         x.sources = x.sources || [];
         if (x.sources.includes(ref)) return false;
@@ -1208,6 +1220,23 @@ export class GraphModel {
         else x.slots[regId] = uniq;
     }
     setActionDest(id, v) { const x = this.actionNode(id); if (x) x.dest = v || ""; }
+    // Does the chain starting at `from` reach `target`? Guards addActionSource from closing a cycle
+    // (a -> b -> a would cascade forever were the server not also guarding).
+    _actionReaches(from, target) {
+        const seen = new Set();
+        const walk = (aid) => {
+            if (aid === target) return true;
+            if (seen.has(aid)) return false;
+            seen.add(aid);
+            return this.actionSources(aid).some((s) => s.kind === "action" && walk(s.id));
+        };
+        return walk(from);
+    }
+    // Timing knobs — ALL scheduling is server-side (a backgrounded tab throttles timers but not its
+    // SSE cue delivery), so these are plain persisted numbers the browser never acts on itself.
+    setActionDelay(id, v) { const x = this.actionNode(id); if (x) x.delay_ms = Math.max(0, Math.round(Number(v) || 0)); }
+    setActionRepeat(id, v) { const x = this.actionNode(id); if (x) x.repeat = Math.max(1, Math.round(Number(v) || 1)); }
+    setActionRepeatMs(id, v) { const x = this.actionNode(id); if (x) x.repeat_ms = Math.max(10, Math.round(Number(v) || 300)); }
     cloneAction(id) { this.profile.actions = this.profile.actions || []; return this._cloneById(this.profile.actions, id, (x) => !!this.actionNode(x)); }
 
     // ---- register nodes: in-memory keyed map holding wired readouts' live values (optionally
