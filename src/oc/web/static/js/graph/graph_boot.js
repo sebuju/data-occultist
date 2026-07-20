@@ -6,7 +6,7 @@ import * as api from "../api.js";
 import * as conn from "../conn.js";
 import * as hub from "../hub.js";
 import { h } from "../dom.js";
-import { $, model, setStatus } from "./state.js";
+import { $, model, setStatus, urlFlag, urlParam } from "./state.js";
 import { log, setLogOpen } from "../log.js";
 import { ocrBusyCount } from "./imaging.js";
 import { routesSettled } from "./routing.js";
@@ -21,15 +21,13 @@ import { refreshGames, loadGame, initKillGpu, finishBoot } from "./main.js";
 //   /?debug=1&settle=1       load AND wait for boot OCR to drain (but no kill/veil/log)
 //   /?kill=1&veil=1&...      force any single step back on regardless of debug
 // Booleans read "0"/"false" as off, anything else (incl. bare "?veil") as on.
-const _dq = new URLSearchParams(location.search);
-const _flag = (k, dflt) => { const v = _dq.get(k); return v === null ? dflt : (v !== "0" && v !== "false"); };
-const dbg = { on: _flag("debug", false) };
+const dbg = { on: urlFlag("debug", false) };
 // when debug is on each slow step defaults OFF; `load` stays on (an empty shell is rarely useful).
-dbg.kill    = _flag("kill",    !dbg.on);   // kill+await any stray OCR worker from a prior session
-dbg.settle  = _flag("settle",  !dbg.on);   // block the veil until the boot OCR round drains (bootSettle)
-dbg.veil    = _flag("veil",    !dbg.on);   // full-page boot spinner
-dbg.bootlog = _flag("bootlog", !dbg.on);   // expand the log bar + mirror every request during boot
-dbg.load    = _flag("load",    true);      // load the selected game at all (off ⇒ empty graph, instant)
+dbg.kill    = urlFlag("kill",    !dbg.on);   // kill+await any stray OCR worker from a prior session
+dbg.settle  = urlFlag("settle",  !dbg.on);   // block the veil until the boot OCR round drains (bootSettle)
+dbg.veil    = urlFlag("veil",    !dbg.on);   // full-page boot spinner
+dbg.bootlog = urlFlag("bootlog", !dbg.on);   // expand the log bar + mirror every request during boot
+dbg.load    = urlFlag("load",    true);      // load the selected game at all (off ⇒ empty graph, instant)
 if (dbg.on) log(`debug launch: kill=${dbg.kill} settle=${dbg.settle} veil=${dbg.veil} bootlog=${dbg.bootlog} load=${dbg.load}`);
 
 // ---- boot veil: full-page spinner until the initial load has settled ----------
@@ -141,7 +139,7 @@ async function killStrayOcrThenBoot() {
         if (dbg.load && $("gameSelect").value) await loadGame($("gameSelect").value);
         // ?view=pretty (the desktop window passes it) boots into the pretty dashboard;
         // a plain browser has no param and stays on the node view.
-        if (new URLSearchParams(location.search).get("view") === "pretty") setPrettyView(true);
+        if (urlParam("view") === "pretty") setPrettyView(true);
         initKillGpu();
         hub.init(() => model.profile.name);   // single backend heartbeat for every panel
         hub.start();

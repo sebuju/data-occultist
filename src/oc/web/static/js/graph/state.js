@@ -12,6 +12,14 @@ import { GraphModel } from "./model.js";
 export const $ = (id) => document.getElementById(id);
 export const setStatus = (m, level) => log(m, level);   // #status is gone — the log bar shows messages now
 
+// Launch-time URL switches (?debug=1&load=1&routedebug=1 …). Parsed ONCE — the query string cannot
+// change without a reload. Booleans read "0"/"false" as off and anything else (including a bare
+// "?veil" with no value) as on, so a flag can be flipped on by name alone. One implementation, shared
+// by the boot ceremony (graph_boot.js) and the routing debug view (routing.js).
+const _query = new URLSearchParams(location.search);
+export const urlParam = (k) => _query.get(k);
+export const urlFlag = (k, dflt) => { const v = _query.get(k); return v === null ? dflt : (v !== "0" && v !== "false"); };
+
 export const model = new GraphModel();
 
 export const pos = new Map();            // node id -> {x,y}

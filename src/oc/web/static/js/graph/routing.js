@@ -10,10 +10,13 @@ import * as groups from "./groups.js";
 import { routeGraph } from "./route.js";
 import { hierRoute } from "./hierRoute.js";
 import { deCollide } from "./decollide.js";
-import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot } from "./state.js";
+import { busRouteGraph } from "./busgraph.js";
+import { gradeRoutes } from "./followable.js";
+import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot, urlFlag } from "./state.js";
 import { selectedNodeId, wire, startWire, canDisable, nodeTypeOf } from "./main.js";
-import { setEdges, invalidateEdges } from "./edgecanvas.js";
+import { setEdges, invalidateEdges, setCorridors } from "./edgecanvas.js";
 import { typeColor, grayscale, cssVar } from "./colors.js";
+import { h } from "../dom.js";
 
 // Port exit directions (L/R/T/B) -> unit vector, used to stub a line out of a port the
 // right way before it turns. Lines are ALWAYS orthogonal — no bezier fallback exists.
@@ -405,6 +408,7 @@ function drawEdges() {
         const c = routeCache.get(l.key);
         if (!c || !c.p1) continue;
         l.p1 = c.p1; l.d1 = c.d1; l.p2 = c.p2; l.d2 = c.d2;
+        l._via = c.via || null;          // which router placed it — paints the corridor-debug tint
         // While dragging we do NOT re-route — the live A* reglue looked janky. The cached routed path
         // stays frozen as the node moves; mark it stale (paint greys + fades it) when it can no longer
         // be trusted, on any of three counts. A clean route morphs back in once, on drag settle.
@@ -493,6 +497,11 @@ function kindColor(cs) {
     return cssVar("--line");
 }
 
+// Corridor-debug palette: how a line got routed. Blue rode the bus corridors, yellow took a direct
+// line-of-sight shot between two facing nodes (no bus needed), red is anything else — a line the bus
+// router could not place, handed to the A* fallback. Red is the one to look for.
+const VIA_COLOR = { bus: "#4fa3ff", facing: "#e8c33a", fallback: "#ff4d4d" };
+
 // Resolve a link's paint style (colour/dash/caps + the three dim states) into its record. Mirrors
 // the graph.css cascade: caps by declaration order (later wins), dim alpha by specificity
 // (stale !important > sel !important > sel-inactive .1 > dis .4).
@@ -503,7 +512,11 @@ function applyEdgeStyle(rec, l, dis, anySel, selCol) {
     // A gate -> trigger line carries no flow blob: it's tinted ok/danger by the gate's live pass/
     // block (grey when live is off), and drawn dashed to read as a guard, not a data path.
     const isGate = cs.has("gate");
-    const color = isGate ? gateStateColor(l) : l.srcType ? typeColor(l.srcType) : kindColor(cs);
+    // Corridor debug tint on: recolour by WHICH router placed the line, so the wires read against the
+    // corridor strips underneath them. Overrides the node/type hue outright — this is a diagnostic
+    // view, not a style tweak, and a half-applied palette would say nothing.
+    const color = ROUTE.corridors && l._via ? VIA_COLOR[l._via] || VIA_COLOR.fallback
+        : isGate ? gateStateColor(l) : l.srcType ? typeColor(l.srcType) : kindColor(cs);
     const gray = dis || stale || (anySel && !sel);
     rec.stroke = gray ? grayscale(color) : color;
     rec.alpha = stale ? 0.3 : sel ? 1 : (anySel && !sel) ? 0.1 : dis ? 0.4 : 1;
@@ -606,9 +619,28 @@ function flushEdges() {   // force the final frame now (drop on settle) — canc
 const ROUTE = {
     enabled: true,
     bench: false,       // console.log per-phase routing timings (window.__route.bench=true; __reroute())
+    router: "bus",      // "bus" | "astar" — BUS is the default: lines ride shared corridors between the
+                        // node rows (busgraph.js), so wires bundle into channels instead of each finding
+                        // its own path. "astar" is the previous per-line router (routeGraph + deCollide,
+                        // or hierRoute when `hier`); it also serves as the bus router's fallback for any
+                        // line the corridors can't place. Swap live:
+                        // window.__route.router="astar"; __reroute()
+    // LINE DEBUG, off unless launched with ?routedebug=1 — it repaints every wire by which router
+    // placed it, shades the bus corridors behind the cards, and shows the followability audit badge.
+    // Diagnostic, not a view mode: the wire recolour overrides the node/type hue outright, so it must
+    // never be what a normal launch shows. Bus router only ("astar" carves no corridors).
+    // Flip live too: window.__route.corridors=true; __reroute()
+    corridors: urlFlag("routedebug", false),
+    bus: {              // bus-router knobs (window.__route.bus.hopCost=240; __reroute())
+        margin: 9,      // keep-out halo inflated around every node when carving corridors
+        laneGap: 12,    // per-lane spacing inside a corridor
+        minLen: 280,    // drop corridors shorter than this — a stub channel is not a bus
+        hopCost: 120,   // cost of one 90-degree turn onto the next bus, in px of ride distance
+    },
     hier: false,        // FLAT one global pass (routeGraph + a single deCollide) is the default — it routes
                         // the whole graph together, far cleaner than the per-group GATE funnelling. Set
                         // window.__route.hier=true; __reroute() to fall back to hierarchical gate routing.
+                        // Only consulted when router === "astar".
     decollide: true,    // GLOBAL cross-pass de-collision (decollide.js): hier's isolated passes can each
                         // route a wire onto the same world coord (nudge only separates within a pass), so
                         // a final pass fans coincident runs apart. Toggle off: window.__route.decollide=false; __reroute()
@@ -626,9 +658,10 @@ if (typeof window !== "undefined") {
     // every node's world rect — lets a test assert no edge passes through a non-endpoint node.
     window.__routes = () => { const o = {}; for (const [k, c] of routeCache) o[k] = { pts: c.pts, d1: c.d1, d2: c.d2 }; return o; };
     window.__nodeRects = () => { const o = {}; for (const id of nodeEls.keys()) { const r = nodeRect(id); if (r) o[id] = r; } return o; };
-    // read-only snapshot for the routing lab (static/route_lab.html): the full geometry the router
-    // consumes — every node's world rect, the group/sub/super boxes, and the raw link list
-    // (endpoints + rects + kind). Capture once in the live console: copy(JSON.stringify(window.__graphDump())).
+    // read-only snapshot of the full geometry the router consumes — every node's world rect, the
+    // group/sub/super boxes, and the raw link list (endpoints + rects + kind). This is how
+    // scripts/graph-fixture.json is regenerated for the offline bench (scripts/route_bench.mjs):
+    // copy(JSON.stringify(window.__graphDump())) in the live console.
     window.__graphDump = () => ({
         nodeRects: window.__nodeRects(),
         groupBoxes: [
@@ -698,11 +731,42 @@ function ensureRouteWorker() {
     routeWorker.onmessage = (e) => onRouteResult(e.data || {});
     return routeWorker;
 }
-function onRouteResult({ reqId, routes, error }) {
+function onRouteResult({ reqId, routes, corridors, grade, error }) {
     if (reqId !== routeReqId) return;   // superseded by a newer request — drop it
     routeInflight = false;
     if (error) { setStatus(`route failed: ${error}`); return; }   // surface instead of silently using elbows
+    showCorridors(corridors);
+    showRouteStats(grade, corridors);
     applyRoutes(routes);
+}
+
+// Publish the bus channels to the canvas debug tint. Off (or a non-bus router) paints nothing —
+// pushing [] rather than skipping, so flipping the flag off and rerouting actually CLEARS them.
+let lastCorridors = [];
+function showCorridors(cors) {
+    lastCorridors = ROUTE.corridors && ROUTE.router === "bus" ? (cors || []) : [];
+    setCorridors(lastCorridors);
+}
+
+// ---- corridor debug readout ----------------------------------------------------------------
+// A passive badge, mounted only while ROUTE.corridors is on: the followability audit of the last
+// pass plus which router placed what. Built once and updated in place (rule 1) — it refreshes per
+// routing pass, not on a timer, and an unchanged pass writes nothing.
+let statsEl = null, statsPrev = "";
+function showRouteStats(grade, cors) {
+    if (!grade) { if (statsEl) { statsEl.remove(); statsEl = null; statsPrev = ""; } return; }
+    const mix = grade.mix || {};
+    const order = ["bus", "facing", "fallback", "astar"];
+    const parts = order.filter((k) => mix[k]).map((k) => `${k} ${mix[k]}`);
+    const full = (cors || []).filter((c) => (c.used || 0) >= Math.max(1, c.cap || 1)).length;
+    const kinds = Object.entries(grade.kinds || {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`);
+    const text = `${parts.join(" · ")}  |  corridors ${(cors || []).length} (${full} full)  |  `
+        + (grade.total ? `violations ${grade.total}: ${kinds.join(", ")}` : "followable ✓");
+    if (text === statsPrev) return;                  // nothing changed — leave the DOM alone
+    statsPrev = text;
+    if (!statsEl) { statsEl = h("div", { class: "route-stats" }); document.body.appendChild(statsEl); }
+    statsEl.textContent = text;
+    statsEl.classList.toggle("bad", grade.total > 0);
 }
 
 // Everything physical is an obstacle: nodes AND panels. Lines weave around all of
@@ -726,7 +790,6 @@ function linksSig(links) {
     let s = `${ROUTE.cell}:${ROUTE.clearWanted}:`;
     for (const l of links) s += `${l.key}@${rnd(l.p1)}${l.d1}${rnd(l.p2)}${l.d2};`;
     for (const o of obstacleRects()) s += `${o.x},${o.y},${o.w},${o.h}|`;
-    for (const b of groups.groupBoxes()) s += b.gate === false ? "u" : "g";   // gate toggle -> re-path
     return s;
 }
 
@@ -812,10 +875,6 @@ function runRouting() {
     // its box (height bandH), super-group label band at the BOTTOM (SUPER_LABEL_BAND tall).
     const titleBands = [];
     for (const b of groups.subGroupBoxes()) if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
-    // an ungated group is dropped from the hard-box hierarchy below (its members route as free
-    // nodes, straight through its footprint) but its TITLE still reads as a heading — feed the band
-    // in here the same way a subgroup's is, so lines still dodge it even though the box no longer does.
-    for (const b of groups.groupBoxes()) if (b.gate === false && b.box && b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y, x1: b.box.x + b.box.w, y1: b.box.y + b.bandH });
     // super-group: block the label's x-span from the group content down to the label — closing the
     // gap between the group and its watermark entirely so no line can slot between them. Only the
     // label's WIDTH is blocked (band sides stay open canvas the lines may cross).
@@ -824,14 +883,17 @@ function runRouting() {
         if (r) titleBands.push({ x0: r.x, y0: b.box.y + b.box.h - b.bandH, x1: r.x + r.w, y1: r.y + r.h });
         else if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
     }
+    // Every heading a wire — and, for the bus router, a CORRIDOR — must not cross: each group's own
+    // title strip plus the band rects above. titleBands alone is not enough: it deliberately omits a
+    // GATED group's header (the A* path catches that one via `walls`/deCollide instead), which left
+    // corridors carved straight across group titles.
+    const blockRects = groups.titleRects()
+        .concat(titleBands.map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 })));
     const config = { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell, bench: ROUTE.bench };
     // hierarchical: collapse each group to a hard box and funnel its crossing lines through gates.
-    // groupOf() returns the group RECORD; hierRoute/gates key off the group id. An ungated group
-    // is left OUT of this map entirely: boxless to hierRoute/classifyAndGate means its members
-    // route as free outer nodes and no gate is generated — fully transparent to the router (its
-    // title band alone is still fed in above).
+    // groupOf() returns the group RECORD; hierRoute/gates key off the group id.
     const groupBox = new Map();
-    for (const b of groups.groupBoxes()) if (b.box && b.gate !== false) groupBox.set(b.id, { x: b.box.x, y: b.box.y, w: b.box.w, h: b.box.h, bandH: b.bandH || 0 });
+    for (const b of groups.groupBoxes()) if (b.box) groupBox.set(b.id, { x: b.box.x, y: b.box.y, w: b.box.w, h: b.box.h, bandH: b.bandH || 0 });
     // hier's isolated passes are mutually blind, so two can route a wire onto the identical world
     // coord (nudge only de-overlaps within a pass). Fan those coincident runs apart against every
     // obstacle (nodes + group boxes) + title band so a shift never crosses one. (single-pass
@@ -840,7 +902,7 @@ function runRouting() {
     // a parallel lane so long as it stays INSIDE the box. Freezing it (what a straddling
     // wall does) is what left sibling skip-edges stacked on one coord over a node row. Pass
     // boxes apart from the hard walls (nodes + title bands) a lane shift can't cross.
-    const containers = groups.groupBoxes().filter((b) => b.box && b.gate !== false).map((b) => b.box);
+    const containers = groups.groupBoxes().filter((b) => b.box).map((b) => b.box);
     const walls = obstacleRects({ boxes: false })
         .concat(titleBands.map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 })));
     pendingSig = sig;
@@ -851,8 +913,9 @@ function runRouting() {
         for (const n of nodes) { const r = groups.groupOf(n.id); if (r) nodeGroup.set(n.id, r.id); }
         routeInflight = true;
         worker.postMessage({
-            reqId: ++routeReqId, hier: ROUTE.hier, decollide: ROUTE.decollide,
-            nodes, grps, groupBox, nodeGroup, edges, outPorts, prevSides, titleBands, config,
+            reqId: ++routeReqId, router: ROUTE.router, bus: ROUTE.bus, hier: ROUTE.hier, decollide: ROUTE.decollide,
+            grade: ROUTE.corridors,   // audit this pass for the debug readout (worker-side: pure compute)
+            nodes, grps, groupBox, nodeGroup, edges, outPorts, prevSides, titleBands, blockRects, config,
             laneGap: ROUTE.cell, containers, walls,
         });
         return;
@@ -860,7 +923,17 @@ function runRouting() {
     // No Worker (e.g. a non-browser test runner) — run the compute inline, synchronously, same as
     // before this change. gateFaces/hierPassCache are reused as main-thread state on this path only.
     let res;
-    if (ROUTE.hier) {
+    showCorridors(null);                 // cleared unless the bus branch below hands its channels over
+    if (ROUTE.router === "bus") {
+        // BUS: lines ride shared corridors. Group heading bands go in as hard rects; anything the
+        // corridors can't place falls back to a routeGraph pass over just those edges.
+        res = busRouteGraph(nodes, edges, {
+            blockRects, bus: ROUTE.bus,
+            fallback: (missed) => routeGraph(nodes, [], missed, { prevSides, outPorts, titleBands, config }),
+            deconflict: ROUTE.decollide ? (r) => deCollide(r, walls, { laneGap: ROUTE.cell, containers: [] }) : null,
+            onCorridors: showCorridors,
+        });
+    } else if (ROUTE.hier) {
         const gof = (id) => { const r = groups.groupOf(id); return r ? r.id : null; };
         const out = hierRoute(nodes, groupBox, gof, edges, { prevSides, outPorts, titleBands, config, laneGap: ROUTE.cell, prevFace: gateFaces, passCache: hierPassCache });
         res = out.routes; gateFaces = out.faces; hierPassCache = out.passCache;
@@ -872,6 +945,11 @@ function runRouting() {
         res = routeGraph(nodes, [], edges, { prevSides, outPorts, titleBands, config });
         if (ROUTE.decollide) res = deCollide(res, walls, { laneGap: ROUTE.cell, containers: [], bench: ROUTE.bench });
     }
+    if (ROUTE.corridors) {
+        const rects = {};
+        for (const n of nodes) rects[n.id] = { x: n.x, y: n.y, w: n.w, h: n.h };
+        showRouteStats(gradeRoutes(res, rects), lastCorridors);
+    } else showRouteStats(null, null);
     applyRoutes(res);
     } catch (err) {
         routeInflight = false;

@@ -198,6 +198,10 @@ function edgeOpts(ax, ay, bx, by, hb, soft, wantD1) {
 // SEARCH SEMANTICS ARE UNCHANGED — same costs, same strict `<` relaxation, same heap comparisons and
 // the same swap order, so ties break the same way and the chain returned is identical. This is purely
 // how the search is stored.
+//
+// This heap deliberately does NOT use the shared minheap.js: it carries four payload lanes (f/g/node/
+// dir) fused into the search, and swapping in a 1-lane heap would change how equal-f ties break in the
+// live routing hot path. New searches (busroute.js) use minheap.js.
 function makeAStar(WP, baseAdj, baseN, cap) {
     const SN = cap * 5;
     const dist = new Float64Array(SN), prevId = new Int32Array(SN), seen = new Int32Array(SN);

@@ -204,7 +204,9 @@ export function deCollide(routes, walls, config = {}) {
             pts[sh.i0][ax] += sh.off; pts[sh.i1][ax] += sh.off;
         }
         const np = simplify(pts);
-        out.set(key, { pts: np, p1: np[0].slice(), d1: r.d1, p2: np[np.length - 1].slice(), d2: r.d2 });
+        // spread the source record so a field this pass knows nothing about (the bus router's `via`
+        // provenance tag) survives a displacement — only the geometry is ours to rewrite.
+        out.set(key, { ...r, pts: np, p1: np[0].slice(), p2: np[np.length - 1].slice() });
     }
     blog();
     return out;

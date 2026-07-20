@@ -1596,3 +1596,14 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
 .sf-cue::before { content: "["; }
 .sf-cue::after { content: "]"; }
 
+
+/* corridor debug readout (routing.js ROUTE.corridors): passive badge, last pass's route mix +
+   followability audit. Bottom-left, sitting ON TOP of the collapsed log strip rather than under it —
+   the log bar is full-width at z-index 1100, so `bottom: 8px` put this behind it. 33px = the log
+   strip (25px, MUST match overlays.css .log-head) + the standard 8px gap, the same reserve
+   floatwin.js's _botGap keeps. */
+.route-stats { position: fixed; left: 8px; bottom: 33px; z-index: 300; pointer-events: none;
+    padding: 3px 8px; border-radius: 5px; font-family: var(--font-mono); font-size: var(--fs-sm);
+    color: var(--text); background: var(--panel); border: 1px solid var(--line);
+    box-shadow: 0 2px 8px var(--shadow); white-space: nowrap; }
+.route-stats.bad { border-color: #ff4d4d; }
