@@ -1,4 +1,5 @@
-// The ONE searchable "add" combobox popover (rule 7 — the graph's first + only searchable dropdown).
+// The ONE searchable "add" combobox popover (rule 7 — the graph's first + only searchable dropdown),
+// plus the shared body-level popover SHELL (anchoredPopover) both it and reg_agg_picker.js build on.
 // The sources-input "+" add control (sources_input.js) opens this instead of a native <select>: a
 // body-level floating panel with a focused search field on top and a live-filtered, node-distance-
 // ordered option list below. Built at document.body in screen coords so it escapes node overflow
@@ -20,6 +21,24 @@ export function closeCombo() {
     if (!_pop) return;
     _pop.remove(); _pop = null;
     _dismiss?.(); _dismiss = null;
+}
+
+// The shared shell (rule 7): appends `panel` to document.body, clamps it fully on-screen under
+// `anchor` (the exact math ctxmenu / groups popover also use), and wires outside-press/Escape
+// dismiss via the shared onOutside primitive. Any caller wanting a transient body-level popover
+// (comboPopover's search+list, reg_agg_picker's grouped mode list, ...) builds its own panel
+// contents and hands them here instead of re-deriving the clamp/dismiss boilerplate. Closes
+// whatever popover this shell currently holds open before mounting a new one (single instance);
+// returns a `close()` fn the caller can invoke itself (e.g. after a pick).
+export function anchoredPopover({ anchor, panel }) {
+    closeCombo();
+    document.body.appendChild(panel);
+    const a = anchor.getBoundingClientRect(), M = 8, r = panel.getBoundingClientRect();
+    panel.style.left = `${Math.max(M, Math.min(a.left, window.innerWidth - r.width - M))}px`;
+    panel.style.top = `${Math.max(M, Math.min(a.bottom + 4, window.innerHeight - r.height - M))}px`;
+    _pop = panel;
+    _dismiss = onOutside(panel, closeCombo, { event: "mousedown", defer: true, escape: true });
+    return closeCombo;
 }
 
 // canvas center {x,y} of a node id, or null when the id is unknown / unplaced.
@@ -66,7 +85,6 @@ function orderByDistance(options, hostId) {
 }
 
 export function comboPopover({ anchor, options, onPick, placeholder = "search..." }) {
-    closeCombo();
     const hostId = anchor.closest(".gnode")?.dataset.id || null;
     const ordered = orderByDistance(
         (options || []).map((o) => (typeof o === "string" ? { value: o, label: o } : { value: o.value, label: o.label ?? o.value })),
@@ -110,13 +128,6 @@ export function comboPopover({ anchor, options, onPick, placeholder = "search...
         else if (e.key === "Enter") { e.preventDefault(); if (vals[hl] != null) pick(vals[hl]); }
     });
 
-    document.body.appendChild(pop);
-    // anchor under the "+" trigger, then clamp fully on-screen (same math as ctxmenu / groups popover).
-    const a = anchor.getBoundingClientRect(), M = 8, r = pop.getBoundingClientRect();
-    pop.style.left = `${Math.max(M, Math.min(a.left, window.innerWidth - r.width - M))}px`;
-    pop.style.top = `${Math.max(M, Math.min(a.bottom + 4, window.innerHeight - r.height - M))}px`;
-    _pop = pop;
+    anchoredPopover({ anchor, panel: pop });   // shared shell: body-append + clamp + outside/Escape dismiss
     search.focus();   // focus the search field on open (the explicit ask)
-    // dismiss on outside press / Escape, deferred so the opening click doesn't self-close (rule 7).
-    _dismiss = onOutside(pop, closeCombo, { event: "mousedown", defer: true, escape: true });
 }
