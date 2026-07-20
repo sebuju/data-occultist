@@ -28,6 +28,19 @@ export function selectionIds() {
     return [];
 }
 
+// Subscribe to selection changes — called with the single selected node's id, or `null`
+// when nothing is selected / more than one node is selected (an ambiguous target). The
+// testing inspector is the one consumer today. Fired from syncMultiSelect (the one choke
+// point every selection-changing path already runs through — focus, deselect, multi-select
+// toggles, group ops — rule 7: no second wire-up per caller).
+const _selectListeners = [];
+export function onNodeSelect(fn) { _selectListeners.push(fn); }
+function notifySelect() {
+    const ids = selectionIds();
+    const id = ids.length === 1 ? ids[0] : null;
+    for (const fn of _selectListeners) fn(id);
+}
+
 export function setMultiSelect(ids) {
     selected.clear();
     for (const id of ids) if (nodeEls.has(id)) selected.add(id);
@@ -151,6 +164,7 @@ export function syncMultiSelect() {
     if (pst) pst.hidden = groupMode || !sizeClip || !ids.some(isSizeTarget);
     if (bar) collapseSeparators(bar);   // hide any `.sel-sep` that now borders nothing (unremovable node, group-mode, etc.)
     drawEdges();   // selection changed -> repaint so selected nodes' lines pick up the `sel` colour
+    notifySelect();
 }
 
 // A `.sel-sep` divides button groups; it means nothing unless a real (non-hidden) button is visible
