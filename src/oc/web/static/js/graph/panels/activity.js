@@ -20,7 +20,7 @@ import { refreshRegister } from "../register_node.js";
 import { liveCollecting } from "./livewin.js";
 import { panZoomTo } from "../camera.js";
 import { setGateStates } from "../routing.js";
-import { playCue } from "../sound.js";
+import { playCues } from "../sound.js";
 import * as dsevents from "../dsevents.js";
 import { svg } from "../../dom.js";
 
@@ -273,10 +273,9 @@ function playFire(ev) {
     const tid = ev?.trigger;
     if (!tid) return;
     const ids = (ev.sounds && ev.sounds.length) ? ev.sounds : (model.trigger(tid)?.targets || []);
-    for (const pid of ids) {
-        const sn = model.soundNode(pid);
-        if (sn) playCue(sn);
-    }
+    // one batch (playCues), not a playCue per id — several sound nodes on one trigger must sound
+    // together; playing them one-by-one staggered them by each cue's own render/await.
+    playCues(ids.map((pid) => model.soundNode(pid)).filter(Boolean));
 }
 
 // Reflect each trigger's live PROGRESS onto its node's `.tg-prog` span (reconcile-in-place:
