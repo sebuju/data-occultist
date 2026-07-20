@@ -761,6 +761,11 @@ function groupAfterSize(rec, el) {
         tel.style.background = "";
         tel.style.color = c.label;   // "" -> CSS --dim
         placeTitle(tel, rec.titleAlign);
+        // Cache the title's own extent for titleRects(): the band is full-width but the TITLE is
+        // shrink-to-fit (inline-flex), so the router only needs to dodge this much of it. Read here,
+        // after placeTitle, because alignment decides where it sits — and alongside the existing
+        // _titleH read in groupBeforeSize this stays one layout pass per group render, not a new one.
+        rec._titleX = tel.offsetLeft; rec._titleW = tel.offsetWidth;
     }
     // Canvas renderer draws the box fill + border (solid accent when ctrl-selected, else dashed)
     // itself (under-canvas); blank the DOM box so it doesn't double-render. Title band stays DOM.
@@ -944,13 +949,25 @@ export function superGroupBoxes() {
         return { id: sg.id, title: sg.title, outline: { ...sg.outline }, bg: sg.bg, bandH: SUPER_LABEL_BAND, box, labelRect };
     }).filter(Boolean);
 }
-// World rects of each group's TITLE band, fed to the router as (soft) obstacles.
+// World rect of each group's TITLE — the text itself, NOT the whole header band. Fed to the router as
+// an obstacle (hard for the bus corridors, soft for the A* path). A header band spans the full box
+// width but the title only occupies its own inline-flex extent; the empty remainder of the band is
+// ordinary open canvas that a corridor or a wire may cross freely. Blocking the whole band cut every
+// group's row in half for no visual gain.
+//
+// _titleX/_titleW are measured in groupAfterSize. Until a group has rendered once they are unset, and
+// the fallback is the FULL band — wider than needed, never narrower, so an unmeasured group can never
+// leak a wire across its title.
 export function titleRects() {
     const out = [];
     for (const g of groups) {
         const th = g._titleH || TITLE_H;
         const box = boxOf(GROUP, g, th);
-        if (box) out.push({ x: box.x, y: box.y, w: box.w, h: th });
+        if (!box) continue;
+        const measured = g._titleW > 0;
+        const x = measured ? box.x + (g._titleX || 0) : box.x;
+        const w = measured ? Math.min(g._titleW, box.w) : box.w;
+        out.push({ x, y: box.y, w, h: th });
     }
     return out;
 }
