@@ -16,6 +16,8 @@
 // is genuinely cheaper (a small stickiness bias), so a tiny node move can't flip a route's whole
 // shape across a cost-equality threshold.
 
+import { FACE_OUT, insetEndpoint } from "./faces.js";
+
 const C = {
     clearance: 22,   // routing margin around each node => gutter width for waypoints
     bendCost: 70,    // penalty per 90-degree bend (vs 1 unit of length)
@@ -45,10 +47,9 @@ const PORT_END_KEEP = 18;// min distance a fanned endpoint stays off a node corn
                          // the rounded bend can't swallow the stub; guarded on short faces (see kClamp)
 
 const center = (r) => [r.x + r.w / 2, r.y + r.h / 2];
-const faceOut = { L: [-1, 0], R: [1, 0], T: [0, -1], B: [0, 1] };
 const DC = { N: 0, S: 1, E: 2, W: 3 };
-const outDir = (s) => (faceOut[s][0] !== 0 ? (faceOut[s][0] > 0 ? "E" : "W") : (faceOut[s][1] > 0 ? "S" : "N"));
-const inDirOf = (s) => (faceOut[s][0] !== 0 ? (faceOut[s][0] > 0 ? "W" : "E") : (faceOut[s][1] > 0 ? "N" : "S"));
+const outDir = (s) => (FACE_OUT[s][0] !== 0 ? (FACE_OUT[s][0] > 0 ? "E" : "W") : (FACE_OUT[s][1] > 0 ? "S" : "N"));
+const inDirOf = (s) => (FACE_OUT[s][0] !== 0 ? (FACE_OUT[s][0] > 0 ? "W" : "E") : (FACE_OUT[s][1] > 0 ? "N" : "S"));
 const rev = (d) => (d === "N" ? "S" : d === "S" ? "N" : d === "E" ? "W" : "E");
 // DC index of rev(d), by DC index of d — lets the hot loop compare directions as ints (see makeAStar).
 const REVI = [DC.S, DC.N, DC.W, DC.E];
@@ -525,7 +526,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
         // other endpoint (0 = straight at it, C.faceBias = straight away), so A* prefers the face facing
         // the target unless obstacles make it genuinely costlier. `aFrom`/`aTo` are the endpoint anchors.
         const aFrom = anchor(ln.from, ln.fromGate), aTo = anchor(ln.to, ln.toGate);
-        const faceAway = (face, from, to) => { const dx = to[0] - from[0], dy = to[1] - from[1], L = Math.hypot(dx, dy) || 1, n = faceOut[face]; return C.faceBias * (1 - (n[0] * dx + n[1] * dy) / L) / 2; };
+        const faceAway = (face, from, to) => { const dx = to[0] - from[0], dy = to[1] - from[1], L = Math.hypot(dx, dy) || 1, n = FACE_OUT[face]; return C.faceBias * (1 - (n[0] * dx + n[1] * dy) / L) / 2; };
         // hysteresis: non-previous faces cost a small stickiness bias, so the route keeps its face.
         for (const se of srcEntries) add(S0, { to: se.idx, d1: se.dir, d2: se.dir, i1: DC[se.dir], i2: DC[se.dir], corner: null, len: (prev && prev.d1 !== se.face ? C.faceStick : 0) + faceAway(se.face, aFrom, aTo), gset: EMPTY_G });
         for (const de of dstEntries) add(de.idx, { to: D0, d1: de.dir, d2: de.dir, i1: DC[de.dir], i2: DC[de.dir], corner: null, len: (prev && prev.d2 !== de.face ? C.faceStick : 0) + faceAway(de.face, aTo, aFrom), gset: EMPTY_G });
@@ -838,10 +839,7 @@ function nudge(lines, byId, rects, outPorts, bands) {
     for (const ln of lines) { if (ln.fromGate) pinGate(ln._pts, ln.fromGate.pt, false); if (ln.toGate) pinGate(ln._pts, ln.toGate.pt, true); }
     // pull a line's arriving end a few px INTO the node (along the face normal, so the last segment
     // just shortens and stays orthogonal) — lets an end marker rest halfway inside the edge.
-    for (const ln of lines) if (ln.insetEnd) {
-        const p = ln._pts, i = p.length - 1, v = faceOut[ln.dstSide];
-        if (i >= 1 && v) p[i] = [p[i][0] - v[0] * ln.insetEnd, p[i][1] - v[1] * ln.insetEnd];
-    }
+    for (const ln of lines) if (ln.insetEnd) insetEndpoint(ln._pts, ln.dstSide, ln.insetEnd);
     for (const ln of lines) {
         let pts = simplify(ln._pts);
         if (pts.length === 2) pts = orthoElbow(pts[0], pts[1], ln.srcSide, ln.dstSide);   // never a diagonal

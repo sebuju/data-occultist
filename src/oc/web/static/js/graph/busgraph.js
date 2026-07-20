@@ -15,8 +15,9 @@
 //             through whatever is in the way. Instead the caller's `fallback` (routeGraph) supplies
 //             those keys — a real orthogonal route, at the cost of one A* pass whenever any line
 //             misses. Zero misses = zero cost.
-//   INSET     watch/trigger caps sit ON the node edge, so their last point is pulled back along the
-//             final stub (route.js does the same at its own tail).
+//   INSET     watch/trigger caps sit ON the node edge, so their last point is pulled INTO the node
+//             along its arrival face (`r.d2`) via the shared insetEndpoint (faces.js), same primitive
+//             route.js uses at its own tail.
 //
 // deCollide runs ONLY when the fallback did. A pure bus pass needs none — every wire holds a lane
 // span it reserved, so a lane shift could only move it off one — but a fallback line is routed blind
@@ -24,17 +25,7 @@
 
 import { findCorridors } from "./corridors.js";
 import { busRoute } from "./busroute.js";
-
-// Pull the endpoint back along its final stub so a centred cap straddles the node edge instead of
-// floating outside it. The stub is axis-aligned, so this is a one-axis nudge.
-function insetTail(pts, by) {
-    if (!by || pts.length < 2) return pts;
-    const n = pts.length, e = pts[n - 1], p = pts[n - 2];
-    const dx = e[0] - p[0], dy = e[1] - p[1];
-    if (Math.abs(dx) >= Math.abs(dy)) { if (Math.abs(dx) <= by) return pts; pts[n - 1] = [e[0] - Math.sign(dx) * by, e[1]]; }
-    else { if (Math.abs(dy) <= by) return pts; pts[n - 1] = [e[0], e[1] - Math.sign(dy) * by]; }
-    return pts;
-}
+import { insetEndpoint } from "./faces.js";
 
 /**
  * Route the graph over bus corridors.
@@ -92,7 +83,7 @@ export function busRouteGraph(nodes, edges, opts = {}) {
     const out = new Map();
     const insetOf = new Map(edges.map((e) => [e.key, e.insetEnd || 0]));
     for (const [key, r] of routes) {
-        const pts = insetTail(r.pts, insetOf.get(key) || 0);
+        const pts = insetEndpoint(r.pts, r.d2, insetOf.get(key) || 0);
         out.set(key, { pts, p1: pts[0].slice(), d1: r.d1, p2: pts[pts.length - 1].slice(), d2: r.d2, via: r.via });
     }
 
