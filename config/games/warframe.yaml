@@ -137,6 +137,12 @@ windows:
       h: 0.014490954393679131
     field: rof_3
     enabled: true
+    test:
+      enabled: false
+      mode: countdown
+      min: '0'
+      max: '30'
+      step: '0.25'
   - id: ability_2_cd
     box:
       x: 0.865503246867423
@@ -145,6 +151,12 @@ windows:
       h: 0.015487808745133523
     field: rof_5
     enabled: true
+    test:
+      enabled: true
+      mode: countdown
+      min: '0'
+      max: '12'
+      step: '0.25'
   - id: ability_3_cd
     box:
       x: 0.8888997806849647
@@ -153,6 +165,12 @@ windows:
       h: 0.016020159180372563
     field: rof_7
     enabled: true
+    test:
+      enabled: false
+      mode: countdown
+      min: '0'
+      max: '50'
+      step: '0.25'
   - id: ability_4_cd
     box:
       x: 0.912804923904563
@@ -161,6 +179,12 @@ windows:
       h: 0.01585915076894294
     field: rof_9
     enabled: true
+    test:
+      enabled: false
+      mode: countdown
+      min: '0'
+      max: '24'
+      step: '0.25'
   - id: warframe_name_live
     box:
       x: 0.8693991472179767
@@ -169,6 +193,12 @@ windows:
       h: 0.02904006453347674
     field: rof_90
     enabled: true
+    test:
+      enabled: false
+      mode: fixed
+      min: '0'
+      max: '100'
+      step: '1'
   preprocess:
     mode: none
     colors: []
@@ -4390,7 +4420,7 @@ triggers:
   targets:
   - wf_market_relic
   enabled: true
-  settle_ms: 800.0
+  settle_ms: 1200.0
   settle_max_ms: 3000.0
   ready_field: ''
 - id: on_new_relic_fetched
@@ -4416,6 +4446,7 @@ triggers:
   gates:
   - gate_ab1
   - gate_ab1_not
+  - gate_ab2_nb-copy
   targets:
   - bob
   enabled: true
@@ -4431,8 +4462,9 @@ triggers:
   gates:
   - gate_ab2
   - gate_ab2_not
+  - gate_ab2_nb
   targets:
-  - bob
+  - bob_2
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
@@ -4446,8 +4478,9 @@ triggers:
   gates:
   - gate_ab3
   - gate_ab3_not
+  - gate_ab2_nb-copy2
   targets:
-  - bob
+  - bob_3
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
@@ -4461,8 +4494,9 @@ triggers:
   gates:
   - gate_ab4
   - gate_ab4_not
+  - gate_ab2_nb-copy2-copy
   targets:
-  - bob
+  - bob_4
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
@@ -4494,7 +4528,7 @@ gates:
 - id: gate_ab4
   source: register:ab_register#ability_4_cd
   conds:
-  - when: eq
+  - when: lt
     arg: '3'
   logic: or
   negate: false
@@ -4532,6 +4566,38 @@ gates:
     arg: ''
   logic: or
   negate: true
+  enabled: true
+- id: gate_ab2_nb
+  source: register:ab_register#ability_2_cd@nonblank
+  conds:
+  - when: gt
+    arg: '2'
+  logic: or
+  negate: false
+  enabled: true
+- id: gate_ab2_nb-copy
+  source: register:ab_register#ability_1_cd@nonblank
+  conds:
+  - when: gt
+    arg: '2'
+  logic: or
+  negate: false
+  enabled: true
+- id: gate_ab2_nb-copy2
+  source: register:ab_register#ability_3_cd@nonblank
+  conds:
+  - when: gt
+    arg: '2'
+  logic: or
+  negate: false
+  enabled: true
+- id: gate_ab2_nb-copy2-copy
+  source: register:ab_register#ability_4_cd@nonblank
+  conds:
+  - when: gt
+    arg: '2'
+  logic: or
+  negate: false
   enabled: true
 routers: []
 toasts:
@@ -4855,23 +4921,53 @@ sounds:
     wave: sine
     points:
     - t: 0.0
-      p: 0.803
-    - t: 0.25
-      p: 0.436
+      p: 0.5877525298136395
+    - t: 0.24476981453947147
+      p: 0.39078286349463043
     - t: 0.5
       p: 0.394
     - t: 0.75
       p: 0.688
     - t: 1.0
       p: 0.452
-    length_ms: 533
+    length_ms: 107
     attack: 4
     decay: 55
     vibrato: 0
     crush: 11
   volume: 0.7
   enabled: true
-actions: []
+actions:
+- id: bob_4
+  action: ''
+  sources:
+  - sound:bob
+  slots: {}
+  dest: ''
+  delay_ms: 0
+  repeat: 4
+  repeat_ms: 50
+  enabled: true
+- id: bob_3
+  action: ''
+  sources:
+  - sound:bob
+  slots: {}
+  dest: ''
+  delay_ms: 0
+  repeat: 3
+  repeat_ms: 50
+  enabled: true
+- id: bob_2
+  action: ''
+  sources:
+  - sound:bob
+  slots: {}
+  dest: ''
+  delay_ms: 0
+  repeat: 2
+  repeat_ms: 50
+  enabled: true
 registers:
 - id: loadout_register
   sources:
@@ -4886,6 +4982,7 @@ registers:
   enabled: true
   capacity: 1
   aggregate: ''
+  aggregate_arg: 0.0
   ignore_empty: false
   persist: loadout
 - id: ab_register
@@ -4893,8 +4990,9 @@ registers:
   - process:process_renamed
   title: ''
   enabled: true
-  capacity: 20
-  aggregate: stable
+  capacity: 5
+  aggregate: track
+  aggregate_arg: 0.0
   ignore_empty: false
   persist: ''
 - id: wf_name_live
@@ -4904,6 +5002,7 @@ registers:
   enabled: true
   capacity: 5
   aggregate: common
+  aggregate_arg: 0.0
   ignore_empty: false
   persist: ''
 processes:
@@ -5646,8 +5745,8 @@ layout:
       softW: true
       softH: true
     sound:relic_sound:
-      x: 3440.0
-      y: -6660.0
+      x: 3560.0
+      y: -6840.0
       w: 360.0
       h: 140.0
       collapsed: false
@@ -5703,8 +5802,8 @@ layout:
       custH: true
       softH: true
     sound:bob:
-      x: -1180.0
-      y: -7180.0
+      x: -1500.0
+      y: -6380.0
       w: 400.0
       h: 440.0
       collapsed: false
@@ -6799,44 +6898,44 @@ layout:
       softW: true
       softH: true
     trigger:trigger_ab1:
-      x: -3400.0
-      y: -6580.0
+      x: -3420.0
+      y: -7400.0
       w: 280.0
-      h: 220.0
+      h: 320.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     trigger:trigger_ab2:
-      x: -2620.0
-      y: -6580.0
+      x: -2520.0
+      y: -7400.0
       w: 280.0
-      h: 240.0
+      h: 340.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     trigger:trigger_ab3:
-      x: -1840.0
-      y: -6580.0
+      x: -1620.0
+      y: -7400.0
       w: 280.0
-      h: 240.0
+      h: 340.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     trigger:trigger_ab4:
-      x: -1060.0
-      y: -6580.0
+      x: -720.0
+      y: -7400.0
       w: 280.0
-      h: 240.0
+      h: 340.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     gate:gate_ab1:
-      x: -3840.0
-      y: -6580.0
+      x: -3860.0
+      y: -7480.0
       w: 380.0
       h: 140.0
       collapsed: false
@@ -6845,8 +6944,8 @@ layout:
       softW: true
       softH: true
     gate:gate_ab2:
-      x: -3060.0
-      y: -6580.0
+      x: -2960.0
+      y: -7480.0
       w: 380.0
       h: 140.0
       collapsed: false
@@ -6855,8 +6954,8 @@ layout:
       softW: true
       softH: true
     gate:gate_ab3:
-      x: -2280.0
-      y: -6580.0
+      x: -2060.0
+      y: -7480.0
       w: 380.0
       h: 140.0
       collapsed: false
@@ -6865,8 +6964,8 @@ layout:
       softW: true
       softH: true
     gate:gate_ab4:
-      x: -1500.0
-      y: -6580.0
+      x: -1160.0
+      y: -7480.0
       w: 380.0
       h: 140.0
       collapsed: false
@@ -6914,45 +7013,97 @@ layout:
       custH: false
       softW: false
     gate:gate_ab4_not:
-      x: -1500.0
-      y: -6420.0
+      x: -1160.0
+      y: -7160.0
       w: 380.0
-      h: 280.0
+      h: 180.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     gate:gate_ab3_not:
-      x: -2280.0
-      y: -6420.0
+      x: -2060.0
+      y: -7160.0
       w: 380.0
-      h: 280.0
+      h: 180.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     gate:gate_ab2_not:
-      x: -3060.0
-      y: -6420.0
+      x: -2960.0
+      y: -7160.0
       w: 380.0
-      h: 280.0
+      h: 180.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     gate:gate_ab1_not:
-      x: -3840.0
-      y: -6420.0
+      x: -3860.0
+      y: -7160.0
       w: 380.0
-      h: 280.0
+      h: 180.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
+    gate:gate_ab2_nb:
+      x: -2960.0
+      y: -7320.0
+      w: 380.0
+      h: 140.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    gate:gate_ab2_nb-copy:
+      x: -3860.0
+      y: -7320.0
+      w: 380.0
+      h: 140.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    gate:gate_ab2_nb-copy2:
+      x: -2060.0
+      y: -7320.0
+      w: 380.0
+      h: 140.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    gate:gate_ab2_nb-copy2-copy:
+      x: -1160.0
+      y: -7320.0
+      w: 380.0
+      h: 140.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    action:bob_4:
+      x: -720.0
+      y: -6800.0
+      collapsed: false
+    action:bob_3:
+      x: -1020.0
+      y: -6800.0
+      collapsed: false
+    action:bob_2:
+      x: -1300.0
+      y: -6800.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -7741,21 +7892,8 @@ layout:
     - register:ab_register
     - reghist:ab_register
     - sound:bob
-    - trigger:trigger
     - register:wf_name_live
     - process:proc_live_warframe_name
-    - gate:gate_ab1
-    - trigger:trigger_ab1
-    - trigger:trigger_ab2
-    - trigger:trigger_ab3
-    - trigger:trigger_ab4
-    - gate:gate_ab2
-    - gate:gate_ab3
-    - gate:gate_ab4
-    - gate:gate_ab2_not
-    - gate:gate_ab3_not
-    - gate:gate_ab4_not
-    - gate:gate_ab1_not
     outline:
       color: '#5aa9e6'
       style: none
@@ -8227,6 +8365,36 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: blue
+  - id: group_73
+    title: group_73
+    members:
+    - trigger:trigger_ab1
+    - trigger:trigger_ab2
+    - trigger:trigger_ab3
+    - trigger:trigger_ab4
+    - gate:gate_ab1
+    - gate:gate_ab2
+    - gate:gate_ab3
+    - gate:gate_ab4
+    - gate:gate_ab2_not
+    - gate:gate_ab3_not
+    - gate:gate_ab4_not
+    - gate:gate_ab1_not
+    - gate:gate_ab2_nb
+    - gate:gate_ab2_nb-copy
+    - gate:gate_ab2_nb-copy2
+    - gate:gate_ab2_nb-copy2-copy
+    outline:
+      color: '#e69a5a'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#271f1b'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
+    titleAlign: left
+    titlePos: tl
+    schemeId: orange
   float_windows: {}
   super_groups:
   - id: sgroup_2
@@ -8328,6 +8496,7 @@ layout:
     members:
     - group_28
     - group_72
+    - group_73
     outline:
       color: '#8a91a0'
       style: none
@@ -8470,3 +8639,8 @@ layout:
     width: 2
     offset: 0
     shadow: null
+testing:
+  loop_ms: 300
+  garble: true
+  garble_pct: 25
+  include_datasets: false
