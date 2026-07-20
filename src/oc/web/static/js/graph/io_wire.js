@@ -228,10 +228,7 @@ function wireTrigger(div, n) {
     // on_register: watched registers (chips + edges). The fire test now lives on the wired gate(s).
     div.querySelector(".tg-addregwatch")?.addEventListener("change", (e) => { if (model.addTriggerRegisterWatch(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".tg-rmregwatch", (val) => { model.removeTriggerRegisterWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
-    // gates: value guards this trigger must all satisfy (chips + edges). Adding/removing changes the
-    // edge to the gate node too -> rebuildNodeEdges.
-    div.querySelector(".tg-addgate")?.addEventListener("change", (e) => { if (model.addTriggerGate(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
-    wireArmedRemove(div, ".tg-rmgate", (val) => { model.removeTriggerGate(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
+    // gates have no trigger-side row: the gate node owns that editor (its picker / out-port drag).
     div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".tg-rmwatch", (val) => { model.removeTriggerWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
     wireArmedRemove(div, ".tg-rmtarget", (val) => { model.removeTriggerTarget(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
@@ -267,12 +264,13 @@ function wireGate(div, n) {
     // source: a single readout / register slot. Adding replaces; the chip trash clears it.
     $(".gate-addsource")?.addEventListener("change", (e) => { model.setGateSource(g.id, e.target.value); rebuildNodeEdges(n.id); autosave(null); });
     wireArmedRemove(div, ".gate-rmsource", () => { model.setGateSource(g.id, ""); rebuildNodeEdges(n.id); autosave(null); });
-    // destination: the trigger(s) this gate applies to — the trigger owns the ref, so a full render
-    // refreshes both this node and the trigger's own "gates" row.
+    // destination: the trigger(s) this gate applies to — this is the ONLY editor for that link (the
+    // trigger has no gates row). The trigger still owns the ref, so render() to redraw the
+    // gate->trigger edges and refresh the trigger's gated cue.
     $(".gate-adddest")?.addEventListener("change", (e) => { if (model.addTriggerGate(e.target.value, g.id)) { render(); autosave(null); } });
     // rebuildNode(n.id) FIRST: the armed trash button is the focused element and lives in THIS node,
     // so render()'s consumer sweep (rebuildRefConsumers) would skip rebuilding the gate body and the
-    // removed chip would linger. Rebuild our own body directly, then render() for the trigger side.
+    // removed chip would linger. Rebuild our own body directly, then render() to drop the edge.
     wireArmedRemove(div, ".gate-rmdest", (tid) => { model.removeTriggerGate(tid, g.id); rebuildNode(n.id); render(); autosave(null); });
     // and/or slider — rebuild so its label re-renders (and it shows/hides at the >1-condition threshold).
     $(".gate-logic")?.addEventListener("change", (e) => { model.setGateLogic(g.id, e.target.checked ? "and" : "or"); rebuildNode(n.id); autosave(null); });

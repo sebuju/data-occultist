@@ -21,9 +21,11 @@ const KINDS = [["interval", "interval"], ["true_interval", "true interval"], ["o
     ["on_live_start", "on live start"], ["on_live_stop", "on live stop"],
     ["on_readout", "on readout"], ["on_register", "on register"], ["on_ready", "on ready"], ["manual", "manual only"]];
 
-// The fire condition (was inline op/value / per-key rows) now lives on wired GATE node(s): a
-// trigger lists gates it must all satisfy. The on_readout/on_register kinds keep only the WATCH
-// picker (which value(s) to wake on); the gate does the comparison. See gate_node.js / GateDef.
+// The fire condition (was inline op/value / per-key rows) now lives on wired GATE node(s): the
+// trigger fires only when every gate wired to it passes. That wiring is owned by the GATE end —
+// its own picker or a drag from its out-port — so the trigger has no gates row of its own (one
+// editor per relationship, like every other target). The on_readout/on_register kinds keep only
+// the WATCH picker (which value(s) to wake on); the gate does the comparison. See gate_node.js.
 
 export function triggerParts(t, model) {
     const kind = KINDS.some(([v]) => v === t.kind) ? t.kind : "interval";
@@ -96,14 +98,6 @@ export function triggerParts(t, model) {
                 addLabel: "+ watch register", addinCls: "sv-addin tg-addregwatch", rmCls: "sv-rmin tg-rmregwatch" }));
     }
 
-    // gates: value guards that must ALL hold for this trigger to fire (any kind). Each tests one
-    // live value (readout / register slot) — the comparison lives on the gate node.
-    const gates = srcRow("gates", "value conditions that must all hold for this trigger to fire",
-        sourcesInput({
-            chips: (t.gates || []).map((g) => ({ value: g, node: model.refNode(g) })),
-            free: model.gates().filter((g) => !(t.gates || []).includes(g)),
-            addLabel: "+ gate", addinCls: "sv-addin tg-addgate", rmCls: "sv-rmin tg-rmgate" }));
-
     // throttle: minimum ms between actual fires (blank = none) — a global rate limit across all kinds.
     const throttle = frag(
         labCell("throttle", "minimum time between fires (blank = none)"),
@@ -134,7 +128,7 @@ export function triggerParts(t, model) {
                 targets,
                 labCell("kind", "how the trigger decides to fire"),
                 h("select", { class: "tg-kind" }, KINDS.map(kopt)),
-                interval, watch, varwatch, regwatch, gates, throttle, settle,
+                interval, watch, varwatch, regwatch, throttle, settle,
                 labCell("progress", "what the trigger is doing (live countdown for timed kinds)"),
                 h("span", { class: "tg-prog muted" }, "idle"))),
         foot: h("button", { class: "tg-fire" }, "↻ fire"),
