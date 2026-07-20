@@ -51,7 +51,7 @@ export function busRouteGraph(nodes, edges, opts = {}) {
     // only cares that two wires are distinguishable at all, the rendered canvas needs them readably
     // apart (scripts/route_metrics.mjs calls < 9px ambiguous). tightGap tracks minSep, or a bottleneck
     // corridor packs lanes closer than a lane may legally sit anyway.
-    const cfg = { margin: 9, laneGap: 12, minLen: 280, hopCost: 120, facePad: 6, minSep: 10, tightGap: 10, ...bus };
+    const cfg = { margin: 9, laneGap: 12, minLen: 280, hopCost: 120, facePad: 6, minSep: 10, tightGap: 10, faceBias: 200, ...bus };
 
     const nodeRects = {};
     for (const n of nodes) nodeRects[n.id] = { x: n.x, y: n.y, w: n.w, h: n.h };

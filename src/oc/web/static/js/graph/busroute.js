@@ -20,6 +20,7 @@
 // routing.js's contract (see ROUTE.router in routing.js).
 
 import { simplify } from "./route.js";
+import { faceKeep, FACE_OUT } from "./faces.js";
 import { makeHeap } from "./minheap.js";
 
 const EPS = 0.6;
@@ -41,20 +42,27 @@ function anyNodeIn(nodeRects, x0, y0, x1, y1) {
 
 // Two nodes FACE each other only when their spans overlap on one axis AND the gap between the facing
 // faces is CLEAR of any node (line of sight). Returns { axis, bandLo, bandHi, p0, p1, d1, d2 }: the
-// connector runs along `axis`, its port sits anywhere in the overlap band [bandLo,bandHi], it spans
+// connector runs along `axis`, its port sits anywhere in [bandLo,bandHi] — the overlap band inset at
+// both ends so the port can't land on a rounded corner (see `band` below) — it spans
 // p0..p1 on the other axis, and d1/d2 are the faces it leaves/arrives on. Null if they don't face
 // (then the line is bus-routed). Mirrors route.js `facingLine`.
 function facingGeom(a, b, nodeRects) {
     const ax1 = a.x + a.w, ay1 = a.y + a.h, bx1 = b.x + b.w, by1 = b.y + b.h;
+    // The overlap band's bounds ARE node edges, and the same coord lands on BOTH nodes — so a lane
+    // reserved at an extreme attaches inside a rounded corner (and on the narrower node it can be a
+    // corner while still mid-face on the wider one). Pull both ends in by the shared face keep, which
+    // carries the short-face guard so a narrow overlap can't invert. The line-of-sight test below
+    // stays on the RAW band: what the port may not do is not what the gap must be clear of.
+    const band = (lo, hi) => { const k = faceKeep(hi - lo); return { bandLo: lo + k, bandHi: hi - k }; };
     if (a.y < by1 && b.y < ay1) {                            // y overlap -> horizontal shot (band in Y)
         const yo0 = Math.max(a.y, b.y), yo1 = Math.min(ay1, by1);
-        if (ax1 <= b.x && !anyNodeIn(nodeRects, ax1, yo0, b.x, yo1)) return { axis: "h", bandLo: yo0, bandHi: yo1, p0: ax1, p1: b.x, d1: "R", d2: "L" };
-        if (bx1 <= a.x && !anyNodeIn(nodeRects, bx1, yo0, a.x, yo1)) return { axis: "h", bandLo: yo0, bandHi: yo1, p0: a.x, p1: bx1, d1: "L", d2: "R" };
+        if (ax1 <= b.x && !anyNodeIn(nodeRects, ax1, yo0, b.x, yo1)) return { axis: "h", ...band(yo0, yo1), p0: ax1, p1: b.x, d1: "R", d2: "L" };
+        if (bx1 <= a.x && !anyNodeIn(nodeRects, bx1, yo0, a.x, yo1)) return { axis: "h", ...band(yo0, yo1), p0: a.x, p1: bx1, d1: "L", d2: "R" };
     }
     if (a.x < bx1 && b.x < ax1) {                            // x overlap -> vertical shot (band in X)
         const xo0 = Math.max(a.x, b.x), xo1 = Math.min(ax1, bx1);
-        if (ay1 <= b.y && !anyNodeIn(nodeRects, xo0, ay1, xo1, b.y)) return { axis: "v", bandLo: xo0, bandHi: xo1, p0: ay1, p1: b.y, d1: "B", d2: "T" };
-        if (by1 <= a.y && !anyNodeIn(nodeRects, xo0, by1, xo1, a.y)) return { axis: "v", bandLo: xo0, bandHi: xo1, p0: a.y, p1: by1, d1: "T", d2: "B" };
+        if (ay1 <= b.y && !anyNodeIn(nodeRects, xo0, ay1, xo1, b.y)) return { axis: "v", ...band(xo0, xo1), p0: ay1, p1: b.y, d1: "B", d2: "T" };
+        if (by1 <= a.y && !anyNodeIn(nodeRects, xo0, by1, xo1, a.y)) return { axis: "v", ...band(xo0, xo1), p0: a.y, p1: by1, d1: "T", d2: "B" };
     }
     return null;
 }
@@ -477,7 +485,7 @@ function buildRoute1(r) {
 function resolveNode(aId, lines, lanes, net, grid, committed, reachCache, index, nodeRects, opts) {
     const a = lines[0].a;
     const acx = a.x + a.w / 2, acy = a.y + a.h / 2;
-    const { laneGap, facePad, hopCost, minSep } = opts;
+    const { laneGap, facePad, hopCost, minSep, faceBias } = opts;
     const reachSrc = reachAll(reachCache, aId, a, lanes, index);   // cached: source can approach corridor?
     const excl = new Map();                                  // line.key -> Set(start corridor idx) rejected
     for (const l of lines) excl.set(l.key, new Set());
@@ -506,19 +514,25 @@ function resolveNode(aId, lines, lanes, net, grid, committed, reachCache, index,
             if (dropped.has(l.key)) continue;
             const ex = excl.get(l.key), avoid = block.get(l.key), goal = goalOf.get(l.key);
 
-            // pick the start bus: nearest reachable non-excluded non-avoided corridor. Break near-ties
-            // toward the target's dominant direction.
-            const dom = Math.abs(l.b.x + l.b.w / 2 - acx) >= Math.abs(l.b.y + l.b.h / 2 - acy) ? "h" : "v";
+            // pick the start bus by lowest COST = distance to the corridor + a face-direction charge:
+            // boarding a corridor off the face pointing AWAY from the target costs up to `faceBias` px,
+            // 0 when that face points straight at it. Without this the router boards the merely-nearest
+            // corridor and a line leaves the wrong side (e.g. the TOP face when its target sits below).
+            // Mirrors route.js's faceBias; the bus router had no target-direction term at all. Near-ties
+            // on the combined cost still break toward the target's dominant axis.
+            const tdx = (l.b.x + l.b.w / 2) - acx, tdy = (l.b.y + l.b.h / 2) - acy, tL = Math.hypot(tdx, tdy) || 1;
+            const faceAway = (face) => { const n = FACE_OUT[face]; return (faceBias || 0) * (1 - (n[0] * tdx + n[1] * tdy) / tL) / 2; };
+            const dom = Math.abs(tdx) >= Math.abs(tdy) ? "h" : "v";
             let start = null, bd = Infinity;
             for (const c of lanes) {
                 if (ex.has(c.idx) || avoid.has(c.idx)) continue;
                 if (!reachSrc[c.idx]) continue;
                 if (l.pin && sideOf(c, acx, acy) !== l.pin) continue;   // pinned port: board only from that face
-                const d = distToRect(acx, acy, c);
-                if (!start || d < bd - TIE) { start = c; bd = d; continue; }   // clearly nearer
-                if (d > bd + TIE) continue;                                    // clearly farther
+                const score = distToRect(acx, acy, c) + faceAway(sideOf(c, acx, acy));
+                if (!start || score < bd - TIE) { start = c; bd = score; continue; }   // clearly cheaper
+                if (score > bd + TIE) continue;                                        // clearly costlier
                 const mc = c.axis === dom ? 1 : 0, ms = start.axis === dom ? 1 : 0;
-                if (mc > ms) { start = c; bd = d; }                            // points toward target
+                if (mc > ms) { start = c; bd = score; }                                // points toward target
             }
             if (!start) { dropped.add(l.key); continue; }     // no start bus left -> unrouted
 
@@ -647,7 +661,7 @@ function resolveNode(aId, lines, lanes, net, grid, committed, reachCache, index,
  *          ._stats = {facing,routed,unrouted}; ._unrouted = [{key, at}] (no-bus-route offenders)
  */
 export function busRoute(links, nodeRects, corridors, opts = {}) {
-    const cfg = { laneGap: 12, facePad: 6, hopCost: 120, minSep: MIN_SEP, ...opts };
+    const cfg = { laneGap: 12, facePad: 6, hopCost: 120, minSep: MIN_SEP, faceBias: 200, ...opts };
     // hopCost MUST stay > 0. BFS could never repeat a corridor (its visited gate); a distance search
     // can, and a repeated corridor would double-reserve a lane and break buildRoute1's corner walk.
     // With a strictly positive turn penalty no optimal path revisits one: re-entering a corridor is

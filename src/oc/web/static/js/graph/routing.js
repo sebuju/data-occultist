@@ -12,6 +12,7 @@ import { hierRoute } from "./hierRoute.js";
 import { deCollide } from "./decollide.js";
 import { busRouteGraph } from "./busgraph.js";
 import { gradeRoutes } from "./followable.js";
+import { faceKeep } from "./faces.js";
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot, urlFlag } from "./state.js";
 import { selectedNodeId, wire, startWire, canDisable, nodeTypeOf } from "./main.js";
 import { setEdges, invalidateEdges, setCorridors } from "./edgecanvas.js";
@@ -133,8 +134,9 @@ function computeTriggerSides(links) {
     }
     for (const [id, v] of votes) {
         const fires = v.fires.l > v.fires.r ? "L" : "R";                  // no fire targets -> default R
-        const hasWatch = v.watch.l + v.watch.r > 0;
-        triggerSides.set(id, { fires, watch: hasWatch ? flip(fires) : "L" });   // watch opposite fires (else default L)
+        // watch is ALWAYS opposite fires, wired or not: an idle watch handle that defaulted to L would
+        // sit under a left-facing fires port. Default fires R keeps the historical watch-on-L home.
+        triggerSides.set(id, { fires, watch: flip(fires) });
     }
 }
 // The face a port line leaves: a data source uses the negotiated shared side; a trigger's fires /
@@ -182,7 +184,6 @@ function buildLinks() {
 // one GAP apart instead of all stacking on the side's midpoint.
 const GAP = () => ROUTE.cell * 2;   // preferred spacing: fanned endpoints AND parallel bundles (a line can still squeeze to 1 cell between two)
 const MIN_PORT_GAP = 11;   // hard floor between adjacent fanned port dots (dot is 8px) — never let them overlap
-const PORT_END_KEEP = 18;  // keep a fanned port off the rounded corner (> corner radius 14); mirrors route.js
 // both node ids belong to the same (non-null) group
 function sameGroup(aId, bId) { const g = groups.groupOf(aId); return !!g && g === groups.groupOf(bId); }
 function computePorts(links) {
@@ -193,9 +194,9 @@ function computePorts(links) {
         // faces (and the routed result's ports override these in drawEdges/runRouting).
         const f = facingSides(l.ra, l.rb);
         l.p1 = f.p1; l.d1 = f.d1; l.p2 = f.p2; l.d2 = f.d2;
-        // port lines leave a pinned face (the port dot); pin the pre-route default to match what the
-        // router will pick (route.js pinSrc) so the elbow doesn't flip. `watch` leaves the LEFT
-        // `.port.pwatch`; every other port line leaves the RIGHT `.port.out`.
+        // Provisional only: seat the elbow on the port's own face so a brand-new line leaves the dot
+        // it belongs to. Unpinned lines (data out, watch) may then be routed onto any face and the
+        // dot follows — same as it has always worked for data out-lines.
         if (l.port) {
             if (sideForPort(l) === "L") { l.d1 = "L"; l.p1 = [l.ra.x, l.ra.y + l.ra.h / 2]; }
             else { l.d1 = "R"; l.p1 = [l.ra.x + l.ra.w, l.ra.y + l.ra.h / 2]; }
@@ -241,7 +242,7 @@ function computePorts(links) {
             const rect = it.end === "a" ? it.l.ra : it.l.rb;
             const lo = it.horiz ? rect.y : rect.x, span = it.horiz ? rect.h : rect.w;
             // keep the fan off the rounded corners; shrink the inset on a short face so it never inverts.
-            const keep = Math.min(PORT_END_KEEP, Math.max(0, (span - MIN_PORT_GAP) / 2));
+            const keep = faceKeep(span);
             // preferred = one GAP apart, kept inside the corner keep-out; but never below the no-overlap
             // floor — when the edge can't hold N dots at GAP, fall back to MIN_PORT_GAP (overflowing
             // the edge only if even that won't fit) instead of squeezing them on top of each other.
@@ -335,12 +336,14 @@ function placePortDots(links) {
         if (!l.port) continue;
         push(l.portKind === "watch" ? srcWatch : srcOut, l.aId, l);   // leaving end -> source family
     }
-    // a data source's idle out-dot sits on the negotiated face (left only when `outSide` flipped);
-    // triggers keep the CSS default (right fires-port, left watch-port).
+    // a data source's idle out-dot sits on the negotiated face (left only when `outSide` flipped); a
+    // trigger's idle watch handle sits opposite its fires port (CSS home is left, so it only needs a
+    // style when fires went L). A WIRED dot ignores all of this — styleDot puts it on the routed face.
     for (const [id, node] of nodeEls) {
         const outIdle = (outSide === "L" && PORT_OUT_SRC.some((p) => id.startsWith(p))) ? "left:-4px;right:auto" : "";
+        const watchIdle = triggerSides.get(id)?.watch === "R" ? "right:-4px;left:auto" : "";
         placeSrcDots(node, srcOut.get(id), ".port.out:not(.port-extra)", ".port.out.port-extra", "port-extra", node._outSpec, outIdle);
-        placeSrcDots(node, srcWatch.get(id), ".port.pwatch:not(.pw-extra)", ".port.pwatch.pw-extra", "pw-extra", node._watchSpec);
+        placeSrcDots(node, srcWatch.get(id), ".port.pwatch:not(.pw-extra)", ".port.pwatch.pw-extra", "pw-extra", node._watchSpec, watchIdle);
     }
 }
 
@@ -636,6 +639,8 @@ const ROUTE = {
         laneGap: 12,    // per-lane spacing inside a corridor
         minLen: 280,    // drop corridors shorter than this — a stub channel is not a bus
         hopCost: 120,   // cost of one 90-degree turn onto the next bus, in px of ride distance
+        faceBias: 200,  // px charged for boarding off the face pointing AWAY from the target (0 straight
+                        // at it); stops a line leaving the wrong side when a nearer corridor sits behind it
     },
     hier: false,        // FLAT one global pass (routeGraph + a single deCollide) is the default — it routes
                         // the whole graph together, far cleaner than the per-group GATE funnelling. Set
@@ -849,13 +854,16 @@ function runRouting() {
     // router's member-bounds guess) so the heading soft/hard rect lands exactly on the banner.
     const boxOf = new Map(groups.groupBoxes().map((b) => [b.id, b]));
     const grps = groups.allGroups().map((g) => { const b = boxOf.get(g.id); return { members: [...g.members], box: b ? b.box : null, bandH: b ? b.bandH : 0 }; });
-    // a DATA out-line leaves no pinned face: A* picks whichever of the 4 faces routes cleanest
-    // (the port dot follows the chosen face). Watch/trigger control lines KEEP their semantic pin
-    // (watch=L; fires=the side facing its targets) so the line leaves the port it belongs to; two
-    // that share a face just fan apart. `port` still flags every port line so the router fans +
-    // centres its endpoint on whatever face it lands on.
-    const dataOut = (l) => l.portKind === "out" && PORT_OUT_SRC.some((p) => l.aId.startsWith(p));
-    const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, port: l.port, pinSrc: (l.port && !dataOut(l)) ? sideForPort(l) : null, tether: TETHER_KINDS.some((k) => l.cls.split(" ").includes(k)),
+    // A DATA out-line and a WATCH line both leave UNPINNED: the router picks whichever of the 4 faces
+    // routes cleanest and the port dot follows it. Watch lines used to pin to their semantic face
+    // (L, the flip of the fires side), which bought nothing — pinned lines already share lanes like
+    // any other — while costing them the straight-shot fast path even with clear line of sight, and
+    // ruling out most of the corridor network at boarding (busroute `sideOf`), so they routed visibly
+    // unlike everything else and dropped to `no-bus-route` more often. Only the trigger FIRES line
+    // stays pinned. `port` still flags every port line so the router fans + centres its endpoint on
+    // whatever face it lands on.
+    const unpinned = (l) => l.portKind === "watch" || (l.portKind === "out" && PORT_OUT_SRC.some((p) => l.aId.startsWith(p)));
+    const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, port: l.port, pinSrc: (l.port && !unpinned(l)) ? sideForPort(l) : null, tether: TETHER_KINDS.some((k) => l.cls.split(" ").includes(k)),
         // watch ends in a diamond sunk slightly into the watched node; trigger ends in a hollow ring
         // pulled back by its radius (3px) so the ring centres ON the fired node's edge. The data-flow
         // arrow needs NO inset: its marker is centred (refX=5) so it already straddles the edge, and

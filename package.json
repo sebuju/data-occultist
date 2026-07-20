@@ -6,6 +6,7 @@
     "test:e2e": "node tests/e2e/route-no-through-nodes.mjs",
     "test:e2e:node-txn": "node tests/e2e/node-txn.mjs",
     "test:model": "node tests/e2e/model-refsites.mjs",
+    "test:corners": "node tests/e2e/straight-shot-corners.mjs",
     "test:action-targets": "node tests/e2e/action-targets.mjs",
     "test:feed-targets": "node tests/e2e/feed-targets.mjs",
     "test:feed-values": "node tests/e2e/feed-values.mjs"

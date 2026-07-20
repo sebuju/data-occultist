@@ -16,12 +16,11 @@
 // is genuinely cheaper (a small stickiness bias), so a tiny node move can't flip a route's whole
 // shape across a cost-equality threshold.
 
-import { FACE_OUT, insetEndpoint } from "./faces.js";
+import { FACE_OUT, insetEndpoint, faceKeep, PORT_MIN } from "./faces.js";
 
 const C = {
     clearance: 22,   // routing margin around each node => gutter width for waypoints
     bendCost: 70,    // penalty per 90-degree bend (vs 1 unit of length)
-    groupCross: 240, // soft penalty per group box a segment passes through (not its own)
     headCross: 1e6,  // soft penalty per group TITLE band crossed — so heavy that ANY detour, however
                                       // long, beats crossing; a band is crossed only when a node is truly
                                       // boxed in (no path exists) and nothing else can route it
@@ -42,9 +41,6 @@ const C = {
                                       // straight at the target. Competes with length+bends, so a genuinely
                                       // blocked near face still yields, but a clear wrong-way face loses.
 };
-const PORT_MIN = 12;     // hard floor between fanned out-port dots on one face (dot is 8px) — no overlap
-const PORT_END_KEEP = 18;// min distance a fanned endpoint stays off a node corner (> corner radius 14) so
-                         // the rounded bend can't swallow the stub; guarded on short faces (see kClamp)
 
 const center = (r) => [r.x + r.w / 2, r.y + r.h / 2];
 const DC = { N: 0, S: 1, E: 2, W: 3 };
@@ -84,7 +80,6 @@ function internG(n, table) {
     if (!g) { g = { n, ids: SCR.slice(0, n), sum: -1 }; table.set(key, g); }
     return g;
 }
-const gHas = (g, v) => { const ids = g.ids; for (let i = 0; i < g.n; i++) if (ids[i] === v) return true; return false; };
 
 // ---- band index over a rect set ---------------------------------------------
 // segHitsHard/softList used to scan EVERY rect on EVERY candidate segment. edgeOpts emits up to 3
@@ -222,7 +217,7 @@ function makeAStar(WP, baseAdj, baseN, cap) {
     };
     // `d` is the entry direction as its DC index, 4 = none (start). Kept numeric end to end so the
     // hot loop never touches the "N"/"S"/"E"/"W" strings; edges carry DC-coded d1/d2 as e.i1/e.i2.
-    return function search(overOf, start, goal, ownGroups, softCost, occCost) {
+    return function search(overOf, start, goal, softCost, occCost) {
         gen++; hlen = 0;
         const gx = WP[goal][0], gy = WP[goal][1];
         const h = (i) => Math.abs(WP[i][0] - gx) + Math.abs(WP[i][1] - gy);
@@ -231,11 +226,6 @@ function makeAStar(WP, baseAdj, baseN, cap) {
             let k = hlen++; hf[k] = f; hg[k] = g; hn[k] = n; hd[k] = d;
             while (k) { const p = (k - 1) >> 1; if (hf[p] <= hf[k]) break; swap(p, k); k = p; }
         };
-        // own-group exemption: at most two groups (source's and dest's), so subtract their share from
-        // a per-edge cached total instead of walking the whole gset on every expansion. softCost values
-        // are integers, so the subtraction is exact — no float drift that could flip a `<` comparison.
-        let own0 = -1, own1 = -1;
-        for (const g of ownGroups) { if (own0 < 0) own0 = g; else own1 = g; }
         const s0 = start * 5 + 4;
         dist[s0] = 0; seen[s0] = gen; prevId[s0] = -1;
         push(h(start), 0, start, 4);
@@ -273,8 +263,6 @@ function makeAStar(WP, baseAdj, baseN, cap) {
                         let t = gs.sum;
                         if (t < 0) { t = 0; for (let z = 0; z < gs.n; z++) t += softCost[gs.ids[z]]; gs.sum = t; }
                         pen = t;
-                        if (own0 >= 0 && gHas(gs, own0)) pen -= softCost[own0];
-                        if (own1 >= 0 && gHas(gs, own1)) pen -= softCost[own1];
                     }
                     if (occCost) pen += occCost(n, e);   // congestion: steer AWAY from corridors earlier lines packed
                     const ng = lb + pen;
@@ -329,36 +317,34 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const rects = nodes.map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h, id: n.id }));
     const m = C.clearance, PADG = 18;
-    // soft[] holds avoid-with-penalty rects: one per group box, plus (when C.headBand>0) one per
-    // group TITLE band — the top strip of its box — so wires stray off the heading. A group's OWN
-    // lines are exempt from the BOX (own-group set below) but NOT from the heading: every line,
-    // internal or foreign, pays headCross to cross any title band, so headings stay clear.
+    // soft[] holds avoid-with-penalty rects: one per group TITLE band (the top strip of a group's box)
+    // so wires stray off the heading. Group BODIES carry no penalty — a box-crossing detour bought
+    // nothing on a layout where groups are what wires must thread BETWEEN, and the corner waypoint ring
+    // it dragged along made routes bulge around boxes for no gain. Only headings are protected, and
+    // every line pays headCross to cross one — internal or foreign, no own-group exemption.
     //
     // Bands are HIGH-COST SOFT, never HARD. A member node sits BELOW its group's full-width band, so
     // hard-blocking the band would leave that node no escape: the router finds no path and drops to a
     // straight degenerate fallback (see stage 2) that ignores every obstacle and slices clean through
     // the banner. Heavy-soft instead makes the router detour around the heading whenever a path exists
     // and cross it (cleanly routed, not a degenerate cut) only when a node is genuinely boxed in.
-    const soft = [], softCost = [], groupOfNode = new Map();   // softCost[i] = penalty to cross soft[i]
+    const soft = [], softCost = [];   // softCost[i] = penalty to cross soft[i]
     const bands = [];   // title-band rects {x,y,w,h} — passed to nudge as alley walls so the lane shift
                         // can't push a wire (that A* routed AROUND a heading) back ACROSS it
     for (const grp of (groups || [])) {
         // Geometry: prefer the caller's REAL rendered box + title-band height (grp.box/grp.bandH);
         // the title banner occupies the top `bandH` of that box. Fall back to member bounds ± PADG
         // (standalone/test callers without box info) — there the band height is the C.headBand guess.
-        let bx0, by0, bx1, by1, band;
+        let bx0, by0, bx1, band;
         if (grp.box) {
-            bx0 = grp.box.x; by0 = grp.box.y; bx1 = grp.box.x + grp.box.w; by1 = grp.box.y + grp.box.h;
+            bx0 = grp.box.x; by0 = grp.box.y; bx1 = grp.box.x + grp.box.w;
             band = grp.bandH || 0;
         } else {
-            let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, any = false;
-            for (const id of grp.members) { const nd = byId.get(id); if (!nd) continue; any = true; x0 = Math.min(x0, nd.x); y0 = Math.min(y0, nd.y); x1 = Math.max(x1, nd.x + nd.w); y1 = Math.max(y1, nd.y + nd.h); }
+            let x0 = 1e9, y0 = 1e9, x1 = -1e9, any = false;
+            for (const id of grp.members) { const nd = byId.get(id); if (!nd) continue; any = true; x0 = Math.min(x0, nd.x); y0 = Math.min(y0, nd.y); x1 = Math.max(x1, nd.x + nd.w); }
             if (!any) continue;
-            bx0 = x0 - PADG; by0 = y0 - PADG; bx1 = x1 + PADG; by1 = y1 + PADG; band = C.headBand;
+            bx0 = x0 - PADG; by0 = y0 - PADG; bx1 = x1 + PADG; band = C.headBand;
         }
-        const gi = soft.length;
-        for (const id of grp.members) if (byId.has(id)) groupOfNode.set(id, gi);
-        soft.push({ x0: bx0, y0: by0, x1: bx1, y1: by1 }); softCost.push(C.groupCross);
         if (C.headBand > 0 && band > 0) { soft.push({ x0: bx0, y0: by0, x1: bx1, y1: by0 + band }); softCost.push(C.headCross); bands.push({ x: bx0, y: by0, w: bx1 - bx0, h: band }); }
     }
     // extra title bands the caller computed itself (subgroup TOP bands, super-group BOTTOM label
@@ -372,7 +358,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     for (let i = 0; i < rects.length; i++) { const r = rects[i]; rx0[i] = r.x; ry0[i] = r.y; rx1[i] = r.x + r.w; ry1[i] = r.y + r.h; }
     const HB = { n: RN, x0: rx0, y0: ry0, x1: rx1, y1: ry1, grid: buildRectGrid(rx0, ry0, rx1, ry1, RN) };
 
-    // stage 1: base waypoints = inflated node corners + group box corners; 1-bend adjacency
+    // stage 1: base waypoints = inflated node corners + title-band corners; 1-bend adjacency
     const WP = [];
     for (const r of rects) { WP.push([r.x - m, r.y - m], [r.x + r.w + m, r.y - m], [r.x - m, r.y + r.h + m], [r.x + r.w + m, r.y + r.h + m]); }
     for (const g of soft) { WP.push([g.x0 - m, g.y0 - m], [g.x1 + m, g.y0 - m], [g.x0 - m, g.y1 + m], [g.x1 + m, g.y1 + m]); }
@@ -380,7 +366,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     // own inflated corners already exist): a thin ring past each node so a segment skimming a node wall
     // pays a tiny cost and prefers a hair of clearance, letting bundles sit off the walls. Bodies stay HARD.
     if (C.haloCost > 0) for (const r of rects) { soft.push({ x0: r.x - C.nodeHalo, y0: r.y - C.nodeHalo, x1: r.x + r.w + C.nodeHalo, y1: r.y + r.h + C.nodeHalo }); softCost.push(C.haloCost); }
-    // expose the soft-penalty rects (group boxes, title bands, node halos) for the lab overlay
+    // expose the soft-penalty rects (title bands, node halos) for the lab overlay
     if (opts.softOut) for (let i = 0; i < soft.length; i++) opts.softOut.push({ x: soft[i].x0, y: soft[i].y0, w: soft[i].x1 - soft[i].x0, h: soft[i].y1 - soft[i].y0, cost: softCost[i] });
     // index the soft rects too — built LAST, after the halo push, so it covers the final set. Hung on
     // the array itself so every softList/edgeOpts call site picks it up without threading an argument.
@@ -520,7 +506,6 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
         if (ln.toGate) { const idx = WP.length; WP.push(ln.toGate.pt.slice()); dstEntries.push({ idx, pt: ln.toGate.pt, dir: ln.toGate.dir, face: ln.toGate.face }); }
         else { const pp = portPos.get(ln.to), pe = portEdges.get(ln.to); for (const f of FACES) { const idx = WP.length; WP.push(pp[f].slice()); dstEntries.push({ idx, pt: pp[f], dir: inDirOf(f), face: f, pe: pe[f] }); } }
         const D0 = WP.length; WP.push(anchor(ln.to, ln.toGate).slice());
-        const own = new Set(); const sg = ln.fromGate ? null : groupOfNode.get(ln.from), dg = ln.toGate ? null : groupOfNode.get(ln.to); if (sg != null) own.add(sg); if (dg != null) own.add(dg);
         ovg++;   // recycle the overlay buckets (see above) — everything stamped below is this line's
         // directional face bias: charge each face by how much its outward normal points AWAY from the
         // other endpoint (0 = straight at it, C.faceBias = straight away), so A* prefers the face facing
@@ -541,7 +526,7 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
         }
         // direct entry -> entry (short lines that never touch the base graph)
         for (const se of srcEntries) for (const de of dstEntries) for (const e of edgeOpts(se.pt[0], se.pt[1], de.pt[0], de.pt[1], HB, soft, se.dir)) if (e.d2 === de.dir) add(se.idx, { to: de.idx, d1: e.d1, d2: e.d2, i1: e.i1, i2: e.i2, corner: e.corner, len: e.len, gset: e.gset });
-        const chain = search(overOf, S0, D0, own, softCost, ln._facing ? null : occCost);
+        const chain = search(overOf, S0, D0, softCost, ln._facing ? null : occCost);
         if (chain && chain.length >= 3) {
             ln.srcSide = (srcEntries.find((se) => se.idx === chain[1].node) || srcEntries[0]).face;
             ln.dstSide = (dstEntries.find((de) => de.idx === chain[chain.length - 2].node) || dstEntries[0]).face;
@@ -942,7 +927,7 @@ function fanFaceEnds(lines, byId, outPorts) {
         arr.sort((a, b) => (horiz ? a.other[1] - b.other[1] : a.other[0] - b.other[0]));
         const n = arr.length;
         // keep endpoints off the rounded corners; shrink the inset on a short face so the band never inverts.
-        const keep = Math.min(PORT_END_KEEP, Math.max(0, (span - PORT_MIN) / 2));
+        const keep = faceKeep(span);
         const clamp = (c) => Math.max(lo + keep, Math.min(lo + span - keep, c));
         // a node with an idle out-port on THIS face parks a (non-endpoint) dot at the centre — keep lines
         // off it. A real PORT line leaving the face owns the dot (its own start); a structural src does not.
@@ -986,9 +971,8 @@ function clampEnds(pts, nd, side, last) {
     if (!nd || pts.length < 2) return;
     const i = last ? pts.length - 1 : 0, j = last ? pts.length - 2 : 1;
     // keep the endpoint off the rounded corners; shrink the inset on a short face so it never inverts.
-    const keepFor = (span) => Math.min(PORT_END_KEEP, Math.max(0, (span - PORT_MIN) / 2));
-    if (side === "T" || side === "B") { const M = keepFor(nd.w), x = Math.max(nd.x + M, Math.min(nd.x + nd.w - M, pts[i][0])); if (pts[j] && Math.abs(pts[j][0] - pts[i][0]) < 0.5) pts[j] = [x, pts[j][1]]; pts[i] = [x, pts[i][1]]; }
-    else { const M = keepFor(nd.h), y = Math.max(nd.y + M, Math.min(nd.y + nd.h - M, pts[i][1])); if (pts[j] && Math.abs(pts[j][1] - pts[i][1]) < 0.5) pts[j] = [pts[j][0], y]; pts[i] = [pts[i][0], y]; }
+    if (side === "T" || side === "B") { const M = faceKeep(nd.w), x = Math.max(nd.x + M, Math.min(nd.x + nd.w - M, pts[i][0])); if (pts[j] && Math.abs(pts[j][0] - pts[i][0]) < 0.5) pts[j] = [x, pts[j][1]]; pts[i] = [x, pts[i][1]]; }
+    else { const M = faceKeep(nd.h), y = Math.max(nd.y + M, Math.min(nd.y + nd.h - M, pts[i][1])); if (pts[j] && Math.abs(pts[j][1] - pts[i][1]) < 0.5) pts[j] = [pts[j][0], y]; pts[i] = [pts[i][0], y]; }
 }
 
 // place a port-line endpoint at `coord` along its face (perp axis), carrying the collinear stub

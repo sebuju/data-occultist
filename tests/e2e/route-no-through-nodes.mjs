@@ -66,9 +66,26 @@ function segHitsRect(a, b, r) {
         faces[routes[key].d1] = (faces[routes[key].d1] || 0) + 1;
     }
 
+    // faceBias guard: the bus router charges a line for boarding off the face pointing AWAY from its
+    // target (busroute.js). Measure how many lines still leave a strongly-away face (normal · target
+    // dir < -0.5). A few are unavoidable (the only reachable corridor is genuinely behind the node);
+    // a spike means faceBias regressed to nearest-corridor-wins. Live: ~4 with the bias, ~52 without.
+    const FN = { L: [-1, 0], R: [1, 0], T: [0, -1], B: [0, 1] };
+    const AWAY_MAX = 20;
+    let awayFacers = 0;
+    for (const key of edgeKeys) {
+        const sp = key.indexOf(" ");
+        const ra = rects[key.slice(0, sp)], rb = rects[key.slice(sp + 1)];
+        if (!ra || !rb) continue;
+        const dx = (rb.x + rb.w / 2) - (ra.x + ra.w / 2), dy = (rb.y + rb.h / 2) - (ra.y + ra.h / 2);
+        const L = Math.hypot(dx, dy) || 1, n = FN[routes[key].d1];
+        if (n && (n[0] * dx + n[1] * dy) / L < -0.5) awayFacers++;
+    }
+
     console.log(`edges routed:        ${edgeKeys.length}`);
     console.log(`nodes:               ${Object.keys(rects).length}`);
     console.log(`data out-lines:      ${dataEdges}  faces L:${faces.L} R:${faces.R} T:${faces.T} B:${faces.B}`);
+    console.log(`away-facing starts:  ${awayFacers}  (faceBias guard, max ${AWAY_MAX})`);
     console.log(`through-node hits:   ${violations.length}`);
     for (const v of violations.slice(0, 20)) console.log(`   ✗ "${v.edge}"  cuts  "${v.through}"`);
     if (pageErrs.length) { console.log("page errors:"); pageErrs.forEach((e) => console.log("   " + e)); }
@@ -78,6 +95,7 @@ function segHitsRect(a, b, r) {
     let failed = false;
     if (pageErrs.length) { console.error("\nFAIL: page errors above"); failed = true; }
     if (violations.length) { console.error(`\nFAIL: ${violations.length} edge(s) pass through a non-endpoint node`); failed = true; }
+    if (awayFacers > AWAY_MAX) { console.error(`\nFAIL: ${awayFacers} lines leave a face pointing away from their target (> ${AWAY_MAX}) — faceBias regressed`); failed = true; }
     if (!failed) console.log("\nPASS: no edge crosses a node it doesn't connect");
     process.exit(failed ? 1 : 0);
 })();

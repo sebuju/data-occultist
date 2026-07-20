@@ -12,3 +12,12 @@ export function insetEndpoint(pts, side, by) {
     pts[i] = [pts[i][0] - v[0] * by, pts[i][1] - v[1] * by];
     return pts;
 }
+
+export const PORT_MIN = 12;      // hard floor between fanned out-port dots on one face (dot is 8px) — no overlap
+export const PORT_END_KEEP = 18; // min distance an endpoint stays off a node corner (> corner radius 14) so the
+                                 // rounded bend can't swallow the stub
+
+// How far an endpoint must stay off both ends of a face span. Shrinks on a short face so the usable
+// band never inverts (a 20px face would otherwise want 18px of keep at each end). Shared by every
+// endpoint placer — route.js fans/clamps, busroute.js straight shots — so no path is left unclamped.
+export const faceKeep = (span) => Math.min(PORT_END_KEEP, Math.max(0, (span - PORT_MIN) / 2));
