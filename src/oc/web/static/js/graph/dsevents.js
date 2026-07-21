@@ -17,11 +17,16 @@
 // gap. Subscribers must tolerate the brief reconnect window (each pairs this push with a slow
 // fallback poll).
 
+import * as api from "../api.js";
 import * as conn from "../conn.js";
 
 let game = null;
 let stream = null;
 let lastSeq = 0;            // last activity-log seq seen, so a reconnect's ?after= resumes the log
+// Stable per-PAGE id sent as ?cid= on every (re)connect, so the server can attribute a "this
+// viewer is hidden" report to this stream's activity pump (see events.py:_hidden_viewers). It
+// must survive reconnects — a fresh id per socket would orphan the last report.
+const cid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
 let retry = null;
 let downTimer = null;       // grace before declaring offline on a sustained stream failure
 const subs = new Set();
@@ -79,12 +84,27 @@ export function setGame(g) {
 
 export function stop() { close(); }
 
+// This page's stream id.
+export function clientId() { return cid; }
+
+// Tell the server whether this viewer is on screen, so its activity pump can hold the idle
+// cadence while nobody is looking (events.py:_hidden_viewers). This lives HERE, with the socket,
+// because the server forgets the report when the stream drops — and this stream drops routinely
+// (the 600s server-side window). So it must be re-sent on every open, not only when the DOM event
+// fires; a hidden tab that rolled over a window would otherwise go fast again and never be told
+// otherwise. hub.js owns only the repaint side (kick on unhide).
+function reportVisibility() {
+    api.activity.setVisible(cid, document.visibilityState !== "hidden");
+}
+if (typeof document !== "undefined") document.addEventListener("visibilitychange", reportVisibility);
+
 function open() {
     close();
     if (!game) return;
     try {
         // ?after= carries the log cursor so a reconnect's backfill skips already-shown lines.
-        stream = new EventSource(`/api/events/${encodeURIComponent(game)}?after=${lastSeq}`);
+        stream = new EventSource(
+            `/api/events/${encodeURIComponent(game)}?after=${lastSeq}&cid=${encodeURIComponent(cid)}`);
         stream.addEventListener("dataset", onMessage);
         stream.addEventListener("flow", onFlow);   // flow hops ride the SAME socket (one connection)
         stream.addEventListener("log", onLog);     // activity-log lines too — one socket for the page
@@ -104,6 +124,7 @@ function open() {
 function markOk() {
     clearTimeout(downTimer); downTimer = null;
     conn.reportReachable();
+    reportVisibility();   // fresh connection -> the server has no record of this viewer yet
 }
 
 function onError() {

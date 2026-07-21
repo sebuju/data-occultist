@@ -4,9 +4,13 @@
 // status without opening its own poll. The snapshot is now PUSHED over the page's one SSE socket
 // (`graph/dsevents.js` -> the `activity` channel), NOT polled: a `setTimeout` poll is throttled to
 // ~1/min when the tab is backgrounded, but an SSE `onmessage` handler is not — so the heartbeat
-// keeps beating (trigger-fire sounds, node/state refresh) with the tab hidden, which is the norm
-// here (the game must be foregrounded). The server paces the stream (fast while a worker runs,
-// ~2.5s idle) — see `routes/events.py`.
+// keeps beating (node/state refresh) with the tab hidden, which is the norm here (the game must
+// be foregrounded). The server paces the stream — fast while a worker runs, ~2.5s idle, and ~2.5s
+// regardless while this viewer reports itself HIDDEN (dsevents.js sends that; a beat nobody can
+// see only costs a snapshot build and a reconcile pass). See `routes/events.py`.
+//
+// Note the fast beat is no longer load-bearing for trigger-fire SOUNDS: those ride their own
+// instant `fire` channel now, so slowing a hidden viewer's beat can't make a cue late.
 //
 // This replaces the per-consumer status pollers (tasks panel, precapture indicator, kill-GPU
 // button). Latency-bound OCR loops — live detect and video stepping — stay separate by design:
@@ -40,16 +44,29 @@ function fan(snap) {
     for (const fn of subs) { try { fn(snap); } catch { /* a bad subscriber must not stall the others */ } }
 }
 
+// Coming back on screen must feel instant: the server drops a hidden viewer's beat to the idle
+// cadence (dsevents reports that — it owns the stream id), so on unhide we don't wait for the
+// resumed stream, we kick a one-off snapshot. Repaint concern only; the cadence report itself
+// lives in ONE place, dsevents.js.
+function onVisible() { if (document.visibilityState !== "hidden") kick(); }
+
 // Begin the heartbeat: subscribe to the pushed activity stream, and kick once so panels paint
 // with a fresh snapshot immediately (the stream may not be open yet, and its first push arrives
 // a beat later). Idempotent.
 export function start() {
-    if (!unsub) unsub = dsevents.subscribeActivity(fan);
+    if (!unsub) {
+        unsub = dsevents.subscribeActivity(fan);
+        document.addEventListener("visibilitychange", onVisible);
+    }
     kick();
 }
 
 // Stop the heartbeat (subscribers stay registered; start() resumes).
-export function stop() { if (unsub) { unsub(); unsub = null; } }
+export function stop() {
+    if (!unsub) return;
+    unsub(); unsub = null;
+    document.removeEventListener("visibilitychange", onVisible);
+}
 
 // Force a beat NOW — call after a user action that changed server state (start a sweep, fire a
 // trigger, toggle live mode) so the UI reflects it without waiting for the server's next push.
