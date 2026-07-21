@@ -331,8 +331,8 @@
     overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 /* fixed stat-label width so every "phase / saved / rate / rows" label lines up */
 .live-int-lbl { flex: none; min-width: 72px; white-space: nowrap; color: var(--text); font-weight: 600; }
-.live-imgs { margin: 10px 0 0; }   /* the saved-images stat row, below the window list */
-.live-clear { flex: none; font-size: var(--fs-xs); padding: 1px 8px; border: 0;
+.live-imgs { margin: 8px 0 0; }   /* the saved-images stat row, inside the sessions collapsible */
+.live-clear { flex: none; font-size: var(--fs-xs); padding: 4px 8px; min-height: unset; border: 0;
     background: var(--danger); color: var(--on-danger); }
 .live-clear:hover { filter: brightness(1.12); }
 .live-clear[data-armed="1"] { background: var(--warn); color: var(--on-accent); }
@@ -350,14 +350,10 @@
     border: 1px solid var(--float-line); background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; }
 .live-feed-skip:hover { background: var(--accent); color: var(--on-accent); }
 .live-feed-skip[hidden] { display: none; }
-/* feed-session dropdown: which saved recording the feed replays. A rich picker (rich_picker.js)
-   opens under it, so the trigger is a plain full-width button reading the current pick. */
-.live-feed-sess { flex: 1; min-width: 0; text-align: left; font-size: var(--fs-xs);
-    padding: 2px 8px; border: 1px solid var(--float-line); border-radius: 4px;
-    background: var(--panel); color: var(--text); cursor: pointer;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.live-feed-sess:hover:not(:disabled) { border-color: var(--accent); }
-.live-feed-sess:disabled { opacity: 0.4; cursor: default; }
+/* saved-session list (sessions collapsible) — rows reuse the precapture session-list look
+   (.pc-sess / .pc-sess-rows, rule 7: one row style, not a second copy). Click plays/switches
+   the feed; the feeding one gets .active (same accent outline precap uses for its selection). */
+.live-chips-empty { font-size: var(--fs-xs); padding: 2px 0; }
 /* detection count at the right edge (reuses .live-statval; flex:none so the label takes the slack) */
 .live-wcount { flex: none; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 /* detection dot: grey = not detected, green (glow) = currently on screen */

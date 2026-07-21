@@ -16,7 +16,6 @@ import { h, svg } from "../../dom.js";
 import { confTier } from "../conf.js";
 import { bgSetTimeout, bgClearTimeout } from "../../bgtimer.js";
 import { fmtTimeSec } from "../../datefmt.js";
-import { richPickerPop } from "../rich_picker.js";
 import { sessLabel, sessMeta } from "./live_sess.js";
 
 let timer = null;
@@ -85,6 +84,12 @@ const DBG_CAP = 200;        // max rendered debug rows — a log preview, not a 
 // stashed so their toggles reconcile chevron/body without re-querying (stats open by default).
 let statsOpen = true;
 let statsChev = null, statsBody = null, dbgChev = null, dbgBody = null;
+// Sessions collapsible (closed by default): saved live sessions as chips (click = play/switch
+// feed, click the feeding one = stop) plus the saved-image stat + flush. Tucked at the bottom
+// so the panel's top stays the live/save toggles only.
+let sessOpen = false;
+let sessChev = null, sessBody = null;
+const chipRows = new Map();   // sessionId -> { row, name, meta } — reconciled like liveRows (rule 1)
 
 // ---- live floating panel --------------------------------------------------
 // Styled like the tasks panel: a master live toggle, live stats, and a list of every
@@ -140,18 +145,7 @@ function mountLive(adapter) {
                 h("label", { class: "live-toggle" },
                     h("button", { class: "act-enable live-saverecog", role: "switch", "aria-checked": "false", title: "save one image per OCR-due grab whose frame matched a window (any recognised window/state), not just frames that wrote a record — debug aid, off by default" },
                         switchSvg()),
-                    h("span", { class: "live-saverecog-lbl" }, "capture recognised windows"))),
-            h("div", { class: "live-row" },
-                h("label", { class: "live-toggle" },
-                    h("button", { class: "act-enable live-feed", role: "switch", "aria-checked": "false", title: "replay the saved live images through the pipeline instead of capturing new frames — paced by their timestamps, writes records, stops when all are fed. Saving is disabled while feeding." },
-                        switchSvg()),
-                    h("span", { class: "live-feed-lbl" }, "feed saved images"))),
-            // which saved session the feed replays — a rich dropdown (rich_picker.js) so each
-            // option shows its image count + recording length, which a native <select> can't.
-            h("div", { class: "live-row live-sess-row" },
-                h("span", { class: "live-int-lbl", title: "which saved live session the feed replays (newest first)" }, "session"),
-                h("button", { class: "live-feed-sess", type: "button",
-                    title: "pick the saved live session to replay" }, "newest")));
+                    h("span", { class: "live-saverecog-lbl" }, "save live session"))));
         // Stats collapsible (open by default): live-run readouts as fixed rows with placeholders so
         // the height is stable whether live is on or off. Boxed body, styled like the OCR log below.
         const stats = collapsible({ title: "stats", open: statsOpen, bodyClass: "live-statbox", headTitle: "live run stats (phase / saved / rate / rows)" });
@@ -188,11 +182,18 @@ function mountLive(adapter) {
         dbg.body.append(
             h("div", { class: "live-dbg-empty muted" }, "waiting for reads…"),
             h("div", { class: "live-dbg-list" }));
-        // saved-live-image stat + clear -- the LAST element of the whole panel, below both sections.
-        const imgsRow = h("div", { class: "live-row live-imgs" },
-            h("span", { class: "live-imgstat muted" }, " "),
-            h("button", { class: "live-clear", dataset: { armed: "0" }, title: "delete every saved live image" }, "flush"));
-        liveRoot.append(stats.section, dbg.section, imgsRow);
+        // Sessions collapsible -- collapsed by default; holds saved-session chips (click = play a
+        // feed / switch to a different session / click the feeding one to stop) plus the
+        // saved-image stat + flush. Placed LAST so the always-visible top of the panel stays the
+        // live/save toggles.
+        const sess = collapsible({ title: "sessions", open: sessOpen, bodyClass: "live-dbg-body", headTitle: "saved live sessions — click to feed, click again to stop" });
+        sessChev = sess.chev; sessBody = sess.body;
+        sess.body.append(
+            h("div", { class: "live-chips pc-sess-rows" }),
+            h("div", { class: "live-row live-imgs" },
+                h("span", { class: "live-imgstat muted" }, " "),
+                h("button", { class: "live-clear", dataset: { armed: "0" }, title: "delete every saved live image" }, "flush")));
+        liveRoot.append(stats.section, dbg.section, sess.section);
         liveEmpty = document.createElement("div"); liveEmpty.className = "act-empty"; liveEmpty.textContent = "no live-enabled windows";
         // click a window row -> navigate to its window node on the graph (no-op in pretty)
         liveRoot.querySelector(".live-wins").addEventListener("click", (ev) => {
@@ -203,14 +204,10 @@ function mountLive(adapter) {
         liveRoot.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
         liveRoot.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
         liveRoot.querySelector(".live-saverecog").addEventListener("click", () => setLiveSaveRecog(!liveSaveRecog));
-        liveRoot.querySelector(".live-feed").addEventListener("click", () => setLiveFeed(!liveFeed));
-        // pick the session to replay: rich rows (start time + "N imgs · length"), newest first.
-        liveRoot.querySelector(".live-feed-sess").addEventListener("click", (ev) => {
-            richPickerPop({
-                anchor: ev.currentTarget, current: selectedSession(),
-                groups: [[null, liveSessions.map((s) => ({ value: s.id, label: sessLabel(s), meta: sessMeta(s, { withBytes: true }) }))]],
-                onPick: (id) => { liveFeedSess = id; renderLiveWindow(); },
-            });
+        // click a session row: feed it (starting or switching), or stop it if it's already feeding
+        liveRoot.querySelector(".live-chips").addEventListener("click", (ev) => {
+            const row = ev.target.closest(".pc-sess");
+            if (row) feedSession(row.dataset.sid);
         });
         // skip the replay to the next image now (feed mode) — kick the heartbeat so the readout
         // reflects the jump without waiting for the next beat.
@@ -233,6 +230,7 @@ function mountLive(adapter) {
             if (ev.target.closest(".live-dbg-clear")) { clearDebugView(); return; }
             setDebugOpen(!dbgOpen);
         });
+        sess.head.addEventListener("click", () => setSessOpen(!sessOpen));
     }
     if (liveRoot.parentElement !== adapter.host) adapter.host.appendChild(liveRoot);
 }
@@ -280,6 +278,12 @@ function setDebugOpen(on) {
     setCollapsed(dbgChev, dbgBody, on);
     dbgBody.parentElement.classList.toggle("live-dbg-open", on);   // .clps section grows to fill (CSS, no :has)
     syncDebugPoll();
+    fitLivePanelHeight();
+}
+
+function setSessOpen(on) {
+    sessOpen = on;
+    setCollapsed(sessChev, sessBody, on);
     fitLivePanelHeight();
 }
 
@@ -408,28 +412,14 @@ function renderLiveWindow() {
     syncSwitch(liveRoot.querySelector(".live-switch"), liveOn);
     syncSwitch(liveRoot.querySelector(".live-save"), liveSave);
     syncSwitch(liveRoot.querySelector(".live-saverecog"), liveSaveRecog);
-    syncSwitch(liveRoot.querySelector(".live-feed"), liveFeed);
-    // feed needs images to replay -> disable the switch when the bucket is empty (re-checked every
-    // heartbeat + on live exit via refreshLiveImgStat). While feeding, image saving is off:
-    // grey the "capture recognised windows" switch (it saves images) so it reads as unavailable.
     // disable a switch (prop + greyed class), touching the DOM only on a real change (rule 1)
     const setDisabled = (el, off) => {
         if (!el) return;
         if (el.disabled !== off) el.disabled = off;
         if (el.classList.contains("sw-disabled") !== off) el.classList.toggle("sw-disabled", off);
     };
-    setDisabled(liveRoot.querySelector(".live-feed"), !liveImg.count && !liveFeed);   // needs images; keep on mid-feed
-    setDisabled(liveRoot.querySelector(".live-saverecog"), liveFeed);                 // no image saving while feeding
-    // feed session dropdown: names the picked session (or the newest fallback); locked while a feed
-    // runs (the collector started with that session) and dead when nothing is saved.
-    const sessBtn = liveRoot.querySelector(".live-feed-sess");
-    if (sessBtn) {
-        const cur = liveSessions.find((s) => s.id === selectedSession());
-        const txt = cur ? `${sessLabel(cur)} · ${sessMeta(cur)}` : "no saved sessions";
-        if (sessBtn.textContent !== txt) sessBtn.textContent = txt;
-        const off = !liveSessions.length || (liveFeed && liveOn);
-        if (sessBtn.disabled !== off) sessBtn.disabled = off;
-    }
+    setDisabled(liveRoot.querySelector(".live-saverecog"), liveFeed);   // no image saving while feeding
+    renderLiveChips();
     // Stats render as fixed rows below the window list; "–" placeholder when off so height holds.
     // collecting (armed): show what the server collector saved; tuning (disarmed): client img rate.
     const collecting = liveOn && (liveSave || liveFeed);   // feed runs the server collector too
@@ -579,6 +569,61 @@ function renderLiveWinList() {
         if (r.cnt.textContent !== ctxt) r.cnt.textContent = ctxt;
         if (r.cnt.title !== `detected ${n}×`) r.cnt.title = `detected ${n}×`;
     }
+}
+
+// Reconcile the saved-session rows in place (keyed Map, no innerHTML per tick — rule 1). Rows
+// reuse the precapture session-list look (.pc-sess, rule 7). A row plays its session on click
+// (feedSession); the one currently feeding shows .active (same selection style precap uses).
+function renderLiveChips() {
+    const list = liveRoot?.querySelector(".live-chips");
+    if (!list) return;
+    const want = new Set(liveSessions.map((s) => s.id));
+    for (const [id, r] of chipRows) if (!want.has(id)) { r.row.remove(); chipRows.delete(id); }
+    if (!liveSessions.length) {
+        if (!list._empty) { list._empty = document.createElement("div"); list._empty.className = "live-chips-empty muted"; list._empty.textContent = "no saved sessions"; }
+        if (!list._empty.isConnected) list.appendChild(list._empty);
+        return;
+    }
+    if (list._empty?.isConnected) list._empty.remove();
+    const feedingId = (liveFeed && liveOn) ? selectedSession() : null;
+    let i = 0;
+    for (const s of liveSessions) {
+        let r = chipRows.get(s.id);
+        if (!r) {
+            const row = document.createElement("div"); row.className = "pc-sess"; row.dataset.sid = s.id;
+            const name = document.createElement("span"); name.className = "pc-sess-name";
+            const meta = document.createElement("span"); meta.className = "pc-sess-meta";
+            row.append(name, meta);
+            r = { row, name, meta }; chipRows.set(s.id, r);
+        }
+        const at = list.children[i];
+        if (at !== r.row) list.insertBefore(r.row, at || null);
+        i++;
+        const lbl = sessLabel(s);
+        if (r.name.textContent !== lbl) r.name.textContent = lbl;
+        const mt = sessMeta(s, { withBytes: true });
+        if (r.meta.textContent !== mt) r.meta.textContent = mt;
+        const feeding = s.id === feedingId;
+        if (r.row.classList.contains("active") !== feeding) r.row.classList.toggle("active", feeding);
+        const t = feeding ? "stop feeding this session" : "feed this saved session";
+        if (r.row.title !== t) r.row.title = t;
+    }
+}
+
+// Play/switch/stop a saved session's feed. Clicking the session already feeding stops it;
+// clicking any other session starts (or switches to) feeding it — one feed runs at a time, but
+// switching between sessions is a single click.
+function feedSession(sid) {
+    if (liveFeed && liveOn && selectedSession() === sid) { liveFeed = false; setLiveMode(false); return; }
+    if (!liveImg.count) { setStatus("no saved live images to feed"); return; }
+    liveFeedSess = sid;
+    liveFeed = true;
+    if (!liveOn) { setLiveMode(true); return; }
+    stopServerCollect().then(startServerCollect);   // restart in feed mode against the new session
+    registerWorker("live", "live feed", () => setLiveMode(false));
+    log("feeding saved images");
+    syncTuningSession();
+    renderLiveWindow();
 }
 
 // The ONE live-recognition-dot painter, shared by the live panel's window list AND the game
@@ -843,26 +888,7 @@ function setLiveSave(on) {
     renderLiveWindow();
 }
 
-// Arm/disarm feeding saved images. Feed always runs the server collector (it writes records), so
-// turning it on/off while live is running restarts the collector in the new mode; turning it off
-// with save also off drops back to the read-only tuning loop. Disabled with no images to feed.
-function setLiveFeed(on) {
-    if (on === liveFeed) return;
-    if (on && !liveImg.count) { setStatus("no saved live images to feed"); renderLiveWindow(); return; }
-    liveFeed = on;
-    if (liveOn) {
-        if (timer) { bgClearTimeout(timer); timer = null; }   // leaving any client tuning loop
-        const armed = liveSave || liveFeed;
-        if (armed) { stopServerCollect().then(startServerCollect); }   // restart in the new mode
-        else { stopServerCollect(); liveTick(); }                      // feed off + save off -> tuning
-        registerWorker("live", liveFeed ? "live feed" : liveSave ? "live collection" : "live view", () => setLiveMode(false));
-    }
-    log(on ? "feeding saved images" : "feed stopped");
-    syncTuningSession();   // dropping back to the tuning loop opens its session (and vice versa)
-    renderLiveWindow();
-}
-
-// Toggle "capture recognised windows". The flag rides the server collector (started with
+// Toggle "save live session" (label; internally still saverecog/saveRecog). The flag rides the server collector (started with
 // save_recognized), so a change while it's running restarts it in place to take effect (like the
 // frame limiter). No effect in read-only tuning mode — there's no server collector, only the
 // client detect loop.
