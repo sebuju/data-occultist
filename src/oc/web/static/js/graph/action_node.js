@@ -37,8 +37,9 @@ export function actionParts(x, model) {
     const dsRegs = srcs.filter((s) => s.kind === "dataset" || s.kind === "register");
     const sounds = srcs.filter((s) => s.kind === "sound");
     // free options: everything not already wired, each a prefixed ref with a typed label. Another
-    // action can be chained, but never this one (a self-chain would cascade forever).
-    const free = [
+    // action can be chained, but never this one (a self-chain would cascade forever). A thunk so the
+    // "+" list is recomputed live on open (node creation skips the consumer-rebuild sweep).
+    const free = () => [
         ...model.datasets().filter((d) => !have.has(`dataset:${d}`)).map((d) => ({ value: `dataset:${d}`, label: d })),
         ...model.registers().filter((r) => !have.has(`register:${r}`)).map((r) => ({ value: `register:${r}`, label: r })),
         ...(model.profile.sounds || []).map((s) => s.id).filter((s) => !have.has(`sound:${s}`))

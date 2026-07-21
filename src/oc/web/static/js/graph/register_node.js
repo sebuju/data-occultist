@@ -319,7 +319,7 @@ export function registerParts(x, model) {
     // an add-select. The ONE sources widget (rule 7); candidates come from the shared source truth
     // (SOURCE_KINDS.register = readouts + processes, already-wired excluded).
     const wired = model ? model.registerSources(x.id) : [];
-    const free = model ? model.sourceCandidates("register", x.id).map((c) => ({ value: c.ref, label: c.label })) : [];
+    const free = () => model ? model.sourceCandidates("register", x.id).map((c) => ({ value: c.ref, label: c.label })) : [];
     const sourcesRow = srcRow("sources", "readouts and processes wired into this register — remove here, or drag a node's out-port onto it",
         sourcesInput({ chips: wired.map((s) => ({ value: s.ref, node: model && model.refNode(s.ref) })),
                        free, addinCls: "sv-addin reg-addsrc", rmCls: "sv-rmin reg-rmsrc" }));

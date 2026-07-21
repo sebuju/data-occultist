@@ -13,12 +13,12 @@ export function routerParts(r, model) {
     const source = srcRow("source", "the live value this router tests",
         sourcesInput({
             chips: r.source ? [{ value: r.source, node: model.refNode(r.source) }] : [],
-            free: model.sourceCandidates("router", r.id).map((c) => c.ref),
+            free: () => model.sourceCandidates("router", r.id).map((c) => c.ref),
             addLabel: "+ source", addinCls: "sv-addin router-addsource", rmCls: "sv-rmin router-rmsource" }));
 
     // every id a branch could target (same set a trigger fires): producers / file sources / toasts /
     // sounds / actions. Filtered per-branch against what that branch already holds.
-    const allTargets = [
+    const allTargets = () => [
         ...(model.profile.producers || []).map((p) => p.id),
         ...(model.profile.file_sources || []).map((s) => s.id),
         ...(model.profile.toasts || []).map((x) => x.id),
@@ -46,7 +46,7 @@ export function routerParts(r, model) {
             labCell("then", "targets fired when this branch's conditions hold"),
             sourcesInput({
                 chips: (b.targets || []).map((p) => ({ value: p, node: model.refNode(p) })),
-                free: allTargets.filter((p) => !have.has(p)),
+                free: () => allTargets().filter((p) => !have.has(p)),
                 addLabel: "+ target", addinCls: "sv-addin routerb-addtarget", rmCls: "sv-rmin routerb-rmtarget" }));
         // remove-branch: a bare red text button ("remove branch" IS the button), hugging the right edge.
         const rmRow = h("div", { class: "routerb-rmrow" },
@@ -63,7 +63,7 @@ export function routerParts(r, model) {
     const firedBy = srcRow("fired by", "triggers that fire this router",
         sourcesInput({
             chips: wired.map((tid) => ({ value: tid, node: `trigger:${tid}` })),
-            free: (model.profile.triggers || []).map((t) => t.id).filter((tid) => !wired.includes(tid)),
+            free: () => (model.profile.triggers || []).map((t) => t.id).filter((tid) => !wired.includes(tid)),
             addLabel: "+ trigger", addinCls: "sv-addin router-adddest", rmCls: "sv-rmin router-rmdest" }));
     return {
         title: h("input", { class: "gi gi-id router-rename", value: r.id, title: "rename router" }),

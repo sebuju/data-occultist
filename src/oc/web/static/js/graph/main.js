@@ -595,7 +595,11 @@ function toggleCollapse(id) {
 
 // Reconcile the node DOM with the model: add new, remove gone, reposition. Existing
 // nodes keep their DOM (and input focus/values) — no wholesale rebuild.
-function render() {
+// `refConsumers:false` skips the render-tail consumer-body sweep (below). The create path passes
+// it: a brand-new node is UNWIRED, so no sibling body's shown (wired) content changes — the only
+// thing that would go stale is each "+" picker's candidate list, and those are now recomputed live
+// on open (sources_input.js free thunks), so the whole O(N) sweep is pure waste on creation.
+function render({ refConsumers = true } = {}) {
     ensurePositions();
     const layer = $("gnodes");
     const want = model.nodes();
@@ -620,8 +624,10 @@ function render() {
     // referenceable namespace AND the column/ref content that changes without an id-set change; when
     // it flips, rebuild every consumer body through ONE sweep (rule 7 — replaces the old per-mutation
     // dataset/toast/dataset-node/readout sweeps that each covered only a slice and missed actions).
+    // Always advance _lastRefKey when the signature flips, even if we skip the sweep — otherwise a
+    // later default render() would fire a full sweep for an add we already accounted for here.
     const rk = _refKey();
-    if (rk !== _lastRefKey) { _lastRefKey = rk; rebuildRefConsumers(); }
+    if (rk !== _lastRefKey) { _lastRefKey = rk; if (refConsumers) rebuildRefConsumers(); }
 }
 let _lastRefKey = null;
 // The signature the render-tail rebuild gates on. Built ONLY from ids, ref lists, and the field/

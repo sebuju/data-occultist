@@ -285,7 +285,7 @@ function pivotCfgNode(s) {
 function subConfigNode(s) {
     const cols = viewColumns(s);
     const inputs = model.subsetInputs(s);
-    const free = model.joinableInputs(s);   // datasets + other subsets (cycle-free)
+    const free = () => model.joinableInputs(s);   // datasets + other subsets (cycle-free), live on open
     // sources are removable pills + a "+ join source" select — the SHARED sources-input widget
     // (rule 7 — same as producer sources / dict feeds).
     // join is PER-SOURCE now: each input carries its own join column, match-norm, many->one

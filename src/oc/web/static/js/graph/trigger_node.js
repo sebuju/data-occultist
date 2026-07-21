@@ -34,7 +34,7 @@ export function triggerParts(t, model) {
 
     // targets: drag the out-port to a producer / file source / toast / sound / action OR pick one here.
     const haveT = new Set(t.targets || []);
-    const tgtIds = [...(model.profile.producers || []).map((p) => p.id),
+    const tgtIds = () => [...(model.profile.producers || []).map((p) => p.id),
                     ...(model.profile.file_sources || []).map((s) => s.id),
                     ...(model.profile.toasts || []).map((x) => x.id),
                     ...(model.profile.sounds || []).map((x) => x.id),
@@ -43,7 +43,7 @@ export function triggerParts(t, model) {
     const targets = srcRow("fires", "producers (sweep), file sources (read), toasts (notify), sounds (play), or actions (dataset op) this trigger fires",
         sourcesInput({
             chips: (t.targets || []).map((p) => ({ value: p, node: model.refNode(p) })),
-            free: tgtIds.filter((p) => !haveT.has(p)),
+            free: () => tgtIds().filter((p) => !haveT.has(p)),
             addLabel: "+ fire target", addinCls: "sv-addin tg-addfire", rmCls: "sv-rmin tg-rmtarget" }));
 
     const interval = timed
@@ -58,7 +58,7 @@ export function triggerParts(t, model) {
         // on_change/on_any_change/on_new_batch watch datasets OR subsets; on_ready watches a
         // PRODUCER and fires when its sweep finishes (the producer knows when it's done).
         const onlyProducers = kind === "on_ready";
-        const sources = onlyProducers
+        const sources = () => onlyProducers
             ? (model.profile.producers || []).map((p) => p.id)
             : [...model.datasets(), ...(model.profile.subsets || []).map((s) => s.id)];
         const hint = kind === "on_any_change"
@@ -71,7 +71,7 @@ export function triggerParts(t, model) {
         watch = srcRow("watch", hint,
             sourcesInput({
                 chips: (t.watch || []).map((w) => ({ value: w, node: model.refNode(w) })),
-                free: sources.filter((d) => !have.has(d)),
+                free: () => sources().filter((d) => !have.has(d)),
                 addLabel: onlyProducers ? "+ watch producer" : "+ watch source",
                 addinCls: "sv-addin tg-addwatch", rmCls: "sv-rmin tg-rmwatch" }));
     }
@@ -83,7 +83,7 @@ export function triggerParts(t, model) {
         varwatch = srcRow("watch", "live readouts to wake on; the fire test is set on the wired gate(s)",
             sourcesInput({
                 chips: (t.readout_watch || []).map((vid) => ({ value: vid, node: model.refNode(vid) })),
-                free: model.readouts().filter((v) => !have.has(v.id)).map((v) => v.id),
+                free: () => model.readouts().filter((v) => !have.has(v.id)).map((v) => v.id),
                 addLabel: "+ watch readout", addinCls: "sv-addin tg-addvarwatch", rmCls: "sv-rmin tg-rmvarwatch" }));
     }
 
@@ -94,7 +94,7 @@ export function triggerParts(t, model) {
         regwatch = srcRow("watch", "registers to wake on; the fire test is set on the wired gate(s)",
             sourcesInput({
                 chips: (t.register_watch || []).map((rid) => ({ value: rid, node: model.refNode(`register:${rid}`) })),
-                free: model.registers().filter((r) => !have.has(r)),
+                free: () => model.registers().filter((r) => !have.has(r)),
                 addLabel: "+ watch register", addinCls: "sv-addin tg-addregwatch", rmCls: "sv-rmin tg-rmregwatch" }));
     }
 

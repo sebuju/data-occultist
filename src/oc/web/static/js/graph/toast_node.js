@@ -206,7 +206,7 @@ export function toastParts(x, model) {
     // sources row (FIRST): the data feeders wired to this toast — removable pills + an add-select.
     const wired = model ? model.toastSources(x.id) : [];
     const wiredRefs = new Set(wired.map((s) => s.ref));
-    const avail = model ? [
+    const avail = () => model ? [
         ...model.readouts().map((v) => `readout:${v.id}`),
         ...model.datasets().map((d) => `dataset:${d}`),
         ...(model.profile.subsets || []).map((s) => `subset:${s.id}`),

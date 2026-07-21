@@ -15,7 +15,11 @@
 // sourcesInput({ chips, free, addLabel?, rmCls?, addinCls?, rmTitle? }) -> a `.sv-inputs` Node
 //   chips    : [{ value, label?, node? }]  one removable pill each (label defaults to value;
 //              node = a graph node id, e.g. from model.refNode(ref) — omit/null if not focusable)
-//   free     : addable options for the "+" select — string[] or [{ value, label? }]
+//   free     : addable options for the "+" select — string[] or [{ value, label? }], OR a thunk
+//              `() => (string|{value,label})[]` evaluated when the popover OPENS (not at build).
+//              Prefer the thunk: a body built once then left in place (node creation deliberately
+//              skips the consumer-rebuild sweep — main.js render({refConsumers:false})) still shows
+//              a live candidate list, because the "+" list is recomputed fresh on every open.
 //   addLabel : the select's placeholder option text (default "+ source")
 //   rmCls    : class on each chip's trash button (default "sv-rmin") — give lists sharing one
 //              node (e.g. a trigger's targets/watch/readout-watch) distinct classes so their
@@ -29,17 +33,18 @@ export function sourcesInput({ chips, free, addLabel = "+ source", rmCls = "sv-r
     const pills = (chips || []).map((c) => h("span", { class: "sv-input", dataset: c.node ? { node: c.node } : null },
         c.label ?? c.value,
         trashBtn({ cls: rmCls, dataset: { val: c.value }, title: rmTitle })));
-    const freeOpts = (free || []).map((f) => (typeof f === "string" ? { value: f, label: f } : f));
     // The add control is a readonly "+" trigger that carries addinCls (so every caller's delegated
     // `change` handler still finds it, unchanged). Clicking opens the searchable combo popover; on
     // pick we set the trigger's value + fire a `change` so the caller's existing wiring runs, then
     // clear it back to "+" (the node usually rebuilds and drops the trigger anyway). This is the
     // graph's ONE searchable dropdown (combo_popover.js) — the native <select> it replaced couldn't
-    // host a search field.
+    // host a search field. `free` is resolved HERE, on open, so a thunk gives a live list.
     const trigger = h("input", { class: addinCls, type: "text", readOnly: true, placeholder: "+",
         title: addLabel.replace(/^\+\s*/, "add "), spellcheck: false });
     trigger.addEventListener("mousedown", (e) => {
         e.preventDefault();   // don't focus the readonly trigger — the popover's search field takes focus
+        const src = (typeof free === "function" ? free() : free) || [];
+        const freeOpts = src.map((f) => (typeof f === "string" ? { value: f, label: f } : f));
         comboPopover({ anchor: trigger, options: freeOpts, placeholder: addLabel.replace(/^\+\s*/, "search "),
             onPick: (val) => { trigger.value = val; trigger.dispatchEvent(new Event("change", { bubbles: true })); trigger.value = ""; } });
     });

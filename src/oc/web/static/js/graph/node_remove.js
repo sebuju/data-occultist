@@ -77,7 +77,12 @@ export function removeNode(n) {
     // AFTER, so a removal updates every connected party, not just the wire.
     const neighbours = neighbourIds(n.id);
     plan.kill();
-    render();
+    // Skip render()'s whole-graph consumer sweep: the ONLY bodies a removal changes are the wired
+    // neighbours (their reference chip is now stale), and we rebuild exactly those below. The "+"
+    // picker candidate lists that also mentioned this node are recomputed live on open (lazy `free`
+    // thunks in sources_input.js), so they need no rebuild either. This turns a delete from O(all
+    // nodes) body rebuilds into O(neighbours) — the sweep here was pure redundancy with line below.
+    render({ refConsumers: false });
     forgetNodeState(n.id);   // drop ALL live state for the gone node (one place — twin of remapNodeState)
     for (const id of neighbours) if (nodeEls.has(id)) rebuildNode(id);
     plan.after();

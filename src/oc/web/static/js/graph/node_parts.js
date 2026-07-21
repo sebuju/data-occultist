@@ -1062,7 +1062,7 @@ export function nodeParts(n) {
         };
     }
     if (n.type === "subset") return subsetParts(n.ref);
-    if (n.type === "producer") return { ...producerParts(n.ref, model.producerSourceColumns(n.ref), model.producerJoinable(n.ref)),
+    if (n.type === "producer") return { ...producerParts(n.ref, model.producerSourceColumns(n.ref), () => model.producerJoinable(n.ref)),
         head: frag(n.ref.type === "http" ? satToggleBtn(`prod:${n.ref.id}`, "producer") : null,
             satToggleBtn(`prodhist:${n.ref.id}`, "producerhistory")) };
     if (n.type === "filesource") return { ...sourceParts(n.ref),
@@ -1139,7 +1139,7 @@ export function nodeParts(n) {
             srcRow("sources", "windows, producers, or file sources feeding this dataset",
                 sourcesInput({
                     chips: model.datasetSources(ds).map((s) => ({ value: s.ref, node: model.refNode(s.ref) })),
-                    free: model.datasetFreeSources(ds).map((s) => s.ref),
+                    free: () => model.datasetFreeSources(ds).map((s) => s.ref),
                     addinCls: "sv-addin ds-addsrc", rmCls: "sv-rmin ds-rmsrc" })),
             kv("1 → many", h("select", { class: "dskey", title: "the key the dataset collapses many reads on (or none)" }, keyOpts)),
             // The key says WHICH reads are the same row; this says HOW those reads fold to one
@@ -1178,6 +1178,8 @@ export function nodeParts(n) {
 // select.
 function dictFeedsEditor(dict) {
     const feeds = model.dictFeeds(dict.id);
+    // guard reads the candidate list ONCE at build to decide the row's very existence; the picker
+    // gets a thunk so its "+" list stays live on open (creation skips the consumer-rebuild sweep).
     const free = model.dictFeedable(dict.id);   // datasets not already feeding it
     if (!feeds.length && !free.length) return null;
     // flat column list across every wired dataset: one kv row per column — label "dataset:column"
@@ -1193,7 +1195,8 @@ function dictFeedsEditor(dict) {
     // flat column list below.
     return h("div", { class: "dict-feeds lab-grid" },
         srcRow("source", "datasets whose column values become terms",
-            sourcesInput({ chips: feeds.map((fd) => ({ value: fd.dataset, node: model.refNode(fd.dataset) })), free,
+            sourcesInput({ chips: feeds.map((fd) => ({ value: fd.dataset, node: model.refNode(fd.dataset) })),
+                free: () => model.dictFeedable(dict.id),
                 rmTitle: "stop feeding from this dataset" })),
         ...rows);
 }

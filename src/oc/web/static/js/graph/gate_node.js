@@ -39,7 +39,7 @@ export function gateParts(g, model) {
     const source = srcRow("source", "the live value this gate tests",
         sourcesInput({
             chips: g.source ? [{ value: g.source, node: model.refNode(g.source) }] : [],
-            free: model.sourceCandidates("gate", g.id).map((c) => c.ref),
+            free: () => model.sourceCandidates("gate", g.id).map((c) => c.ref),
             addLabel: "+ source", addinCls: "sv-addin gate-addsource", rmCls: "sv-rmin gate-rmsource" }));
     // and/or slider — only meaningful once >1 condition exists (below one there's nothing to combine).
     const logic = conds.length > 1
@@ -62,7 +62,7 @@ export function gateParts(g, model) {
     const dest = srcRow("gates", "triggers this gate applies to — it permits or blocks their fire",
         sourcesInput({
             chips: wired.map((tid) => ({ value: tid, node: `trigger:${tid}` })),
-            free: (model.profile.triggers || []).map((t) => t.id).filter((tid) => !wired.includes(tid)),
+            free: () => (model.profile.triggers || []).map((t) => t.id).filter((tid) => !wired.includes(tid)),
             addLabel: "+ trigger", addinCls: "sv-addin gate-adddest", rmCls: "sv-rmin gate-rmdest" }));
     return {
         title: h("input", { class: "gi gi-id gate-rename", value: g.id, title: "rename gate" }),
