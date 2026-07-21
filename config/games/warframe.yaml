@@ -4707,7 +4707,7 @@ triggers:
   ready_field: ''
 gates:
 - id: gate_value_ab_1
-  source: register:value_ab_register#ability_1_cd
+  source: register:value_ab_register#value_ab_1
   conds:
   - when: lt
     arg: '3'
@@ -4715,7 +4715,7 @@ gates:
   negate: false
   enabled: true
 - id: gate_value_ab_2
-  source: register:value_ab_register#ability_2_cd
+  source: register:value_ab_register#value_ab_2
   conds:
   - when: lt
     arg: '3'
@@ -4723,7 +4723,7 @@ gates:
   negate: false
   enabled: true
 - id: gate_value_ab_3
-  source: register:value_ab_register#ability_3_cd
+  source: register:value_ab_register#value_ab_3
   conds:
   - when: lt
     arg: '3'
@@ -4731,7 +4731,7 @@ gates:
   negate: false
   enabled: true
 - id: gate_value_ab_4
-  source: register:value_ab_register#ability_4_cd
+  source: register:value_ab_register#value_ab_4
   conds:
   - when: lt
     arg: '3'
@@ -4757,7 +4757,7 @@ gates:
   negate: true
   enabled: true
 - id: gate_notwf_ab_4
-  source: register:value_ab_register#ability_4_cd
+  source: register:value_ab_register#value_ab_4
   conds:
   - when: contains
     arg: ''
@@ -4773,7 +4773,7 @@ gates:
   negate: true
   enabled: true
 - id: gate_nonblank_ab_2
-  source: register:value_ab_register#ability_2_cd@nonblank
+  source: register:value_ab_register#value_ab_2@nonblank
   conds:
   - when: gt
     arg: '2'
@@ -4781,7 +4781,7 @@ gates:
   negate: false
   enabled: true
 - id: gate_nonblank_ab_1
-  source: register:value_ab_register#ability_1_cd@nonblank
+  source: register:value_ab_register#value_ab_1@nonblank
   conds:
   - when: gt
     arg: '2'
@@ -4789,7 +4789,7 @@ gates:
   negate: false
   enabled: true
 - id: gate_nonblank_ab_3
-  source: register:value_ab_register#ability_3_cd@nonblank
+  source: register:value_ab_register#value_ab_3@nonblank
   conds:
   - when: gt
     arg: '2'
@@ -4797,7 +4797,7 @@ gates:
   negate: false
   enabled: true
 - id: gate_nonblank_ab_4
-  source: register:value_ab_register#ability_4_cd@nonblank
+  source: register:value_ab_register#value_ab_4@nonblank
   conds:
   - when: gt
     arg: '2'
@@ -5230,16 +5230,7 @@ sounds:
     repeat: 1
   volume: 1.0
   enabled: true
-actions:
-- id: action
-  action: ''
-  sources: []
-  slots: {}
-  dest: ''
-  delay_ms: 0
-  repeat: 1
-  repeat_ms: 300
-  enabled: true
+actions: []
 registers:
 - id: loadout_register
   sources:
@@ -6162,8 +6153,8 @@ layout:
       custH: true
       softH: true
     win:live_game_window:
-      x: -1920.0
-      y: -4700.0
+      x: -1940.0
+      y: -4640.0
       w: 680.0
       h: 806.0
       collapsed: false
@@ -7062,7 +7053,7 @@ layout:
       x: -3420.0
       y: -6800.0
       w: 300.0
-      h: 400.0
+      h: 500.0
       collapsed: false
       custW: false
       custH: true
@@ -7072,7 +7063,7 @@ layout:
       x: -720.0
       y: -6800.0
       w: 300.0
-      h: 400.0
+      h: 500.0
       collapsed: false
       custW: false
       custH: true
@@ -7082,7 +7073,7 @@ layout:
       x: -1620.0
       y: -6800.0
       w: 300.0
-      h: 400.0
+      h: 500.0
       collapsed: false
       custW: false
       custH: true
@@ -7121,7 +7112,7 @@ layout:
       x: -2520.0
       y: -6800.0
       w: 300.0
-      h: 400.0
+      h: 500.0
       collapsed: false
       custW: false
       custH: true
@@ -7139,7 +7130,7 @@ layout:
     gate:gate_value_ab_1:
       x: -3860.0
       y: -7060.0
-      w: 380.0
+      w: 400.0
       h: 140.0
       collapsed: false
       custW: true
@@ -7149,7 +7140,7 @@ layout:
     gate:gate_value_ab_2:
       x: -2960.0
       y: -7060.0
-      w: 380.0
+      w: 400.0
       h: 140.0
       collapsed: false
       custW: true
@@ -7159,7 +7150,7 @@ layout:
     gate:gate_value_ab_3:
       x: -2060.0
       y: -7060.0
-      w: 380.0
+      w: 400.0
       h: 140.0
       collapsed: false
       custW: true
@@ -7169,7 +7160,7 @@ layout:
     gate:gate_value_ab_4:
       x: -1160.0
       y: -7060.0
-      w: 380.0
+      w: 400.0
       h: 140.0
       collapsed: false
       custW: true
@@ -7179,7 +7170,7 @@ layout:
     gate:gate_nonblank_ab_1:
       x: -3860.0
       y: -6900.0
-      w: 380.0
+      w: 400.0
       h: 140.0
       collapsed: false
       custW: true
@@ -7189,7 +7180,7 @@ layout:
     gate:gate_nonblank_ab_2:
       x: -2960.0
       y: -6900.0
-      w: 380.0
+      w: 400.0
       h: 140.0
       collapsed: false
       custW: true
@@ -7199,7 +7190,7 @@ layout:
     gate:gate_nonblank_ab_3:
       x: -2060.0
       y: -6900.0
-      w: 380.0
+      w: 400.0
       h: 140.0
       collapsed: false
       custW: true
@@ -7209,7 +7200,7 @@ layout:
     gate:gate_nonblank_ab_4:
       x: -1160.0
       y: -6900.0
-      w: 380.0
+      w: 400.0
       h: 140.0
       collapsed: false
       custW: true
@@ -7218,9 +7209,9 @@ layout:
       softH: true
     gate:gate_notwf_ab_4:
       x: -1160.0
-      y: -6740.0
-      w: 380.0
-      h: 340.0
+      y: -6720.0
+      w: 400.0
+      h: 420.0
       collapsed: false
       custW: true
       custH: true
@@ -7228,9 +7219,9 @@ layout:
       softH: true
     gate:gate_notwf_ab_3:
       x: -2060.0
-      y: -6740.0
-      w: 380.0
-      h: 340.0
+      y: -6720.0
+      w: 400.0
+      h: 420.0
       collapsed: false
       custW: true
       custH: true
@@ -7238,9 +7229,9 @@ layout:
       softH: true
     gate:gate_notwf_ab_2:
       x: -2960.0
-      y: -6740.0
-      w: 380.0
-      h: 340.0
+      y: -6720.0
+      w: 400.0
+      h: 420.0
       collapsed: false
       custW: true
       custH: true
@@ -7248,9 +7239,9 @@ layout:
       softH: true
     gate:gate_notwf_ab_1:
       x: -3860.0
-      y: -6740.0
-      w: 380.0
-      h: 340.0
+      y: -6720.0
+      w: 400.0
+      h: 420.0
       collapsed: false
       custW: true
       custH: true
@@ -7348,7 +7339,7 @@ layout:
     process:process_value_ab:
       x: -2960.0
       y: -6080.0
-      w: 340.0
+      w: 380.0
       h: 340.0
       collapsed: false
       custW: true
@@ -7358,7 +7349,7 @@ layout:
     process:process_warframe_name_live:
       x: -2960.0
       y: -5700.0
-      w: 340.0
+      w: 380.0
       h: 340.0
       collapsed: false
       custW: true
@@ -7366,7 +7357,7 @@ layout:
       softW: true
       softH: true
     register:value_ab_register:
-      x: -2580.0
+      x: -2520.0
       y: -6080.0
       w: 520.0
       h: 340.0
@@ -7376,7 +7367,7 @@ layout:
       softW: true
       softH: true
     reghist:value_ab_register:
-      x: -2020.0
+      x: -1940.0
       y: -6080.0
       w: 700.0
       h: 340.0
@@ -7386,7 +7377,7 @@ layout:
       softW: true
       softH: false
     register:warframe_name_live_register:
-      x: -2580.0
+      x: -2520.0
       y: -5700.0
       w: 520.0
       h: 340.0
@@ -7395,10 +7386,6 @@ layout:
       custH: true
       softW: true
       softH: true
-    action:action:
-      x: -960.0
-      y: -5580.0
-      collapsed: false
     sub:relic_rewards_with_price-copy:
       x: 2880.0
       y: -5840.0
@@ -7802,70 +7789,6 @@ layout:
         drain: 45
         score: 48
       sorts: []
-    rohist:live_game_window:ability_1_cd:
-      widths:
-        when: 75
-        raw: 75
-        empty→drop: 36
-        always→extract: 43
-        always→floor: 43
-        confidence: 75
-        consensus: 40
-        no_digit→drop: 43
-        below→drop: 43
-        above→drop: 43
-        value: 75
-        gap: 75
-      sorts: []
-    rohist:live_game_window:ability_2_cd:
-      widths:
-        when: 75
-        raw: 75
-        always→extract: 43
-        always→floor: 43
-        empty→drop: 36
-        consensus: 44
-        confidence: 75
-        no_digit→drop: 43
-        below→drop: 43
-        above→drop: 43
-        value: 75
-        gap: 75
-      sorts:
-      - col: when
-        dir: -1
-    rohist:live_game_window:ability_3_cd:
-      widths:
-        when: 75
-        raw: 75
-        always→extract: 43
-        always→floor: 43
-        value: 75
-        empty→drop: 36
-        confidence: 75
-        consensus: 40
-        no_digit→drop: 43
-        below→drop: 43
-        above→drop: 43
-        gap: 75
-      sorts:
-      - col: when
-        dir: -1
-    rohist:live_game_window:ability_4_cd:
-      sorts: []
-      widths:
-        when: 75
-        raw: 75
-        no_digit→drop: 43
-        always→extract: 43
-        always→floor: 43
-        value: 75
-        confidence: 75
-        consensus: 44
-        below→drop: 43
-        above→drop: 43
-        gap: 75
-      order: []
     prodhist:wf_market_relic:
       widths:
         dataset: 88
@@ -8240,7 +8163,6 @@ layout:
     - reghist:value_ab_register
     - register:warframe_name_live_register
     - process:process_warframe_name_live
-    - action:action
     outline:
       color: '#5aa9e6'
       style: none
@@ -9040,6 +8962,6 @@ layout:
     shadow: null
 testing:
   loop_ms: 300
-  garble: true
+  garble: false
   garble_pct: 25
   include_datasets: false
