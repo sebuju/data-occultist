@@ -14,7 +14,7 @@ let _hiddenNodePanels = [];
 
 // Node-view floating panels belong to the node view: hide them while in pretty, restore the
 // ones that were open on return (open state remembered, never reset).
-const _NODE_PANELS = ["nodemap", "nodelist", "activity", "testing", "stats", "dbstruct", "history", "toolbox", "live", "precap"];
+const _NODE_PANELS = ["nodemap", "nodelist", "activity", "inspector", "stats", "dbstruct", "history", "toolbox", "live", "precap"];
 function setNodePanelsHidden(hidden) {
     if (hidden) {
         _hiddenNodePanels = [];

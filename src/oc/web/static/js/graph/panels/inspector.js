@@ -1,4 +1,4 @@
-// Node inspector — testing panel section. Select any node in the graph; this walks it back to
+// Node inspector — its own floating panel. Select any node in the graph; this walks it back to
 // the things that can actually be fed into it and renders a control per feedable input:
 //
 //   • READOUT values  -> /api/test/feed_readouts -> LiveSession.feed_readouts, the SAME fold a real
@@ -20,7 +20,9 @@ import * as conn from "../../conn.js";
 import { recordRow } from "../../pretty/api.js";
 import { log } from "../../log.js";
 import { fmtDateTimeSec } from "../../datefmt.js";
-import { model } from "../state.js";
+import { $, model } from "../state.js";
+import { createFloatWin } from "../floatwin.js";
+import { persist } from "../persist.js";
 import { onNodeSelect } from "../selection.js";
 import { autosave } from "../main.js";
 import { playCue } from "../sound.js";
@@ -31,6 +33,11 @@ let root = null, body = null, lastLine = null, loopMsInput = null, loopBtnEl = n
 let garbleCb = null, garblePct = null;
 let curNodeId = null, curTarget = null;
 let loopTimer = null;
+// While the loop is playing the inspector FREEZES on its current node: selecting another node in the
+// graph must neither stop the loop nor switch the panel to it. The last real node picked mid-play is
+// held here (undefined = none) and applied when the loop stops. A deselect (null) mid-play is ignored
+// so "no selection" also holds the frozen node.
+let pendingNodeId;
 // Working copies of each row's tuning, keyed by a stable feed key ("ro:<id>" / "col:<ds>:<field>")
 // so switching between nodes that share an input keeps the row as you left it. Seeded from the
 // profile (the readout's / dataset's optional `test` block) and written back on every edit, so the
@@ -323,6 +330,8 @@ function startLoop() {
 export function stopLoop() {
     if (loopTimer) { clearInterval(loopTimer); loopTimer = null; }
     if (loopBtnEl) loopBtnEl.textContent = "▶ play";
+    // apply whatever node was picked while frozen (see refresh) now that the loop is stopped
+    if (pendingNodeId !== undefined) { const id = pendingNodeId; pendingNodeId = undefined; refresh(id); }
 }
 function toggleLoop() { if (loopTimer) stopLoop(); else startLoop(); }
 
@@ -331,6 +340,14 @@ function refresh(id) {
     const game = model.profile?.name || null;
     if (game !== cacheGame) { cacheGame = game; rowState.clear(); knobsSeeded = false; curNodeId = null; }
     seedKnobs();
+    // playing -> FREEZE on the current node: don't stop the loop, don't switch the panel. Remember a
+    // real new selection to apply on stop; a re-pick of the frozen node cancels a pending switch; a
+    // deselect (null) is ignored so "no selection" also holds the frozen node.
+    if (loopTimer) {
+        if (id === curNodeId) pendingNodeId = undefined;
+        else if (id != null) pendingNodeId = id;
+        return;
+    }
     if (id === curNodeId) return;
     curNodeId = id;
     curTarget = feedTargetsFor(id);
@@ -338,7 +355,8 @@ function refresh(id) {
     renderBody();
 }
 
-// The inspector's own body, wrapped by the caller in a collapsible section.
+// The inspector's own body — the node-feed controls. Built once, hosted directly in the panel
+// (no collapsible wrapper) and also embeddable in a pretty widget via the shared floatwin.
 export function buildInspector() {
     if (root) return root;
     lastLine = h("div", { class: "insp-last" });
@@ -355,18 +373,38 @@ export function buildInspector() {
     loopDsCb.addEventListener("change", persistKnobs);
     root = h("div", { class: "insp-panel" },
         body,
+        lastLine,
         h("div", { class: "insp-controls" },
+            h("label", { class: "insp-dsopt", title: "roll the WRONG type on some sends: text where a number is expected (and the reverse), using plausible OCR wreckage — exercises the field rules / gates against a bad read" },
+                garbleCb, " wrong-type chance", garblePct, "%"),
             h("div", { class: "insp-ctlrow" },
                 btn("send all", { cls: "btn insp-sendall",
                     onClick: () => { resetCountsOnManualSend(curRowStates()); return sendAll(); } }),
                 h("label", { class: "insp-loop-wrap" }, "loop", loopMsInput, "ms"),
                 loopBtnEl),
             h("label", { class: "insp-dsopt", title: "dataset writes are PERSISTENT — off by default so a loop can't flood the store" },
-                loopDsCb, " include dataset writes in send all / loop"),
-            h("label", { class: "insp-dsopt", title: "roll the WRONG type on some sends: text where a number is expected (and the reverse), using plausible OCR wreckage — exercises the field rules / gates against a bad read" },
-                garbleCb, " wrong-type chance", garblePct, "%")),
-        lastLine);
+                loopDsCb, " include dataset writes in send all / loop")));
     renderBody();
     onNodeSelect(refresh);
     return root;
+}
+
+// ---- the inspector floating panel -------------------------------------------------------------
+// A dedicated floating panel that hosts the node inspector directly (no collapsible section). Opens
+// wide (500px) and at full usable height like pretty view's inspector — the height is CSS-driven
+// (#inspector in floatwin.css), so autoFit stays off and the body scrolls inside a fixed frame.
+export const inspState = { visible: false, x: null, y: null, w: 500, h: null, collapsed: false };
+export let inspWin = null;
+
+export function buildInspectorPanel() {
+    if (inspWin) return inspWin;
+    inspWin = createFloatWin({
+        id: "inspector", title: "inspector", state: inspState,
+        bothAxes: true, autoFit: false, resetW: 500,   // full-height (CSS) + wide default, still user-resizable
+        onShow: () => $("inspectorBtn")?.classList.toggle("active", true),
+        onHide: () => { $("inspectorBtn")?.classList.toggle("active", false); stopLoop(); },
+        onPersist: () => persist.layout(),
+    });
+    inspWin.body.replaceChildren(buildInspector());
+    return inspWin;
 }

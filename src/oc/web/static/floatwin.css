@@ -124,7 +124,7 @@
 .act-empty { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--muted); }
 .act-row {
     display: flex; align-items: center; gap: 8px; padding: 7px 9px;
-    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    background: var(--card-2); border-radius: 6px;
 }
 /* a row bound to a graph node: click it to pan+zoom there (hover hints the title) */
 .act-row[data-node] { cursor: pointer; }
@@ -228,7 +228,9 @@
 .hist-count { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; margin-right: 2px; }
 .fw-head .hist-nav { width: 22px; height: 22px; font-size: var(--fs-xs); }
 .fw-head .hist-nav:disabled { opacity: 0.4; cursor: default; background: var(--line); color: var(--text); }
-.hist-list { display: flex; flex-direction: column; gap: 2px; min-height: 100%; }
+/* column-reverse shows newest at top / oldest at bottom while the DOM stays POSITIONAL (rows[i] ==
+   entries[i], data-i == i) — so the delegated click (jumpTo data-i) and scrollIntoView still work. */
+.hist-list { display: flex; flex-direction: column-reverse; gap: 2px; min-height: 100%; }
 .hist-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); }
 /* one edit per row: label (left, truncates) + relative time (right). Click to travel there. */
 .hist-row {
@@ -250,14 +252,21 @@
 .hist-row[data-kind="clear"]  .hist-lbl { color: var(--warn); }
 .hist-row[data-kind="change"] .hist-lbl { color: var(--text); }
 .hist-row[data-kind="base"]   .hist-lbl { color: var(--muted); }
-/* the point we're parked on: accent stripe + tint (bold, but keep the kind colour) */
-.hist-row.hist-cur { background: var(--accent-bg); border-left-color: var(--accent); }
-.hist-row.hist-cur .hist-lbl { font-weight: 600; }
+/* the point we're parked on: accent tint + accent label text (bold, overrides the kind colour) */
+.hist-row.hist-cur { background: var(--accent-bg); }
+.hist-row.hist-cur .hist-lbl { font-weight: 600; color: var(--accent); }
 /* entries AHEAD of the current point (redoable future) read dimmed */
 .hist-row.hist-future { opacity: 0.45; }
 .hist-row.hist-future .hist-lbl { font-style: italic; }
 
 /* ---- database structure panel ---------------------------------------------- */
+.db-datasets,
+.db-tables {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
 .db-panel { display: flex; flex-direction: column; gap: 8px; min-height: 100%; }
 .db-head { display: flex; align-items: center; gap: 8px; }
 .db-head-txt { font-size: var(--fs-sm); font-weight: 600; color: var(--accent);
@@ -265,7 +274,7 @@
 .db-sec { display: flex; flex-direction: column; gap: 4px; }
 .db-h { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.06em; color: var(--muted); }
-.db-trow { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
+.db-trow { background: var(--card-2); border-radius: 6px; padding: 6px 9px; }
 .db-tname { font-size: var(--fs-sm); }
 .db-tname b { font-weight: 600; color: var(--text); }
 .db-tmeta { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -274,7 +283,7 @@
 .db-tidx { font-size: var(--fs-xs); color: var(--muted); margin-top: 1px; }
 .db-tidx:empty { display: none; }
 .db-dsrow { display: flex; flex-direction: column; align-items: stretch; gap: 4px;
-    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
+    background: var(--card-2); border-radius: 6px; padding: 6px 9px; }
 .db-dshead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .db-dsname { font-size: var(--fs-sm); font-weight: 600; color: var(--text); cursor: pointer; }
 .db-dsname:hover { text-decoration: underline; }
@@ -298,7 +307,7 @@
 .db-tname { display: flex; align-items: baseline; gap: 4px; }
 .db-acts { display: flex; gap: 4px; margin-left: auto; }   /* dataset clear+remove: always hard right */
 .db-acts .armbtn,
-.db-trow .db-act { padding: 0 5px; font-size: 0.7rem; line-height: 1.5; }   /* compact db buttons */
+.db-trow .db-act { padding: 0 5px; font-size: 0.7rem; line-height: 1.5; min-height: unset; border: unset; background: color-mix(in oklab, var(--danger, var(--accent)) 9%, transparent); }   /* compact db buttons */
 /* destructive db buttons read red at rest, fill on hover/arm */
 .armbtn.db-danger { color: var(--danger); border-color: var(--danger); }
 .armbtn.db-danger:hover:not(:disabled) { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }
@@ -383,26 +392,16 @@
 .live-dbg-val { color: var(--text); font-weight: 500; }
 .live-dbg-fld.cor .live-dbg-val { color: var(--warn); }
 
-/* ---- testing harness (video -> live OCR) ----------------------------------- */
-.test-panel { display: flex; flex-direction: column; gap: 8px; }
-.test-file { width: 100%; font-size: var(--fs-xs); }
-.test-name { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.test-bar { display: flex; gap: 6px; }
-.test-bar button { flex: 1; }
-.test-seek { width: 100%; }
-.test-frame { color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; text-align: center; }
-.test-feed { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); }
-.test-feed-cb { flex: none; width: auto; margin: 0; }
-.test-hint { color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }
-.test-ctl:disabled { opacity: 0.45; cursor: not-allowed; }
-.test-sep { border-top: 1px solid var(--border); margin: 2px 0; }
-.test-cap { display: flex; flex-direction: column; gap: 6px; }
-.test-cap-head { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: var(--fs-xs); }
-.test-cap-be { flex: 1; min-width: 0; }
-.test-cap-out { color: var(--text); font-size: var(--fs-xs); line-height: 1.5; font-variant-numeric: tabular-nums;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
-
 /* ---- node inspector (feed synthetic readout values into the live session) -- */
+/* Its own panel opens wide (500px, set in JS) and at FULL usable height like pretty view's
+   inspector: pin the height to the usable rectangle (same reserves as the .floatwin max-height
+   cap) so it fills top-to-bottom regardless of content. autoFit is off in JS, so nothing writes an
+   inline height to fight this; a manual resize (inline height) still wins and the height reset dot
+   clears back to full. Guarded off while collapsed so the shade still rolls up to the header. */
+#inspector:not(.collapsed) { height: calc(100dvh - var(--fw-top, 56px) - var(--fw-bot, 40px)); }
+#inspector .fw-body { display: flex; flex-direction: column; }
+#inspector .insp-panel { flex: 1 1 auto; min-height: 0; }
+#inspector .insp-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }   /* rows scroll; controls + last-line stay pinned */
 .insp-panel { display: flex; flex-direction: column; gap: 8px; }
 .insp-head { color: var(--text); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .insp-body { display: flex; flex-direction: column; gap: 8px; }
@@ -441,15 +440,12 @@
 .insp-sendall { flex: 1; }
 .insp-loop-wrap { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
 .insp-loopms { width: 60px; font-size: var(--fs-xs); }
-.insp-loopbtn { flex: none; }
+.insp-loopbtn { flex: none; min-width: 5.5em; text-align: center; }   /* fixed width so ▶ play / ■ pause don't resize it */
 .insp-dsopt { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: var(--fs-xs); line-height: 1.3; cursor: pointer; }
 .insp-dsopt input[type="checkbox"] { flex: none; margin: 0; }
 .insp-garblepct { width: 48px; font-size: var(--fs-xs); }
 .insp-garblepct:disabled { opacity: 0.45; }
 .insp-last { color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; font-variant-numeric: tabular-nums; min-height: 1.4em; }
-/* the testing panel's sections are the shared .panel-fs disclosure — tighten its body padding */
-.test-panel > .panel-fs > .fs-body { padding: 6px 2px 2px; }
-.test-video { display: flex; flex-direction: column; gap: 8px; }
 
 /* ---- precapture (now floating, was a centred modal) ------------------------ */
 #precap .fw-body { padding: 0; }

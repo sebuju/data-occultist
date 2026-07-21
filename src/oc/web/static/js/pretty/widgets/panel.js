@@ -32,7 +32,7 @@ export const PANEL_OPTIONS = [
     { value: "nodemap", label: "node map" },
     { value: "nodelist", label: "node list" },
     { value: "toolbox", label: "toolbox" },
-    { value: "testing", label: "testing" },
+    { value: "inspector", label: "inspector" },
 ];
 
 export default {

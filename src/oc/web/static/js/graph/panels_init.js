@@ -1,4 +1,4 @@
-// Wires every floating panel's topbar toggle button (node map, node list, activity, testing,
+// Wires every floating panel's topbar toggle button (node map, node list, activity, inspector,
 // stats, db-struct, toolbox, precap, live, edit-history), the generic shift-click "reset box"
 // behavior shared by all of them, and the read-only window.__nodeHistory e2e introspection API.
 // Split out of main.js; render/autosave stay in main and are imported back.
@@ -13,7 +13,7 @@ import {
     nmState, nlState, buildNodeMap, buildNodeList, setNodeMapVisible, setNodeListVisible,
 } from "./panels/nodemap.js";
 import { act, actState, buildActivity } from "./panels/activity.js";
-import { testWin, testState, buildTesting } from "./panels/testing.js";
+import { inspWin, inspState, buildInspectorPanel } from "./panels/inspector.js";
 import { statsWin, statsState, buildStats } from "./panels/stats.js";
 import { dbWin, dbState, buildDBStruct } from "./panels/dbstruct.js";
 import { tb, tbState, buildToolbox } from "./panels/toolbox.js";
@@ -42,9 +42,9 @@ export function initPanels() {
     $("activityBtn")?.classList.toggle("active", actState.visible);
     $("activityBtn")?.addEventListener("click", () => act.setVisible(!actState.visible, true));
 
-    buildTesting();
-    $("testingBtn")?.classList.toggle("active", testState.visible);
-    $("testingBtn")?.addEventListener("click", () => testWin.setVisible(!testState.visible, true));
+    buildInspectorPanel();
+    $("inspectorBtn")?.classList.toggle("active", inspState.visible);
+    $("inspectorBtn")?.addEventListener("click", () => inspWin.setVisible(!inspState.visible, true));
 
     buildStats();
     $("statsBtn")?.classList.toggle("active", statsState.visible);
@@ -134,7 +134,7 @@ export function initPanels() {
     // of toggling it. Capture phase so it can pre-empt the normal toggle handler above. If the
     // panel is already open we reset in place and suppress the toggle (which would hide it); if
     // it's closed/not-built we let the toggle open it, then reset on the next tick.
-    const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", themeBtn: "graph-theme", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", testingBtn: "testing", statsBtn: "stats", dbstructBtn: "dbstruct", historyBtn: "history" };
+    const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", themeBtn: "graph-theme", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", inspectorBtn: "inspector", statsBtn: "stats", dbstructBtn: "dbstruct", historyBtn: "history" };
     for (const [btnId, panelId] of Object.entries(_PANEL_TOGGLES)) {
         $(btnId)?.addEventListener("click", (ev) => {
             if (!ev.shiftKey) return;

@@ -318,6 +318,9 @@ export function createFloatWin({
     bothAxes = false, onResize = null, onShow = null, onHide = null, onPersist = null,
     autoFit = true,   // height auto-fits the content; width is the only preset/user-sized axis.
                                         // Panels with their own height logic (the node map's aspect fit) pass false.
+    resetW = RESET_W, // width restored on open-reset / shift-click / the width reset dot. Defaults to the
+                                        // uniform 300 preset; a panel that wants a different default (e.g. the wide
+                                        // inspector) overrides it so every reset path lands on its own width.
 }) {
     state.collapsed = !!state.collapsed;   // ensure the key exists so it round-trips + resets
     if (state.dock === undefined) state.dock = null;   // { to, dx } when docked below another panel
@@ -472,7 +475,7 @@ export function createFloatWin({
         // height dot -> auto-fit. Each clears only its own axis so the other keeps the user's size.
         onResetW: () => {
             state.sized = false;
-            state.w = RESET_W; el.style.width = "";
+            state.w = resetW; el.style.width = "";
             applySize(); markSized(); onResize && onResize();
             save();
         },
@@ -562,7 +565,7 @@ export function createFloatWin({
             if (_embedHost) unembed();   // opening in the graph reclaims the body from any pretty embed
             if (reset) {
                 state.collapsed = !!_default.collapsed; state.userSized = false; state.sized = false;
-                state.w = RESET_W; state.h = null;   // width -> uniform preset (300); height -> auto-fit
+                state.w = resetW; state.h = null;   // width -> the panel's reset width; height -> auto-fit (or CSS)
                 el.style.width = ""; el.style.height = "";
             }
             applySize(); applyCollapsed(); markSized();
@@ -627,7 +630,7 @@ export function createFloatWin({
     // Reset the panel's BOX (size + collapsed + dock) to defaults and re-place it at its
     // default top-right slot — keeps visibility. Bound to shift-clicking the panel's toggle.
     function resetBox() {
-        state.w = RESET_W; state.h = null;   // width -> uniform preset (300); height -> auto-fit
+        state.w = resetW; state.h = null;   // width -> the panel's reset width; height -> auto-fit (or CSS)
         state.collapsed = !!_default.collapsed; state.dock = _default.dock || null;
         state.userSized = false; state.sized = false;
         el.style.width = ""; el.style.height = "";

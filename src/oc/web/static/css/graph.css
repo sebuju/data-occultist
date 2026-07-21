@@ -178,17 +178,17 @@
    kills the "wall of form fields". Higher specificity than controls.css `input{}` so it wins
    regardless of load order. Checkboxes (slide-toggles), ranges and colour pickers keep their own
    treatment (excluded). ---- */
-.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select, textarea) {
+.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select, textarea, .reg-agg-btn) {
     background: transparent; border: unset; border-radius: 5px;
     padding: 0 4px; transition: background .12s ease, border-color .12s ease;
 }
-.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select):hover {
+.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select, .reg-agg-btn):hover {
     background: color-mix(in oklab, var(--nt) 6%, transparent);
     outline-color: color-mix(in oklab, var(--nt) 22%, var(--line));
 }
-.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select, textarea):focus {
-    background: var(--bg); 
-    outline-color: color-mix(in oklab, var(--nt) 50%, var(--line)); 
+.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select, textarea, .reg-agg-btn):focus {
+    background: var(--bg);
+    outline-color: color-mix(in oklab, var(--nt) 50%, var(--line));
 }
 /* strip the native number-input spinner arrows (they crowd the tight blueprint fields) */
 .gnode input::-webkit-outer-spin-button,
@@ -198,7 +198,7 @@
 }
 /* the value now carries the primary text colour (it's the content, not chrome); the .flab/.lab
    labels stay muted, so each row reads "muted key -> bright value" like the preview's k/v grid */
-.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select) { color: var(--nt); }
+.gnode :is(input:not([type="checkbox"], [type="range"], [type="color"], .gi-id), select, .reg-agg-btn) { color: var(--nt); }
 /* strip the native <select> chrome so its value text starts exactly at our padding-left (a native
    select insets the text a few px past its padding, so it sat right of plain inputs in the same
    column). Supply our own chevron on the right; the text now lines up with every input. */
@@ -1134,11 +1134,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .mr-val, .mr-mark { flex: 0 0 auto; min-width: 0; overflow-wrap: anywhere; text-align: right; }
 
 /* aggregate-picker trigger (register_node.js): a <button> standing in for the native <select> it
-   replaced (reg_agg_picker.js opens the grouped help popover instead), styled back to look like
-   the other .gi inputs on the row rather than the app's default filled button. */
-.reg-agg-btn { justify-content: space-between; text-align: left;
-    background: var(--bg); color: var(--text); border: 1px solid var(--line); font-size: inherit; }
-.reg-agg-btn::after { content: "\25be"; opacity: .6; margin-left: 6px; }   /* small dropdown affordance */
+   replaced (reg_agg_picker.js opens the grouped help popover instead). It rides the same de-input
+   :is() groups as every <select> on the row (transparent + borderless at rest, --nt text, box
+   revealed on hover/focus), so it reads as just another select — only width + left-align here. */
+.reg-agg-btn { width: 100%; justify-content: flex-start; text-align: left;
+    font-size: inherit; line-height: inherit; min-height: 0; }   /* drop button base's 26px min-height + lh:1 so its row height matches sibling inputs */
 
 /* register "memory bank": a fluid grid of square value-slots (one per held key). Column count
    follows the node width via auto-fill + a rem floor — no fixed px, so it reflows as the node is
