@@ -5044,7 +5044,16 @@ sounds:
     repeat: 1
   volume: 1.0
   enabled: true
-actions: []
+actions:
+- id: action
+  action: ''
+  sources: []
+  slots: {}
+  dest: ''
+  delay_ms: 0
+  repeat: 1
+  repeat_ms: 300
+  enabled: true
 registers:
 - id: loadout_register
   sources:
@@ -5584,7 +5593,7 @@ layout:
       x: 4780.0
       y: -6380.0
       w: 360.0
-      h: 800.0
+      h: 820.0
       collapsed: false
       custW: false
       custH: true
@@ -5593,7 +5602,7 @@ layout:
       x: 4360.0
       y: -6380.0
       w: 360.0
-      h: 840.0
+      h: 820.0
       collapsed: false
       custW: false
       custH: true
@@ -5747,7 +5756,7 @@ layout:
       x: 6200.0
       y: -6380.0
       w: 360.0
-      h: 840.0
+      h: 820.0
       collapsed: false
       custW: false
       custH: true
@@ -5756,7 +5765,7 @@ layout:
       x: 6620.0
       y: -6380.0
       w: 360.0
-      h: 840.0
+      h: 820.0
       collapsed: false
       custW: false
       custH: true
@@ -5879,8 +5888,8 @@ layout:
       custH: true
       softH: true
     win:mission_rewards:
-      x: 4300.0
-      y: -3040.0
+      x: 1140.0
+      y: -8120.0
       w: 620.0
       h: 660.0
       collapsed: false
@@ -5889,8 +5898,8 @@ layout:
       softW: false
       softH: false
     ds:mission_rewards:
-      x: 4980.0
-      y: -3040.0
+      x: 1820.0
+      y: -8120.0
       collapsed: false
     win:arsenal_warframe:
       x: 11280.0
@@ -7201,6 +7210,14 @@ layout:
       custH: true
       softW: true
       softH: true
+    action:action:
+      x: -960.0
+      y: -5580.0
+      collapsed: false
+    vt:ds:prices_live:
+      x: -540.0
+      y: -1260.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -7907,6 +7924,7 @@ layout:
     - producer:wf_market_live
     - trigger:owned_refresh
     - sub:master_prime_parts
+    - vt:ds:prices_live
     outline:
       color: '#8a91a0'
       style: none
@@ -8025,6 +8043,7 @@ layout:
     - reghist:value_ab_register
     - register:warframe_name_live_register
     - process:process_warframe_name_live
+    - action:action
     outline:
       color: '#5aa9e6'
       style: none
@@ -8716,6 +8735,7 @@ layout:
   - rohist:live_game_window:value_ab_3
   - rohist:live_game_window:value_ab_4
   - reghist:value_ab_register
+  - vt:ds:prices_live
   sub_groups:
   - id: subgroup_5
     parent: group_22
