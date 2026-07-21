@@ -711,9 +711,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .fgrp:first-child { margin-top: 0; }
 .frule-btns { display: flex; gap: 4px; align-items: center; place-self: flex-end; }
 .frule-btns > button { min-height: unset; padding: 0px; background: unset; color: var(--nt, var(--accent)); }
-.fgrp .ruleadd, .fgrp .rulecopy, .fgrp .rulepaste { font-size: var(--fs-xs); line-height: 1;
+/* Keyed off the CONTAINER, not each button class: every sub-heading button pair (rules copy/paste/
+   add, the sound forge's pitch/shape copy/paste) is a `.frule-btns > button`, so a new section's
+   buttons inherit the look with no new selector (rule 7). */
+.fgrp .frule-btns > button { font-size: var(--fs-xs); line-height: 1;
     min-height: 0; text-transform: none; letter-spacing: 0; }
-.fgrp .rulecopy[disabled], .fgrp .rulepaste[disabled] { opacity: .4; cursor: default; }
+.fgrp .frule-btns > button[disabled] { opacity: .4; cursor: default; }
 /* one pipeline rule: a head row (move + when(+arg) -> then(+operands) + trash) and, below it,
    the live in->out trace slot */
 .frule { display: flex; flex-direction: column; gap: 2px; }

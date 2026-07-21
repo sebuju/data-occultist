@@ -13,7 +13,7 @@
 //   body    -> a Node or DocumentFragment
 //   ports   -> a Node/frag or null (default null)
 //   pulse   -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
-import { h, frag, svg, TRASH, PLUS, COPY, PASTE, kv, subhead, gspan, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
+import { h, frag, svg, TRASH, PLUS, copyPasteBtns, kv, subhead, gspan, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
@@ -581,8 +581,8 @@ export function rulesSection(fd, cls, fid) {
     const da = fid ? { fid } : {};
     return frag(
         subhead("rules", h("div", { class: "frule-btns" },
-            h("button", { class: "rulecopy", dataset: { ...da }, disabled: !(fd.rules || []).length, title: "copy this pipeline" }, COPY()),
-            h("button", { class: "rulepaste", dataset: { ...da }, title: "replace all rules with the copied pipeline" }, PASTE()),
+            copyPasteBtns("rulecopy", "rulepaste", { canCopy: !!(fd.rules || []).length, dataset: da,
+                copyTitle: "copy this pipeline", pasteTitle: "replace all rules with the copied pipeline" }),
             h("button", { class: "ruleadd", dataset: { ...da }, title: "add a rule to the pipeline" }, PLUS()))),
         gspan("frule-list", ruleRows(fd, cls, fid)));
 }

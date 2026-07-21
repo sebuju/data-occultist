@@ -207,6 +207,18 @@ export function iconBtn(icon, { cls = "", title, onClick, disabled = false, data
 export const trashBtn = ({ cls = "", title = "remove", dataset, onClick, disabled = false } = {}) =>
     iconBtn(TRASH(), { cls, title, dataset, onClick, disabled, danger: true });
 
+// The ONE copy/paste button pair (rule 7): a section sub-heading that can stash its contents and
+// replace them from the stash — the rules pipeline, and the sound forge's pitch/shape sections.
+// Returns the two buttons as a FRAGMENT, not a wrapper, so a caller can drop them into its own
+// `.frule-btns` div alongside extra buttons (rulesSection adds a `+`). The classes are the caller's
+// wiring hooks — pair them with graph/clipboard.js `makeClip(pasteSel)`, which owns the stash and
+// the cross-node disabled state.
+export function copyPasteBtns(copyCls, pasteCls, { canCopy = true, copyTitle = "copy", pasteTitle = "paste", dataset } = {}) {
+    return frag(
+        h("button", { class: copyCls, type: "button", dataset, disabled: !canCopy, title: copyTitle }, COPY()),
+        h("button", { class: pasteCls, type: "button", dataset, title: pasteTitle }, PASTE()));
+}
+
 // A wired-sources row: the pinned label (col 1) + a `.sv-inputs` pill list (col 2), as two grid
 // children. THE way to add a source-pill list to a node body (rule 7) — every sourcesInput
 // (graph/sources_input.js) site builds on it. The label carries `.sv-lab` so graph.css aligns it

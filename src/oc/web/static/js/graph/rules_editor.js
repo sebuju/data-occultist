@@ -2,6 +2,7 @@
 // this), and the armed two-click "remove" primitive every sources-input chip list uses. Split out
 // of main.js; armConfirm stays in main and is imported back.
 import { makeArmed } from "./armbtn.js";
+import { makeClip } from "./clipboard.js";
 import { armConfirm } from "./main.js";
 
 // `edit(mutate, { rebuild })` is the ONE way a rule row changes the model: the caller wraps it in
@@ -11,7 +12,8 @@ import { armConfirm } from "./main.js";
 // the node body is rebuilt — mid-transaction, without saving, and without ending the transaction.
 // Cross-field rule clipboard: "copy" stashes a field's whole pipeline here, "paste" replaces
 // another field's rules with a deep clone of it (survives across nodes for this session).
-let ruleClipboard = [];
+// The shared primitive (clipboard.js) — the forge's pitch/shape sections hold their own clips.
+const ruleClip = makeClip(".rulepaste");
 
 export function wireFieldRules(div, fd, { edit, retrace }) {
     fd.rules = fd.rules || [];
@@ -24,20 +26,11 @@ export function wireFieldRules(div, fd, { edit, retrace }) {
     div.querySelector(".ruleadd")?.addEventListener("click", () => {
         restructure(() => fd.rules.push({ when: "always", then: "set", value: "" }));
     });
-    div.querySelector(".rulecopy")?.addEventListener("click", () => {
-        ruleClipboard = structuredClone(fd.rules);   // stash a deep copy
-        // enable EVERY paste button now something's on the clipboard (paste is cross-node, so a
-        // sibling node's button — rendered before this copy — must un-disable too)
-        document.querySelectorAll(".rulepaste").forEach((pb) => { pb.disabled = false; });
+    ruleClip.wire(div, {
+        copyCls: ".rulecopy", pasteCls: ".rulepaste",
+        read: () => fd.rules,
+        write: (rules) => restructure(() => { fd.rules = rules; }),   // paste REPLACES all current rules
     });
-    const pasteBtn = div.querySelector(".rulepaste");
-    if (pasteBtn) {
-        pasteBtn.disabled = !ruleClipboard.length;   // nothing copied yet -> nothing to paste
-        pasteBtn.addEventListener("click", () => {
-            if (!ruleClipboard.length) return;
-            restructure(() => { fd.rules = structuredClone(ruleClipboard); });   // paste REPLACES all current rules
-        });
-    }
     div.querySelectorAll(".rulemv").forEach((b) => b.addEventListener("click", (e) => {
         const i = +e.currentTarget.dataset.ri, j = i + +e.currentTarget.dataset.d;
         if (j < 0 || j >= fd.rules.length) return;
