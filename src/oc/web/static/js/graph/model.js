@@ -347,14 +347,36 @@ export class GraphModel {
         // register refs match/repoint the id BEFORE the "#" while preserving the suffix, so a register
         // rename moves "register:old#k" -> "register:new#k" and a register delete prunes it (blank id).
         const procRegId = (r) => { const rest = r.slice(r.indexOf(":") + 1), h = rest.indexOf("#"); return h < 0 ? rest : rest.slice(0, h); };
+        // A register-slot ref ("register:<id>#<key>[@facet]") stored via get/set: BOTH parts repoint —
+        // the <id> on a REGISTER rename, AND the <key> on a READOUT rename. A register key IS the id of
+        // the readout that feeds the slot (a readout->process->register slot carries the readout id
+        // through), so renaming the readout must move "register:reg#old" -> "register:reg#new" or the
+        // ref points at a dead key: a gate over it silently never holds, a process input reads nothing.
+        // The "@facet" tail (count-facet sources) is preserved. ONE decoder, shared by process input +
+        // gate/router source (rule 7). Missing this key repoint was the recurring rename bug.
+        const regRefSites = (get, set) => {
+            const parse = () => {
+                const r = get() || "", c = r.indexOf(":"), rest = c < 0 ? r : r.slice(c + 1);
+                const h = rest.indexOf("#"), id = h < 0 ? rest : rest.slice(0, h);
+                const tail = h < 0 ? "" : rest.slice(h + 1), a = tail.indexOf("@");
+                return { id, key: a < 0 ? tail : tail.slice(0, a), facet: a < 0 ? "" : tail.slice(a), hasKey: h >= 0 };
+            };
+            const build = (id, key, facet, hasKey) => (id ? `register:${id}${hasKey ? `#${key}${facet}` : ""}` : "");
+            scalar(["register"], false, () => parse().id,
+                (v) => { const p = parse(); set(build(v, p.key, p.facet, p.hasKey)); });
+            if (parse().hasKey)
+                scalar(["readout"], false, () => parse().key,
+                    // rename -> move the key; delete (blank) -> blank the WHOLE ref (a dead key is a
+                    // dead slot, same as a register delete blanking its refs), never a malformed "#".
+                    (v) => { const p = parse(); set(v ? build(p.id, v, p.facet, true) : ""); });
+        };
         for (const p of this.profile.processes || []) {
             const a = p.sources; if (!a) continue;
             a.forEach((inp, i) => {
                 const ref = inp.ref || ""; const c = ref.indexOf(":"); if (c < 0) return;
                 const kind = ref.slice(0, c);
                 if (kind === "register") {
-                    const suf = (() => { const rest = ref.slice(c + 1), h = rest.indexOf("#"); return h < 0 ? "" : rest.slice(h); })();
-                    scalar(["register"], false, () => procRegId(a[i].ref), (v) => { a[i].ref = `register:${v}${suf}`; });
+                    regRefSites(() => a[i].ref, (v) => { a[i].ref = v; });
                 } else {
                     scalar([kind], false, () => a[i].ref.slice(a[i].ref.indexOf(":") + 1), (v) => { a[i].ref = `${kind}:${v}`; });
                 }
@@ -362,17 +384,15 @@ export class GraphModel {
             lists.push({ arr: () => p.sources, empty: (o) => !procRegId(o.ref || "") });
         }
 
-        // gate/router SOURCE: one prefixed ref ("readout:<id>" | "register:<id>#<key>") that may
-        // carry a "#key" suffix — decode the kind, and for a register ref repoint the id BEFORE the
-        // "#" while preserving the suffix (same pattern as the process source above). A router also
-        // holds per-branch bare-id target lists.
+        // gate/router SOURCE: one prefixed ref ("readout:<id>" | "register:<id>#<key>[@facet]"). A
+        // register ref repoints BOTH id and key (regRefSites, same as the process input above); a
+        // readout ref repoints the bare id. A router also holds per-branch bare-id target lists.
         const refField = (owner, get, set) => {
             const ref = get(); if (!ref) return;
             const c = ref.indexOf(":"); if (c < 0) return;
             const kind = ref.slice(0, c);
             if (kind === "register") {
-                const rest = ref.slice(c + 1), hh = rest.indexOf("#"), suf = hh < 0 ? "" : rest.slice(hh);
-                scalar(["register"], false, () => { const rr = get().slice(get().indexOf(":") + 1), h2 = rr.indexOf("#"); return h2 < 0 ? rr : rr.slice(0, h2); }, (v) => set(v ? `register:${v}${suf}` : ""));
+                regRefSites(get, set);
             } else {
                 scalar([kind], false, () => get().slice(get().indexOf(":") + 1), (v) => set(v ? `${kind}:${v}` : ""));
             }

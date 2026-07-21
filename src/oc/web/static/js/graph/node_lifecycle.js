@@ -45,8 +45,12 @@ function remapNodeState(mapId) {
         if (to && to !== id) { model.shownSatellites.delete(id); model.shownSatellites.add(to); }
     }
     const tables = model.profile.layout?.tables;    // object keyed by NODE id: per-table column widths/sort
+    // mapAny, NOT mapId: a table can be keyed by a SATELLITE node id (rohist:/hist:/prodhist:/vt:…),
+    // whose new id comes from mapSat. Using bare mapId here left every satellite grid's widths/sorts
+    // behind on a rename — an orphaned entry that never matches a node again (and a duplicate once the
+    // renamed satellite rebuilt its own). This is the twin of the pos/size/collapsed loops above.
     if (tables) for (const id of Object.keys(tables)) {
-        const to = mapId(id);
+        const to = mapAny(id);
         if (to && to !== id) { tables[to] = tables[id]; delete tables[id]; }
     }
     for (const k of [...dsTab.keys()]) {            // keyed by DATASET entity id -> reconstruct the `ds:` node id

@@ -91,6 +91,34 @@ const gate = (m) => P(m).gates[0];
     eq(toast(m).texts[0].content, "{{readout:ro_z}}", "toast token rewritten");
 }
 
+// ---- rename readout: register #key refs follow (the register slot IS the readout id) ----
+// A register key is the id of the readout feeding it, so a gate/router/process ref
+// "register:<reg>#<readout>" must repoint its KEY on a readout rename, not just "readout:<id>"
+// refs — else the ref points at a dead key and a gate over it silently never holds. The "@facet"
+// count suffix is preserved. (Regression: this key half was previously left untouched.)
+{
+    const m = new GraphModel();
+    m.load({
+        name: "t2",
+        windows: [{ id: "w", fields: [{ id: "f" }], detect: [], states: [], regions: [],
+            readouts: [{ id: "ro_x", field: "f" }] }],
+        registers: [{ id: "reg1", sources: ["readout:ro_x"] }],
+        processes: [{ id: "p1", sources: [{ ref: "register:reg1#ro_x", out: "" }] }],
+        gates: [{ id: "g1", source: "register:reg1#ro_x@nonblank", conds: [{ when: "gt", arg: "2" }] }],
+        routers: [{ id: "r1", source: "register:reg1#ro_x", branches: [] }],
+    });
+    ok(m.renameReadout("w", "ro_x", "ro_z"), "renameReadout returns true");
+    eq(m.profile.gates[0].source, "register:reg1#ro_z@nonblank", "gate register #key repointed, @facet preserved");
+    eq(m.profile.routers[0].source, "register:reg1#ro_z", "router register #key repointed");
+    eq(m.profile.processes[0].sources[0].ref, "register:reg1#ro_z", "process register-input #key repointed");
+    ok(m.renameRegister("reg1", "reg9"), "renameRegister still works after");
+    eq(m.profile.gates[0].source, "register:reg9#ro_z@nonblank", "register id repointed, #key + facet preserved");
+    // delete the keyed readout -> the whole ref blanks (no malformed "register:reg9#@nonblank")
+    m.removeReadout("w", "ro_z");
+    eq(m.profile.gates[0].source, "", "gate register #key ref blanked on readout delete");
+    eq(m.profile.processes[0].sources, [], "process register-input pruned on readout delete");
+}
+
 // ---- rename producer / action / window: target + priority carry ----
 {
     const m = build();
