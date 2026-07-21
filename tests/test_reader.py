@@ -671,8 +671,14 @@ def test_C_confirm_gate_hysteresis():
     assert reader._confirm_gate(k, True, 2) is False    # 1st present: warming up
     assert reader._confirm_gate(k, True, 2) is True     # 2nd: confirmed live
     assert reader._confirm_gate(k, True, 2) is True     # stays live while present
-    assert reader._confirm_gate(k, False, 2) is False   # clears on the FIRST absent tick
-    assert reader._confirm_gate(k, True, 2) is False    # must re-confirm from scratch
+    # a LONE miss must NOT reset a live readout (occasional OCR drop) — it just skips this tick...
+    assert reader._confirm_gate(k, False, 2) is False   # absent: no value to surface, but still live
+    assert reader._confirm_gate(k, True, 2) is True     # ...and the next present read surfaces at once
+    # only `need` CONSECUTIVE misses clear it
+    assert reader._confirm_gate(k, False, 2) is False   # absent run = 1
+    assert reader._confirm_gate(k, False, 2) is False   # absent run = 2 -> cleared
+    assert reader._confirm_gate(k, True, 2) is False    # now re-warming from scratch
+    assert reader._confirm_gate(k, True, 2) is True     # live again
 
 
 def test_C_confirm_gate_off_when_one():

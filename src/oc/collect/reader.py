@@ -900,29 +900,42 @@ class RegionReader:
 
     def _confirm_gate(self, key, present: bool, need: int) -> bool:
         """Presence-confirm hysteresis (C, per-readout ``FieldDef.confirm``): an empty->present
-        readout must read present ``need`` consecutive ticks before it first surfaces; it clears
-        on the FIRST absent tick (asymmetric — slow to appear, instant to clear, no stale hold).
-        Confirms PRESENCE, not value: once live, every tick's value flows through, so a
-        fast-changing counter is never frozen, while a one-frame flicker never reaches the count.
+        readout must read present ``need`` consecutive ticks before it first surfaces (kills a
+        one-frame flicker-in), and once live it stays live until ``need`` consecutive ABSENT ticks
+        clear it. The clear must be hysteretic, NOT instant: a live HUD readout misses the odd OCR
+        frame, and clearing on the first blank would drop it back to warming-up forever (it never
+        strings ``need`` clean reads together) — so it would never surface AND never pulse
+        on_readout, i.e. a nonblank gate would never fire. Confirms PRESENCE, not value: while live,
+        every present tick's value flows through (a fast counter is never frozen), and a lone miss
+        just skips that tick's value without resetting — the next present read surfaces at once.
+
         Sibling of :class:`stability.Confirmer` (which confirms a record ONCE and keeps it forever,
         for dataset dedup) — a readout must re-confirm as it toggles present/absent, so this small
-        rolling gate is deliberately separate rather than forced onto Confirmer (rule 7)."""
+        rolling gate is deliberately separate rather than forced onto Confirmer (rule 7).
+
+        State per key: ``[present_run, live, absent_run]``."""
         if need <= 1:
             return present
         st = self._ro_confirm_state.get(key)
         if st is None:
-            st = [0, False]
+            st = [0, False, 0]
             self._ro_confirm_state[key] = st
-        if not present:
-            st[0], st[1] = 0, False
+        if present:
+            st[2] = 0                   # a present read breaks any absent run
+            if st[1]:                   # already live -> value flows
+                return True
+            st[0] += 1                  # warming up
+            if st[0] >= need:
+                st[1] = True
+                return True
             return False
-        if st[1]:                       # already live -> stays live, value flows
-            return True
-        st[0] += 1
-        if st[0] >= need:
-            st[1] = True
-            return True
-        return False                    # still warming up -> suppress this tick
+        # absent this tick
+        st[0] = 0                       # a blank breaks the warm-up run
+        if st[1]:
+            st[2] += 1
+            if st[2] >= need:           # cleared only after `need` consecutive blanks
+                st[1] = False
+        return False                    # nothing to surface (no value read this tick)
 
     def read_readouts(self, frame: Frame, window: WindowDef,
                       fields: dict[str, FieldDef]) -> dict[str, object]:
