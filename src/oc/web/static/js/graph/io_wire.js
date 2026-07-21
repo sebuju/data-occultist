@@ -8,6 +8,7 @@
 import * as api from "../api.js";
 import * as hub from "../hub.js";
 import { model, nodeEls, setStatus } from "./state.js";
+import { persist } from "./persist.js";
 import { h, frag } from "../dom.js";
 import { renameNode, movePos } from "./node_lifecycle.js";
 import { drawEdges } from "./routing.js";
@@ -398,6 +399,11 @@ function wireAction(div, n) {
             for (const s of model.actionSources(x.id)) if (s.kind === "register") refreshRegister(s.id);
         };
         try {
+            // The server fires off the PERSISTED profile (load_profile reads disk), so a config
+            // edit still sitting in the 400ms autosave debounce would fire STALE. Land it first:
+            // the input's `change` already mutated the model on blur; flush that pending save
+            // before the request so a just-typed delay/dest/repeat is what actually fires.
+            await persist.flush();
             const r = await api.actions.fire(model.profile.name, x.id);
             const delay = Math.max(0, Number(x.delay_ms) || 0);
             btn.textContent = r.ran ? (delay ? `in ${delay}ms…` : "fired ✓") : "no-op";
