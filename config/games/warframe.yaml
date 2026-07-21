@@ -4952,8 +4952,18 @@ sounds:
     length_ms: 205
     attack: 4
     decay: 55
+    release: 0
     vibrato: 0
     crush: 11
+    cutoff: 100
+    reso: 0
+    noise: 0
+    sub: 0
+    glide: 100
+    echo: 0
+    echo_ms: 90
+    transpose: 0
+    repeat: 1
   volume: 0.7
   enabled: true
 - id: ab_sound_4
@@ -4968,8 +4978,18 @@ sounds:
     length_ms: 301
     attack: 100
     decay: 54
+    release: 0
     vibrato: 0
     crush: 100
+    cutoff: 100
+    reso: 0
+    noise: 0
+    sub: 18
+    glide: 100
+    echo: 0
+    echo_ms: 20
+    transpose: 0
+    repeat: 1
   volume: 0.7
   enabled: true
 - id: ab_sound_2
@@ -4984,8 +5004,18 @@ sounds:
     length_ms: 220
     attack: 4
     decay: 55
+    release: 0
     vibrato: 0
     crush: 18
+    cutoff: 100
+    reso: 0
+    noise: 0
+    sub: 0
+    glide: 100
+    echo: 0
+    echo_ms: 90
+    transpose: 0
+    repeat: 1
   volume: 1.0
   enabled: true
 - id: ab_sound_3
@@ -5000,8 +5030,18 @@ sounds:
     length_ms: 220
     attack: 4
     decay: 55
+    release: 0
     vibrato: 0
     crush: 18
+    cutoff: 100
+    reso: 0
+    noise: 0
+    sub: 0
+    glide: 100
+    echo: 0
+    echo_ms: 90
+    transpose: 0
+    repeat: 1
   volume: 1.0
   enabled: true
 actions: []

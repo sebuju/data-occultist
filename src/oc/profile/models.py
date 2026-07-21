@@ -1365,17 +1365,32 @@ class SynthDef(BaseModel):
     """A *generated* sound cue: instead of a file, the sound node synthesises the cue in the
     browser (Web Audio) from this tiny param set. Authored in the node's inline "forge". The
     pitch sweeps through ``points`` over ``length_ms``; ``wave`` picks the oscillator; the rest
-    shape the amp envelope, vibrato, and bit-crush. Rendered once to a buffer and cached — never
-    re-synthesised per play. ``volume`` is NOT here: it stays on :class:`SoundDef` as a
-    playback-time gain so changing it doesn't invalidate the cached render."""
+    shape the amp envelope, the timbre (vibrato, bit-crush, lowpass filter, noise/sub mix) and
+    the arrangement (glide between points, echo, transpose, repeat). Rendered once to a buffer
+    and cached — never re-synthesised per play. ``volume`` is NOT here: it stays on
+    :class:`SoundDef` as a playback-time gain so changing it doesn't invalidate the cached render.
+
+    Every knob defaults to the NEUTRAL value (filter bypassed, full glide, one repeat), so a cue
+    authored before a knob existed keeps sounding exactly as it did. The front-end mirrors these
+    in ``static/js/defaults.js`` (``SYNTH_DEFAULTS``) — keep the two in step."""
 
     wave: str = "square"                    # square | sine | sawtooth | triangle
     points: list[SynthPoint] = []           # pitch-over-time envelope (empty = silent)
     length_ms: int = Field(default=220, ge=10, le=5000)
     attack: int = Field(default=4, ge=0, le=100)     # amp-envelope shape (forge knobs, 0..100)
     decay: int = Field(default=55, ge=0, le=100)
+    release: int = Field(default=0, ge=0, le=100)    # tail fade past the decay (extends the render)
     vibrato: int = Field(default=0, ge=0, le=100)
     crush: int = Field(default=0, ge=0, le=100)
+    cutoff: int = Field(default=100, ge=0, le=100)   # lowpass (100 = bypassed)
+    reso: int = Field(default=0, ge=0, le=100)       # that filter's resonance (Q)
+    noise: int = Field(default=0, ge=0, le=100)      # white noise blended in pre-filter
+    sub: int = Field(default=0, ge=0, le=100)        # octave-down oscillator blended in pre-filter
+    glide: int = Field(default=100, ge=0, le=100)    # 0 = stepped jumps between points, 100 = full ramp
+    echo: int = Field(default=0, ge=0, le=100)       # feedback-delay amount (0 = dry)
+    echo_ms: int = Field(default=90, ge=20, le=400)  # that delay's time
+    transpose: int = Field(default=0, ge=-24, le=24)  # semitone shift of the whole envelope
+    repeat: int = Field(default=1, ge=1, le=8)       # retrigger the envelope N times inside length_ms
 
 
 class SoundDef(BaseModel):

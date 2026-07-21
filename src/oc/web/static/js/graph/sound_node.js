@@ -10,7 +10,8 @@
 //
 // Rendering only — wiring (rename, file-change, volume, forge interactions, test) is in main.js
 // (wireSound). Config persists in the profile YAML.
-import { h, frag, svg, labCell, gspan, subhead } from "../dom.js";
+import { h, frag, svg, labCell, gspan, subhead, copyPasteBtns } from "../dom.js";
+import { SYNTH_DEFAULTS } from "../defaults.js";
 import { confMeter } from "./meter.js";
 import { iconFor } from "./node_icons.js";
 
@@ -28,12 +29,25 @@ const WAVES = ["square", "sine", "sawtooth", "triangle"];
 const waveBtn = (w, on) => h("button", { class: "sf-wbtn" + (on ? " on" : ""), dataset: { wave: w }, title: w, type: "button" },
     svg("svg", { viewBox: "0 0 40 20" }, WAVE_GLYPH[w]()));
 
+// The shape board: one range knob per synth param, five to a row. Values are read through
+// SYNTH_DEFAULTS (defaults.js) so a cue authored before a knob existed shows — and sounds — the
+// neutral default instead of collapsing to the slider's minimum.
 const KNOBS = [   // [key, label, min, max, tip]
     ["length_ms", "len", 40, 1200, "total cue length in ms — the whole envelope plays over this span"],
     ["attack", "atk", 0, 100, "attack — how fast the volume ramps up at the note start"],
     ["decay", "dec", 0, 100, "decay — how quickly the volume falls after the peak (fraction of length)"],
+    ["release", "rel", 0, 100, "release — extra tail fade after the decay, ringing on past the cue length"],
+    ["repeat", "rep", 1, 8, "repeat — retrigger the whole envelope this many times INSIDE the length (1 = once)"],
+    ["glide", "gld", 0, 100, "glide — how much of each segment is spent sliding to the next pitch (0 = stepped jumps, arpeggio; 100 = full slide)"],
+    ["transpose", "semi", -24, 24, "transpose — shift every pitch by this many semitones (±2 octaves)"],
     ["vibrato", "vib", 0, 100, "vibrato — pitch-wobble depth and speed (0 = off)"],
+    ["sub", "sub", 0, 100, "sub — blend in a second oscillator an octave down for weight/body"],
+    ["noise", "noi", 0, 100, "noise — blend in white noise through the same envelope (air, hiss, percussion)"],
+    ["cutoff", "cut", 0, 100, "lowpass cutoff — 100 leaves the raw timbre alone, lower darkens it (down to a 200 Hz mumble)"],
+    ["reso", "res", 0, 100, "resonance — peak at the cutoff frequency for a squelchy/vocal edge (needs cut below 100)"],
     ["crush", "crush", 0, 100, "bit-crush — quantises the waveform for a gritty lo-fi timbre (0 = clean)"],
+    ["echo", "echo", 0, 100, "echo — feedback delay: how loud and how many the repeats are (0 = dry)"],
+    ["echo_ms", "dly", 20, 400, "echo time in ms — the gap between echo repeats"],
 ];
 const knob = (key, label, min, max, val, tip) =>
     h("div", { class: "sf-knob", title: tip },
@@ -43,18 +57,25 @@ const knob = (key, label, min, max, val, tip) =>
 
 // the inline forge body (shown when the node is in generator mode). All controls carry data-*
 // hooks; wireForge (main.js) reads/writes x.synth and drives the canvas.
+// Both sections carry the shared copy/paste pair (dom.js copyPasteBtns + graph/clipboard.js):
+// PITCH copies the drawn envelope alone (points are 0..1, so they land on a cue of any length),
+// SHAPE copies the wave plus every knob. So one cue's melody and another's timbre can be crossed.
 function forgeBody(syn) {
     return frag(
-        subhead("pitch × time"),
+        subhead("pitch × time", h("div", { class: "frule-btns" },
+            copyPasteBtns("sf-pcopy", "sf-ppaste", { canCopy: !!(syn.points || []).length,
+                copyTitle: "copy this pitch envelope", pasteTitle: "replace the envelope with the copied one" }))),
         gspan("sf-plot",
             // total duration (left) + hover help (right) share ONE top row so the tip aligns with it
             h("div", { class: "sf-hud" },
                 h("span", { class: "sf-len" }, `${syn.length_ms} ms`),
-                h("span", { class: "sf-tip" }, "click add · drag move · right-click delete")),
+                h("span", { class: "sf-tip" }, "dbl-click add · drag move · right-click delete")),
             h("canvas", { class: "sf-plot-c" })),
         gspan("sf-waves", ...WAVES.map((w) => waveBtn(w, w === (syn.wave || "square")))),
-        subhead("shape"),
-        gspan("sf-knobs", ...KNOBS.map(([k, l, mn, mx, tip]) => knob(k, l, mn, mx, syn[k] ?? 0, tip))),
+        subhead("shape", h("div", { class: "frule-btns" },
+            copyPasteBtns("sf-scopy", "sf-spaste", {
+                copyTitle: "copy the wave + every knob", pasteTitle: "replace the wave + every knob with the copied ones" }))),
+        gspan("sf-knobs", ...KNOBS.map(([k, l, mn, mx, tip]) => knob(k, l, mn, mx, syn[k] ?? SYNTH_DEFAULTS[k], tip))),
     );
 }
 

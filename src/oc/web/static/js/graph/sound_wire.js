@@ -7,7 +7,9 @@ import { model } from "./state.js";
 import { renameNode, movePos } from "./node_lifecycle.js";
 import { GENERATOR } from "./sound_node.js";
 import { playCue } from "./sound.js";
-import { playSynth } from "./synth.js";
+import { playSynth, noteName } from "./synth.js";
+import { makeClip } from "./clipboard.js";
+import { SYNTH_DEFAULTS } from "../defaults.js";
 import { onOutside } from "../inputbus.js";
 import { setModalOpenHook } from "../modal.js";
 import { observeResize } from "../dom.js";
@@ -104,14 +106,32 @@ async function refreshForgePreview(id) {
     forgeAnim.get(id)?.();   // new source => new start time; ensure the sweep loop is running
 }
 
+// The two forge clipboards (the rules pipeline has its own — same primitive, clipboard.js). Module
+// scope, so a copy on one node pastes onto another for the rest of the session.
+const pitchClip = makeClip(".sf-ppaste");
+const shapeClip = makeClip(".sf-spaste");
+// Every knob EXCEPT the envelope points — what "shape" copies (the wave rides along separately).
+const SHAPE_KEYS = Object.keys(SYNTH_DEFAULTS).filter((k) => k !== "wave");
+
+// The plot's ONE invariant: points are sorted by t and the outer two are pinned to the plot edges.
+// Deleting the first or last point used to leave the curve spanning only part of the plot, and
+// since a drag refuses to move t on the end points (below), that dead margin could never be
+// reclaimed — the cue looked stale. Re-pinning here means a delete visibly re-spans the plot.
+function normPts(s) {
+    const pts = s.points || [];
+    pts.sort((a, b) => a.t - b.t);
+    if (pts.length) { pts[0].t = 0; pts[pts.length - 1].t = 1; }
+}
+
 function wireForge(div, id) {
     const $ = (sel) => div.querySelector(sel);
     const canvas = $(".sf-plot-c");
     if (!canvas) return;
     const gx = canvas.getContext("2d", { willReadFrequently: true });   // software canvas: no accelerated-canvas compositor layer (see overlay.js)
-    const NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-    const pToNote = (p) => { const s = Math.round(p * 36); return NOTES[s % 12] + (3 + Math.floor(s / 12)); };
     const spec = () => model.soundNode(id)?.synth;
+    // the note a point SOUNDS as — synth.js owns the pitch->name mapping (transpose included), so a
+    // plot label can never drift from what you hear
+    const pToNote = (p) => noteName(p, spec()?.transpose ?? SYNTH_DEFAULTS.transpose);
     const commit = () => autosave(null);
     let drag = -1;
 
@@ -220,25 +240,42 @@ function wireForge(div, id) {
         return { t: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), p: Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height)) }; };
     const nearest = (q) => { const pts = spec()?.points || []; let bi = -1, bd = 1;
         pts.forEach((pt, i) => { const d = Math.hypot(pt.t - q.t, pt.p - q.p); if (d < bd) { bd = d; bi = i; } }); return bd < 0.07 ? bi : -1; };
+    // A press only ever GRABS an existing point — adding is a double-click (a single click kept
+    // dropping stray points while aiming at a dot).
     canvas.addEventListener("pointerdown", (e) => {
         if (e.button === 2) return;
         const s = spec(); if (!s) return;
-        const q = pos(e), hit = nearest(q);
-        if (hit >= 0) drag = hit;
-        else { s.points.push(q); s.points.sort((a, b) => a.t - b.t); drag = s.points.indexOf(q); }
+        const hit = nearest(pos(e));
+        if (hit < 0) return;
+        drag = hit;
+        canvas.classList.add("grabbing");
         canvas.setPointerCapture(e.pointerId); draw();
     });
+    canvas.addEventListener("dblclick", (e) => {
+        const s = spec(); if (!s) return;
+        const q = pos(e);
+        if (nearest(q) >= 0) return;   // double-clicking an existing point must not stack a twin on it
+        s.points.push(q); normPts(s); draw(); commit(); refreshForgePreview(id);
+    });
     canvas.addEventListener("pointermove", (e) => {
-        if (drag < 0) return; const s = spec(); if (!s) return;
+        const s = spec(); if (!s) return;
+        if (drag < 0) {
+            // hover feedback: a grab cursor over a draggable dot, the crosshair everywhere else
+            canvas.classList.toggle("over-dot", nearest(pos(e)) >= 0);
+            return;
+        }
         const q = pos(e), pt = s.points[drag];
         pt.p = q.p; if (drag > 0 && drag < s.points.length - 1) pt.t = q.t;
-        s.points.sort((a, b) => a.t - b.t); drag = s.points.indexOf(pt); draw(); liveRefresh();
+        normPts(s); drag = s.points.indexOf(pt); draw(); liveRefresh();
     });
-    canvas.addEventListener("pointerup", () => { if (drag < 0) return; drag = -1; commit(); refreshForgePreview(id); });
+    canvas.addEventListener("pointerup", () => {
+        canvas.classList.remove("grabbing");
+        if (drag < 0) return; drag = -1; commit(); refreshForgePreview(id);
+    });
     canvas.addEventListener("contextmenu", (e) => {
         e.preventDefault(); const s = spec(); if (!s) return;
         const hit = nearest(pos(e));
-        if (hit >= 0 && s.points.length > 2) { s.points.splice(hit, 1); draw(); commit(); refreshForgePreview(id); }
+        if (hit >= 0 && s.points.length > 2) { s.points.splice(hit, 1); normPts(s); draw(); commit(); refreshForgePreview(id); }
     });
     // waveform toggles
     div.querySelector(".sf-waves")?.addEventListener("click", (e) => {
@@ -258,9 +295,12 @@ function wireForge(div, id) {
         const s = spec(); if (!s) return;
         div.querySelectorAll(".sf-wbtn").forEach((w) => w.classList.toggle("on", w.dataset.wave === s.wave));
         div.querySelectorAll(".sf-k").forEach((el) => {
-            el.value = s[el.dataset.k];
+            // a spec authored before a knob existed omits it — show the neutral default, never the
+            // slider's minimum (which would silently RE-AUTHOR the cue on the next drag)
+            const v = s[el.dataset.k] ?? SYNTH_DEFAULTS[el.dataset.k];
+            el.value = v;
             const kv = div.querySelector(`.sf-kv[data-kv="${el.dataset.k}"]`);
-            if (kv) kv.textContent = String(s[el.dataset.k]);
+            if (kv) kv.textContent = String(v);
         });
         draw();
     };
@@ -271,6 +311,20 @@ function wireForge(div, id) {
         if (forgePreview.get(id)) refreshForgePreview(id); else playCue(model.soundNode(id));
     };
     div.querySelector(".sn-roll")?.addEventListener("click", () => loadCue(rollSynth()));
+    // section copy/paste. Both write THROUGH the live spec (never rebuildNode) so a running preview
+    // switches to the pasted material without a gap — the same in-place path as roll/preset.
+    const pasted = () => { normPts(spec()); applySpec(); commit();
+        if (forgePreview.get(id)) refreshForgePreview(id); else playCue(model.soundNode(id)); };
+    pitchClip.wire(div, {
+        copyCls: ".sf-pcopy", pasteCls: ".sf-ppaste",
+        read: () => spec()?.points || [],
+        write: (points) => { const s = spec(); if (!s) return; s.points = points; pasted(); },
+    });
+    shapeClip.wire(div, {
+        copyCls: ".sf-scopy", pasteCls: ".sf-spaste",
+        read: () => { const s = spec() || {}; return { wave: s.wave, ...Object.fromEntries(SHAPE_KEYS.map((k) => [k, s[k] ?? SYNTH_DEFAULTS[k]])) }; },
+        write: (shape) => { const s = spec(); if (!s) return; Object.assign(s, shape); pasted(); },
+    });
     // re-fit + redraw the canvas whenever the node (and thus the plot) resizes — points are 0..1 so
     // nothing to recompute, just keep the backing store crisp (dom.js observeResize, rule 7).
     observeResize(canvas, draw);
@@ -296,20 +350,34 @@ function wireForge(div, id) {
 
 // Roll a genuinely fresh random cue — every click gives something new (an earlier version derived
 // everything from length_ms alone, so rolling twice produced the identical cue). Randomizes wave,
-// length, the pitch-over-time points, and the shape knobs across sane musical ranges.
+// length, the pitch-over-time points, and the shape knobs across sane musical ranges. The colour
+// knobs (sub/noise/echo/repeat/crush/vibrato) fire only SOMETIMES: rolling every one of them every
+// time just averages out to the same wall of mud each click.
 const _rr = (a, b) => a + Math.random() * (b - a);
+const _some = (chance, a, b) => (Math.random() < chance ? Math.round(_rr(a, b)) : 0);
 function rollSynth() {
     const n = 3 + ((Math.random() * 4) | 0);   // 3..6 points, endpoints pinned at t=0 and t=1
     const points = [];
     for (let i = 0; i < n; i++) points.push({ t: i / (n - 1), p: +(0.1 + Math.random() * 0.85).toFixed(3) });
     const waves = ["square", "sine", "sawtooth", "triangle"];
+    const filtered = Math.random() < 0.45;
     return {
         wave: waves[(Math.random() * waves.length) | 0],
         points,
         length_ms: Math.round(_rr(120, 700)),
         attack: Math.round(_rr(0, 20)),
         decay: Math.round(_rr(30, 80)),
-        vibrato: Math.random() < 0.4 ? Math.round(_rr(5, 60)) : 0,   // vibrato/crush only sometimes
-        crush: Math.random() < 0.5 ? Math.round(_rr(5, 40)) : 0,
+        release: _some(0.35, 10, 60),
+        repeat: Math.random() < 0.25 ? 2 + ((Math.random() * 3) | 0) : 1,
+        glide: Math.random() < 0.3 ? Math.round(_rr(0, 40)) : 100,   // sometimes a stepped arp
+        transpose: Math.random() < 0.4 ? Math.round(_rr(-12, 12)) : 0,
+        vibrato: _some(0.4, 5, 60),
+        sub: _some(0.35, 20, 70),
+        noise: _some(0.3, 8, 45),
+        cutoff: filtered ? Math.round(_rr(35, 85)) : 100,
+        reso: filtered ? Math.round(_rr(0, 70)) : 0,   // resonance only means anything under a cutoff
+        crush: _some(0.5, 5, 40),
+        echo: _some(0.3, 20, 65),
+        echo_ms: Math.round(_rr(40, 220)),
     };
 }
