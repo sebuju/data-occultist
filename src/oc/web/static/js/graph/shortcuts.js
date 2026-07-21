@@ -264,7 +264,7 @@ registerKey({
             const gids = groups.selectedGroupIds();
             let any = false;
             for (const gid of gids) if (groups.stepGroupSize(gid, dir[0] * GRID, dir[1] * GRID)) any = true;
-            if (any) { groups.renderGroups(); flushEdges(); persist.layout(); }
+            if (any) { groups.renderGroups(); flushEdges(); persist.layout({ coalesce: true }); }
             ev.preventDefault();
         } else if (ev.shiftKey) {
             // Shift+WASD RESIZES every selected node one grid step (A/D width, W/S height) — same
@@ -305,7 +305,7 @@ registerKey({
                     // persist right away; no freeze/settle wait needed.
                     flushEdges();
                     groups.renderGroups();
-                    persist.layout();
+                    persist.layout({ coalesce: true });
                     flashGuides(selIds);   // show what the resized node(s) now line up with, then fade
                 }
                 ev.preventDefault();
@@ -327,7 +327,7 @@ registerKey({
                     const el = nodeEls.get(id); if (el) glideStep(el);
                     positionNode(id);
                 }
-                drawEdges(); groups.renderGroups(); persist.layout();
+                drawEdges(); groups.renderGroups(); persist.layout({ coalesce: true });
                 flashGuides(selIds);   // show what the moved node(s) now line up with, then fade
                 ev.preventDefault();
             }

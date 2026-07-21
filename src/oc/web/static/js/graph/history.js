@@ -55,19 +55,41 @@ async function restore(snap) {
 
 export const hist = createHistory({ snapshot, restore, label: diffLabel });
 
+// A keyboard nudge (WASD move / Shift+WASD resize, held to auto-repeat) steps one grid unit per key
+// event and each step saves — an immediate push would spawn one undo entry per step, flooding the
+// stack. pushHistoryLayout DEBOUNCES: a burst coalesces into ONE entry landing 500ms after the last
+// step (hist.push snapshots the CURRENT state at fire time + dedups, so it captures the final rest).
+// flushLayoutHistory commits a pending burst NOW — called before any immediate push, undo/redo, or
+// game switch so the burst is on the stack before the index moves. Mouse drag / config edits still
+// push immediately (they save once, not per-step); only the opt-in coalesce sites route here.
+let tLayoutHist = null;
+const LAYOUT_HIST_DEBOUNCE = 500;
+const pushHistoryLayout = () => {
+    if (boot.phase) return;
+    clearTimeout(tLayoutHist);
+    tLayoutHist = setTimeout(() => { tLayoutHist = null; hist.push(); }, LAYOUT_HIST_DEBOUNCE);
+};
+const flushLayoutHistory = () => {
+    if (!tLayoutHist) return;
+    clearTimeout(tLayoutHist); tLayoutHist = null;
+    hist.push();
+};
+
 // thin wrappers keep the existing call sites (main.js) unchanged + add the status line
 // Skip while booting: reopening images, re-OCR, group-rehydration and size re-stamps all fire
 // layout/content saves during load — none are user edits. resetHistory() seeds the baseline once
 // the graph is built; boot.phase only clears after bootSettle, so nothing boot-side records.
-const pushHistory = () => { if (!boot.phase) hist.push(); };
-const resetHistory = () => hist.reset("loaded");
+// Flush any pending nudge burst first so a following config edit records the nudge as a prior entry.
+const pushHistory = () => { flushLayoutHistory(); if (!boot.phase) hist.push(); };
+const resetHistory = () => { clearTimeout(tLayoutHist); tLayoutHist = null; hist.reset("loaded"); };
 // An uncommitted edit (a dragged box, a typed node config) IS the most recent change, but it never
 // entered history (nothing is recorded until the batch commits). So Ctrl+Z drops it first — same
 // effect as Escape — and only the next press walks the recorded stack.
 function undo() {
+    flushLayoutHistory();   // commit a pending nudge burst before walking the stack back
     if (rectTxn.dirty()) { rectTxn.revert(); setStatus("discarded edit"); return; }
     if (hist.canUndo()) { const p = hist.undo(); setStatus("undo"); return p; }
 }
-function redo() { if (hist.canRedo()) { const p = hist.redo(); setStatus("redo"); return p; } }
+function redo() { flushLayoutHistory(); if (hist.canRedo()) { const p = hist.redo(); setStatus("redo"); return p; } }
 
-export { pushHistory, resetHistory, undo, redo };
+export { pushHistory, pushHistoryLayout, flushLayoutHistory, resetHistory, undo, redo };

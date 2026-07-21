@@ -33,7 +33,7 @@ import { groupOrphanChildren } from "./item_wire.js";
 import { seedSubsetSig, refreshChangedSubsetNodes } from "./subset_wire.js";
 import { batchesState } from "./panels/datanodes.js";
 import { syncLiveFromServer } from "./panels/livewin.js";
-import { pushHistory, resetHistory } from "./history.js";
+import { pushHistory, pushHistoryLayout, flushLayoutHistory, resetHistory } from "./history.js";
 import { syncPrettyGame, refreshDirtyUI } from "./pretty_switch.js";
 import { blockOverlay, bootSettle } from "./graph_boot.js";
 import { render, autosave, refreshLive } from "./main.js";
@@ -158,6 +158,9 @@ export function initGameLifecycle() {
         // a pure layout move (drag/resize/collapse/group/open-image/satellite/table width) is an
         // undoable edit now, so the layout funnel records history too (config edits push via autosave).
         recordHistory: () => pushHistory(),
+        // keyboard-nudge move/resize routes here: a held-key burst coalesces into one undo entry
+        recordLayoutHistory: () => pushHistoryLayout(),
+        flushHistory: () => flushLayoutHistory(),
         onContentSaved: (err) => {
             if (err) { setStatus(err); return; }
             setStatus("saved ✓");

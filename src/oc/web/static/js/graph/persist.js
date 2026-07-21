@@ -23,6 +23,8 @@ let collectLayout = null;     // () => write live node state into model.profile.
 let collectLocal = null;      // () => ({ view, minimap }) for the sidecar
 let onContentSaved = null;    // () => UI refresh after a real content save
 let recordHistory = null;     // () => push an undo/redo snapshot (layout edits are undoable too)
+let recordLayoutHistory = null; // () => same, but DEBOUNCED (keyboard-nudge bursts coalesce to one entry)
+let flushHistory = null;      // () => commit any pending debounced push now (game switch / before an immediate push)
 let onConflict = null;        // (payload, wasContent) => show the stale-tab conflict modal
 
 let tProfile = null, tLocal = null;
@@ -41,6 +43,8 @@ export function initPersist(opts) {
     collectLocal = opts.collectLocal;
     onContentSaved = opts.onContentSaved;
     recordHistory = opts.recordHistory;
+    recordLayoutHistory = opts.recordLayoutHistory;
+    flushHistory = opts.flushHistory;
     onConflict = opts.onConflict;
 }
 
@@ -126,12 +130,15 @@ export const persist = {
     // Records an undo snapshot the same way content() does (guarded internally: a no-op during an
     // in-flight restore, and identical snapshots dedup, so a boot-time re-save never spawns a
     // phantom entry — and a content+layout save on the same tick collapses to one entry).
-    layout() { recordHistory && recordHistory(); scheduleProfile(false); },
+    // opts.coalesce routes the undo push through the DEBOUNCED recorder — the keyboard-nudge sites
+    // pass it so a held-key burst folds into one entry (server save stays debounced regardless).
+    layout(opts) { (opts?.coalesce ? recordLayoutHistory : recordHistory)?.(); scheduleProfile(false); },
     // Viewport/minimap change: debounced sidecar save.
     local() { clearTimeout(tLocal); tLocal = setTimeout(flushLocal, DEBOUNCE); },
 
     // Force any pending saves out immediately (e.g. before switching games).
     async flush() {
+        flushHistory?.();   // land any pending nudge undo entry before we leave this game
         if (bootArmed) { bootArmed = false; await flushProfile(); }
         if (tProfile) { clearTimeout(tProfile); await flushProfile(); }
         if (tLocal) { clearTimeout(tLocal); await flushLocal(); }
