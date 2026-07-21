@@ -5,7 +5,7 @@
 // the bookkeeping that lets layout persistence collect/hydrate panels generically.
 
 import { makeDraggable, addResizeGrips } from "./dragresize.js";
-import { h, observeResize } from "../dom.js";
+import { h, svg, observeResize } from "../dom.js";
 
 // Registry of live panels by id. Panels are SESSION-ONLY (not persisted): hydrateLayout resets
 // them all to their hidden defaults on load; nothing writes their state back to the profile.
@@ -270,21 +270,31 @@ function fitChainToScreen(id) {
 }
 
 // First free spot for a w×h panel: start at the top-right column and slide DOWN past any
-// panel it would overlap. If the column fills to the screen bottom, step LEFT one panel-width
-// and try that column from the top — so panels that can't fit on the right find room further
-// left instead of stacking on top of each other. Falls back to top-right (clamped) only when
-// no column has room. Used when a hidden panel is reopened with no saved position.
+// panel it would overlap. If the column fills to the screen bottom, step LEFT to ABUT the
+// left edge of whatever's blocking this column (GAP away) and try that column from the top —
+// so panels that can't fit on the right find room immediately left of the blocker instead of
+// stacking on top of it. A blind panel-width stride would overshoot a WIDE blocker (e.g. the
+// 500px inspector): one column overlaps it, the next lands short of its left edge, leaving a
+// big gap — the bug this abut-step fixes. Falls back to top-right (clamped) only when no column
+// has room. Used when a hidden panel is reopened with no saved position.
 function findFreeSlot(id, w, h) {
     const top = _usableTop(), left = _usableLeft(), right = _usableRight(), bottom = _usableBottom();
     const rects = _otherRects(id);
-    for (let x = Math.max(left, right - w); x >= left; x -= w + GAP) {
-        let y = top, guard = 0;
-        while (guard++ < 200) {
+    let x = Math.max(left, right - w), guard = 0;
+    while (x >= left && guard++ < 64) {
+        let y = top, vg = 0;
+        while (vg++ < 200) {
             const hit = rects.find((o) => x < o.right && x + w > o.left && y < o.bottom && y + h > o.top);
             if (!hit) break;
             y = hit.bottom + GAP;
         }
         if (y + h <= bottom) return [x, y];   // fits in this column -> done
+        // column full -> step left to sit GAP px left of the left-most panel this column spans,
+        // so a wide blocker is abutted (not overshot). Guard against no leftward progress.
+        let blockLeft = x + w;
+        for (const o of rects) if (x < o.right && x + w > o.left) blockLeft = Math.min(blockLeft, o.left);
+        const nx = blockLeft - GAP - w;
+        x = nx < x ? nx : x - (w + GAP);
     }
     // every column full -> cascade-offset from the top-right by the count of open panels, so
     // overflow panels stair-step (each title bar stays grabbable) instead of stacking on the exact
@@ -318,7 +328,7 @@ export function createFloatWin({
     bothAxes = false, onResize = null, onShow = null, onHide = null, onPersist = null,
     autoFit = true,   // height auto-fits the content; width is the only preset/user-sized axis.
                                         // Panels with their own height logic (the node map's aspect fit) pass false.
-    resetW = RESET_W, // width restored on open-reset / shift-click / the width reset dot. Defaults to the
+    resetW = RESET_W, // width restored by the header's reset-size button. Defaults to the
                                         // uniform 300 preset; a panel that wants a different default (e.g. the wide
                                         // inspector) overrides it so every reset path lands on its own width.
 }) {
@@ -330,6 +340,13 @@ export function createFloatWin({
         h("div", { class: "fw-head" },
             h("span", { class: "fw-title" }, title),
             headerExtra,
+            // reset-size button — the header's replacement for the old corner reset carets. CSS
+            // (.fw-sized) keeps it hidden until the panel actually carries a user-set size.
+            h("button", { class: "fw-reset", title: "reset size" },
+                svg("svg", { viewBox: "0 0 24 24", width: "13", height: "13", "aria-hidden": "true" },
+                    svg("rect", { x: "3", y: "3", width: "18", height: "18", rx: "1.6", fill: "none", stroke: "currentColor", "stroke-width": "1.6", "stroke-dasharray": "2.6 2.2" }),
+                    svg("path", { d: "M9 9h6v6H9z", fill: "none", stroke: "currentColor", "stroke-width": "1.6" }),
+                    svg("path", { d: "M12 6.6V9M12 15v2.4M6.6 12H9M15 12h2.4", stroke: "currentColor", "stroke-width": "1.6", "stroke-linecap": "round" }))),
             h("button", { class: "fw-collapse", title: "collapse / expand" }, "▴")),
         h("div", { class: "fw-body" }));
     document.body.appendChild(el);
@@ -471,32 +488,32 @@ export function createFloatWin({
             markSized(); stashSize(); save();
             if (w && !h) fitHeight();        // width-only resize rewrapped content -> re-fit height now
         },
-        // reset dots (per axis; Shift-click either fires both). Width dot -> uniform preset (300);
-        // height dot -> auto-fit. Each clears only its own axis so the other keeps the user's size.
-        onResetW: () => {
-            state.sized = false;
-            state.w = resetW; el.style.width = "";
-            applySize(); markSized(); onResize && onResize();
-            save();
-        },
-        // height is manually resizable only when bothAxes — otherwise it's always auto-fit and there's
-        // nothing to reset, so no height dot on a width-only panel.
-        onResetH: (typeof bothAxes === "function" ? bothAxes() : bothAxes) ? () => {
-            state.userSized = false;
-            state.h = null; el.style.height = "";   // back to auto-fit
-            applySize(); markSized(); onResize && onResize(); fitHeight();
-            save();
-        } : null,
     });
-    // reset dot is shown only once the panel carries a user-set size (CSS gates on .fw-sized), and
-    // each axis's dot only when THAT axis is sized (.rz-has-w = width, .rz-has-h = height) — so a
-    // width-only resize never shows a height reset that would do nothing.
+    // Reset the panel's manual size: width back to the uniform preset, height back to auto-fit.
+    // Driven by the header's reset button, which resets BOTH axes; height only exists to reset on a
+    // bothAxes panel (otherwise it always auto-fits).
+    function resetSize() {
+        state.sized = false;
+        state.w = resetW; el.style.width = "";
+        const canH = typeof bothAxes === "function" ? bothAxes() : bothAxes;
+        if (canH) { state.userSized = false; state.h = null; el.style.height = ""; }
+        applySize(); markSized(); onResize && onResize();
+        if (canH) fitHeight();
+        save();
+    }
+    // The header's reset button is shown only once the panel carries a user-set size (CSS gates on
+    // .fw-sized) — before that there is nothing to reset back to. `.rz-has-h` is NOT a reset gate:
+    // it marks "this panel has a user-set HEIGHT", which #live's layout keys off to let its body
+    // flex into the extra height (floatwin.css) instead of leaving dead space. Keep it in step.
     function markSized() {
         el.classList.toggle("fw-sized", !!(state.userSized || state.sized));
-        el.classList.toggle("rz-has-w", !!state.sized);
         el.classList.toggle("rz-has-h", !!state.userSized);
     }
     markSized();
+    // stopPropagation: the header doubles as the panel's drag handle, so this click must not
+    // also begin a move (makeDraggable already ignores `button`, but the raise-on-pointerdown
+    // capture handler still fires — harmless — while a stray drag would not be).
+    el.querySelector(".fw-reset").addEventListener("click", (ev) => { ev.stopPropagation(); resetSize(); });
 
     // CSS-resize / programmatic size changes: re-fit + persist (debounced). onResize/fitHeight
     // mutate el's own size — observeResize defers+coalesces per frame and { gate:true } skips ticks
