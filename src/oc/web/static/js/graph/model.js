@@ -3,7 +3,7 @@
 // (regions/detect/states/preprocess/scroll) is never touched here — it's authored
 // on the canvas — so saving preserves it.
 
-import { DEFAULT_DETECT_THRESHOLD } from "../defaults.js";
+import { DEFAULT_DETECT_THRESHOLD, SYNTH_DEFAULTS } from "../defaults.js";
 
 let _fieldSeq = 1;
 
@@ -1620,11 +1620,14 @@ export class GraphModel {
 
     // ---- sounds: play an audio file (in the browser) when fired (a trigger target) ----
     soundNode(id) { return (this.profile.sounds || []).find((x) => x.id === id) || null; }
+    // A fresh sound node opens in GENERATOR mode (a seeded cue + the inline forge) rather than
+    // file mode: the sounds authored here are generated ones, and an empty file picker is a dead
+    // end until you go find the dropdown. Half volume — a fire cue at unity is a jump-scare.
     addSound() {
         this.profile.sounds = this.profile.sounds || [];
         let n = 1, id = "sound";
         while (this.soundNode(id)) id = `sound_${++n}`;
-        this.profile.sounds.push({ id, file: "", volume: 1, enabled: true });
+        this.profile.sounds.push({ id, file: "", synth: GraphModel.defaultSynth(), volume: 0.5, enabled: true });
         return id;
     }
     removeSound(id) { this.profile.sounds = (this.profile.sounds || []).filter((x) => x.id !== id); this._unwire("sound", id); }
@@ -1634,13 +1637,17 @@ export class GraphModel {
         this._repoint("sound", oldId, newId, { decl: true });   // def id + any trigger target
         return true;
     }
-    setSoundFile(id, v) { const x = this.soundNode(id); if (x) { x.file = v || ""; if (x.file) x.synth = null; } }
+    // Picking ANY file entry — including "none" — leaves generator mode: a node still holding a
+    // synth renders as `[generator]` (soundParts), so keeping the cue around made "none" look like
+    // it did nothing. Generator mode is re-entered through the [generator] option.
+    setSoundFile(id, v) { const x = this.soundNode(id); if (x) { x.file = v || ""; x.synth = null; } }
     setSoundVolume(id, v) { const x = this.soundNode(id); const n = parseFloat(v); if (x && !Number.isNaN(n)) x.volume = Math.max(0, Math.min(1, n)); }
     // ---- generated cues: a synth spec set INSTEAD of a file (the node's inline "forge") ----
-    // a fresh cue: a short rising blip you then reshape. Points are 0..1 (t across the length, p pitch).
+    // a fresh cue: a short rising blip you then reshape. Points are 0..1 (t across the length, p
+    // pitch). Every knob comes from the ONE default table (defaults.js, mirroring SynthDef) so a
+    // new cue and an old cue that omits a knob start from exactly the same sound.
     static defaultSynth() {
-        return { wave: "square", points: [{ t: 0, p: 0.5 }, { t: 0.15, p: 0.9 }, { t: 1, p: 0.72 }],
-            length_ms: 220, attack: 4, decay: 55, vibrato: 0, crush: 18 };
+        return { ...SYNTH_DEFAULTS, points: [{ t: 0, p: 0.5 }, { t: 0.15, p: 0.9 }, { t: 1, p: 0.72 }], crush: 18 };
     }
     // flip a sound node into generator mode: seed a default spec if it has none, drop any file
     enableSoundSynth(id) { const x = this.soundNode(id); if (!x) return; if (!x.synth) x.synth = GraphModel.defaultSynth(); x.file = ""; return x.synth; }
