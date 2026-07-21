@@ -78,7 +78,8 @@ def _feed_readouts_live(engine, profile, game, capture, registers=None):
         return
     ro_trace: list[dict] = []
     with ocr_job(engine.ocr):   # one job: the readout read runs without interleaving another
-        detailed = reader.read_readouts_detailed(frame, window, fields, trace_sink=ro_trace)
+        detailed = reader.read_readouts_detailed(frame, window, fields, trace_sink=ro_trace,
+                                                 apply_gates=False)   # teaching read: show the raw value
     # pass the FRESH request profile so a process/register wired since the live session started is
     # fed + flow-animated without a live restart (mirrors the `registers=` fresh-wiring override).
     sess.feed_readouts(detailed, ro_trace, window, window.id, registers, profile)
@@ -318,7 +319,7 @@ def _read_window(engine, profile, game, capture):
         # what each readout box reads off THIS image — shown on the canvas at author time
         # (the same values the live collector would surface), with their read confidence so a
         # readout node can show ``value (conf)`` even when live mode is off.
-        detailed = reader.read_readouts_detailed(frame, window, fields)
+        detailed = reader.read_readouts_detailed(frame, window, fields, apply_gates=False)  # teaching read
         result["readouts"] = {k: value for k, (value, *_r) in detailed.items()}
         result["readout_confs"] = {k: conf for k, (_v, conf, *_r) in detailed.items()}
         # Full map: every enabled readout, empty/low-confidence defaulted to "" instead of

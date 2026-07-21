@@ -11,6 +11,7 @@ whole record below the save floor instead of yielding a half-record.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field as dc_field
 
 import cv2
@@ -45,10 +46,18 @@ _SIG_TOL = 24
 _SIG_MIN_PX = 12
 _SIG_MIN_FRAC = 0.005
 
-# Presence floor for the colour-masked readout fast path (_detect_reads): a masked crop
-# with fewer glyph pixels than this is a confirmed-empty box (mask denoise already dropped
-# speckle; real glyphs are hundreds of pixels at any playable resolution).
-_MASK_MIN_PX = 8
+# Presence gate for the colour-masked readout fast path (_detect_reads): the mask output is
+# black glyphs on white, so presence = "is there a real glyph BLOB". A raw pixel count let a
+# handful of scattered near-colour noise pixels read as present and hand the noise to the
+# recognition head (which always emits a string -> a phantom digit on an empty box). A
+# CONNECTED-COMPONENT test instead: the largest dark component must clear an area floor
+# (absolute, or a fraction of the crop — whichever is larger, so it scales with an upscaled
+# mask) AND a min height, so scattered specks and flat noise smears count as empty. A real
+# digit is one solid blob far above these; only ONE qualifying component is needed (a lone
+# decimal point beside a tall digit still passes on the digit).
+_MASK_MIN_COMP_AREA = 24
+_MASK_MIN_COMP_FRAC = 0.01
+_MASK_MIN_COMP_H = 6
 
 
 def _crop_unchanged(prev, cur) -> bool:
@@ -61,6 +70,50 @@ def _crop_unchanged(prev, cur) -> bool:
     _, m = cv2.threshold(d, _SIG_TOL, 255, cv2.THRESH_BINARY)
     floor = max(_SIG_MIN_PX, int(d.shape[0] * d.shape[1] * _SIG_MIN_FRAC))
     return cv2.countNonZero(m) <= floor
+
+
+def _mask_present(mask_bgr) -> bool:
+    """Presence of a real glyph in a masked (black-on-white) readout crop: the largest dark
+    connected component must clear the area/height floors (see constants above). Rejects the
+    scattered-speckle case that a raw pixel count passed through to the recognition head."""
+    gray = cv2.cvtColor(mask_bgr, cv2.COLOR_BGR2GRAY) if mask_bgr.ndim == 3 else mask_bgr
+    glyph = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)[1]
+    n, _labels, stats, _c = cv2.connectedComponentsWithStats(glyph, connectivity=8)
+    if n <= 1:   # background only -> empty
+        return False
+    areas = stats[1:, cv2.CC_STAT_AREA]        # skip label 0 (background)
+    i = int(areas.argmax())
+    floor = max(_MASK_MIN_COMP_AREA, int(mask_bgr.shape[0] * mask_bgr.shape[1] * _MASK_MIN_COMP_FRAC))
+    return int(areas[i]) >= floor and int(stats[1 + i, cv2.CC_STAT_HEIGHT]) >= _MASK_MIN_COMP_H
+
+
+def _as_number(s: str):
+    """The first signed number in ``s`` as a float, or None. Lets "4.00" and "4.0" agree while
+    "4.00" and "400" (a dropped decimal point — a real phantom) stay different."""
+    m = re.search(r"-?\d+(?:\.\d+)?", s)
+    return float(m.group()) if m else None
+
+
+def _reads_agree(a: str, b: str) -> bool:
+    """Two OCR reads of the same box corroborate (see _corroborate): equal after whitespace/case
+    normalisation, or equal as numbers. Type-agnostic — no FieldDef needed on the read path."""
+    na = " ".join(a.split()).casefold()
+    nb = " ".join(b.split()).casefold()
+    if na == nb:
+        return True
+    xa, xb = _as_number(na), _as_number(nb)
+    return xa is not None and xa == xb
+
+
+def _corrob_crop(crop):
+    """The perturbed crop for the corroborating read (see _corroborate): upscale the masked crop
+    so the detection-gated re-read segments differently from the native-res recognition-only
+    primary. Safe post-_mask_present — a real blob is already confirmed, so upscaling can't
+    conjure one from noise (the reason _detect_reads skips upscale for the PRIMARY read)."""
+    if crop.shape[0] < _MIN_OCR_H:
+        f = _MIN_OCR_H / crop.shape[0]
+        return cv2.resize(crop, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+    return crop
 
 
 @dataclass
@@ -145,6 +198,9 @@ class RegionReader:
         # {(window_id, readout_id): (last_ocrd_crop, (text, conf) | None)} — unchanged-crop
         # memo for the isolated readout reads (see _detect_reads). None = confirmed absent.
         self._ro_cache: dict[tuple[str, str], tuple[object, tuple[str, float] | None]] = {}
+        # Per-readout presence-confirm state (C, gated by FieldDef.confirm): rolling
+        # {(window_id, readout_id): [present_count, live]} across ticks — see _confirm_gate.
+        self._ro_confirm_state: dict[tuple[str, str], list] = {}
 
     # ---- batched OCR -------------------------------------------------------
 
@@ -333,7 +389,8 @@ class RegionReader:
         return out
 
     def _readout_text_reads(self, frame: Frame, window: WindowDef,
-                            pending: list[tuple], pp_by_key: dict | None = None) -> dict:
+                            pending: list[tuple], pp_by_key: dict | None = None,
+                            corr_keys: set | None = None) -> dict:
         """Text-readout reads -> ``{key: (text, conf)}``, refined by a scoped
         cross-check against a wider OCR pass. ``pending`` is ``[(key, box)]``.
 
@@ -363,7 +420,7 @@ class RegionReader:
         and the isolated read is kept, so a bad merge can only ever fall back to the
         already-safe isolated text, never corrupt it.
         """
-        iso = self._detect_reads(frame, window, pending, pp_by_key)
+        iso = self._detect_reads(frame, window, pending, pp_by_key, corr_keys)
         present = [(k, b) for k, b in pending if k in iso]
         # A box with its OWN preprocess override keeps its isolated masked read (authoritative);
         # only boxes WITHOUT one are refined by the wide pass — so if every present box is
@@ -416,7 +473,8 @@ class RegionReader:
         return dict(zip(keys, self._ocr.read_lines(crops)))
 
     def _detect_reads(self, frame: Frame, window: WindowDef,
-                      pending: list[tuple], pp_by_key: dict | None = None) -> dict:
+                      pending: list[tuple], pp_by_key: dict | None = None,
+                      corr_keys: set | None = None) -> dict:
         """Detection+recognition read of each box -> {key: (text, conf)}, OMITTING boxes
         where the detector found no text. Unlike ``_focus_reads`` (recognition-only, whose
         rec head ALWAYS emits a string — it hallucinates a value on a blank crop), this
@@ -432,10 +490,12 @@ class RegionReader:
 
         Colour-masked fast path: for a box whose preprocess is a COLOUR MASK, detection's
         one job here — deciding presence, so a blank box can never hallucinate — is
-        answered by the mask itself: the masked crop is black-glyphs-on-white, so
-        "any glyph pixels at all" IS the presence oracle. Those boxes skip detection
-        (the dominant, per-pass-priced cost) entirely: all-white → confirmed absent with
-        zero OCR; glyphs present → ONE batched recognition-only pass (``read_lines``)
+        answered by the mask itself: the masked crop is black-glyphs-on-white, so a real
+        glyph BLOB (:func:`_mask_present` — a connected component clearing the area/height
+        floors, NOT a raw pixel count, which let scattered noise read as present) IS the
+        presence oracle. Those boxes skip detection (the dominant, per-pass-priced cost)
+        entirely: no qualifying blob → confirmed absent with zero OCR; a glyph present →
+        ONE batched recognition-only pass (``read_lines``)
         across every such box, and a box rec can't segment (empty text despite glyph
         pixels) falls back to the full det+rec read so a real value is never lost.
         Un-masked boxes keep the full det+rec read — for them detection is still the
@@ -476,10 +536,9 @@ class RegionReader:
                     out[key] = hit[1]
                 continue
             if is_masked:
-                # presence from the mask: glyph pixels are BLACK on the white mask output
-                gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
-                glyph_px = cv2.countNonZero(cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)[1])
-                if glyph_px < _MASK_MIN_PX:
+                # presence from the mask: a real glyph is a solid BLACK component on the white
+                # mask output; scattered near-colour noise is not (see _mask_present).
+                if not _mask_present(crop):
                     self._ro_cache[ck] = (crop.copy(), None)   # confirmed absent, no OCR
                     continue
                 rec_miss.append((ck, crop))
@@ -492,15 +551,29 @@ class RegionReader:
             if res is not None:
                 out[ck[1]] = res
         rec_reads = self._ocr.read_lines([c for _, c in rec_miss]) if rec_miss else []
+        corrob = []   # masked rec reads awaiting a detection-gated second opinion (B)
         for (ck, crop), (text, conf) in zip(rec_miss, rec_reads):
             text = (text or "").strip()
-            if text:
-                settle_read(ck, crop, (text, conf))
-            else:
+            if not text:
                 # rec-only couldn't segment this box (confirmed live: a digit sharing the
                 # mask with a cooldown-swirl remnant recs as "") — the box HAS glyph pixels,
                 # so demote it to the full det+rec read rather than losing a real value.
                 det_miss.append((ck, crop))
+            elif corr_keys and ck[1] in corr_keys:
+                corrob.append((ck, crop, text, conf))
+            else:
+                settle_read(ck, crop, (text, conf))
+        # Corroboration (B): a masked box is read RECOGNITION-ONLY, whose head always emits a
+        # string — so a mis-segmented cooldown remnant surfaces as a confident phantom digit.
+        # Re-read each with a DETECTION-gated pass (read_images) over an upscaled crop: a real
+        # glyph agrees, a phantom shifts or (its presence not surviving detection) reads empty.
+        # On disagreement, suppress the read (cache None) — precision over recall. Cached like
+        # any read, so a static crop corroborates ONCE and the memo carries the verdict.
+        if corrob:
+            alt = self._ocr.read_images([_corrob_crop(c) for _ck, c, _t, _cf in corrob])
+            for (ck, crop, text, conf), lines in zip(corrob, alt):
+                alt_text = self._order_join(lines)[0] if lines else ""
+                settle_read(ck, crop, (text, conf) if _reads_agree(text, alt_text) else None)
         det_reads = self._ocr.read_images([c for _, c in det_miss]) if det_miss else []
         for (ck, crop), lines in zip(det_miss, det_reads):
             res = None
@@ -825,6 +898,32 @@ class RegionReader:
             out.append(records[ci])
         return out, sentinel_ypos
 
+    def _confirm_gate(self, key, present: bool, need: int) -> bool:
+        """Presence-confirm hysteresis (C, per-readout ``FieldDef.confirm``): an empty->present
+        readout must read present ``need`` consecutive ticks before it first surfaces; it clears
+        on the FIRST absent tick (asymmetric — slow to appear, instant to clear, no stale hold).
+        Confirms PRESENCE, not value: once live, every tick's value flows through, so a
+        fast-changing counter is never frozen, while a one-frame flicker never reaches the count.
+        Sibling of :class:`stability.Confirmer` (which confirms a record ONCE and keeps it forever,
+        for dataset dedup) — a readout must re-confirm as it toggles present/absent, so this small
+        rolling gate is deliberately separate rather than forced onto Confirmer (rule 7)."""
+        if need <= 1:
+            return present
+        st = self._ro_confirm_state.get(key)
+        if st is None:
+            st = [0, False]
+            self._ro_confirm_state[key] = st
+        if not present:
+            st[0], st[1] = 0, False
+            return False
+        if st[1]:                       # already live -> stays live, value flows
+            return True
+        st[0] += 1
+        if st[0] >= need:
+            st[1] = True
+            return True
+        return False                    # still warming up -> suppress this tick
+
     def read_readouts(self, frame: Frame, window: WindowDef,
                       fields: dict[str, FieldDef]) -> dict[str, object]:
         """Read the window's live, non-persisted readouts (health, a buff counter) ->
@@ -835,7 +934,8 @@ class RegionReader:
 
     def read_readouts_detailed(self, frame: Frame, window: WindowDef,
                                fields: dict[str, FieldDef],
-                               *, trace_sink: list | None = None) -> dict[str, tuple[object, float, object, object]]:
+                               *, trace_sink: list | None = None,
+                               apply_gates: bool = True) -> dict[str, tuple[object, float, object, object]]:
         """Read the window's readouts -> ``{readout_id: (value, confidence, raw, substituted)}``.
         A readout is a RAW OCR TAP: it reads its box through the linked field's preprocess/OCR
         recipe (color mask, upscale, ``isolate``, ``glyph_check``) and emits the text as-is. It
@@ -850,10 +950,17 @@ class RegionReader:
         surfaces the values and hands them to triggers/processes, and the UI shows ``value (conf)``
         on each readout node.
 
+        ``apply_gates`` (LIVE only, default on): apply the per-readout phantom-precision gates —
+        ``FieldDef.corroborate`` (a detection-gated second read that suppresses a disagreeing
+        recognition-only phantom) and ``FieldDef.confirm`` (presence-confirm hysteresis). The
+        teaching/preview reads pass ``False`` so a single frame shows its raw read (confirm needs
+        the cross-tick state a one-shot read never builds).
+
         ``trace_sink`` (optional): when a list is passed, one debug record is appended for EVERY
         enabled readout as ``{id, raw, value, dropped, trace, conf}``. A readout has no rules, so
-        ``trace`` is empty and ``value`` is the raw read. Feeds the readout-history satellite
-        ([[readout_history]]); off the hot path unless requested."""
+        ``trace`` is empty and ``value`` is the raw read (or a withheld-reason when a gate held
+        it). Feeds the readout-history satellite ([[readout_history]]); off the hot path unless
+        requested."""
         out: dict[str, tuple[object, float, object, object]] = {}
         cw, ch = frame.client.w, frame.client.h
         boxes = {v.id: v.box.to_fraction().to_pixels(cw, ch) for v in window.readouts if v.enabled}
@@ -863,7 +970,10 @@ class RegionReader:
                         if v.enabled and not self._is_pip(fields.get(v.field))
                         and not self._is_symbol(fields.get(v.field))]
         pp_map = self._ro_preprocess_map(window, fields)
-        text_reads = self._readout_text_reads(frame, window, text_pending, pp_map) if text_pending else {}
+        # Corroboration set (B): readouts whose field opts in, unless gates are bypassed (preview).
+        corr_keys = {v.id for v in window.readouts
+                     if v.enabled and getattr(fields.get(v.field), "corroborate", False)} if apply_gates else set()
+        text_reads = self._readout_text_reads(frame, window, text_pending, pp_map, corr_keys) if text_pending else {}
         for v in window.readouts:
             if not v.enabled:
                 continue
@@ -876,13 +986,15 @@ class RegionReader:
                     trace_sink.append({"id": v.id, "raw": None, "value": pv,
                                        "dropped": False, "trace": [], "conf": 1.0})
                 continue
+            need = (getattr(fdef, "confirm", 1) or 1) if apply_gates else 1
             if self._is_symbol(fdef):
                 label, conf = self._symbol_value(frame, box)
-                if label:   # unclassified -> omit (a trigger must never fire on garbage)
+                surfaced = self._confirm_gate((window.id, v.id), bool(label), need)
+                if surfaced:   # unclassified/unconfirmed -> omit (never fire on garbage)
                     out[v.id] = (label, conf, None, None)
                 if trace_sink is not None:
-                    trace_sink.append({"id": v.id, "raw": None, "value": label or None,
-                                       "dropped": not label, "trace": [], "conf": conf})
+                    trace_sink.append({"id": v.id, "raw": None, "value": label if surfaced else None,
+                                       "dropped": not surfaced, "trace": [], "conf": conf})
                 continue
             text, conf = text_reads.get(v.id) or ("", 0.0)
             # A readout is a RAW OCR TAP: the read is already glyph/isolate/preprocess-cleaned
@@ -890,18 +1002,20 @@ class RegionReader:
             # (drop/fold/lowercase/extract/dictionary) is NOT a readout concern -- it lives in
             # the downstream process node (ProcessDef). The readout node UI has no rules editor.
             value, substituted = text or None, None
+            # Presence for the confirm gate: a genuine read that clears the field's floor.
+            present = value is not None
+            mc = (getattr(fdef, "min_confidence", 0.0) or 0.0) if fdef else 0.0
+            if present and mc and conf < mc:
+                present = False
+            surfaced = self._confirm_gate((window.id, v.id), present, need)
             if trace_sink is not None:
-                # no rules on a readout -> the satellite shows the raw read, no rule steps
-                trace_sink.append({"id": v.id, "raw": text, "value": value,
-                                   "dropped": False, "trace": [], "conf": conf})
-            if value is None:   # nothing read
-                continue
-            # a genuine read must clear the field's confidence floor
-            if fdef:
-                mc = getattr(fdef, "min_confidence", 0.0) or 0.0
-                if mc and conf < mc:
-                    continue
-            out[v.id] = (value, conf, text, substituted)
+                # no rules on a readout -> raw read + why it was withheld (presence-confirm)
+                held = present and not surfaced
+                trace_sink.append({"id": v.id, "raw": text, "value": value if surfaced else None,
+                                   "dropped": not surfaced,
+                                   "trace": ["confirming"] if held else [], "conf": conf})
+            if surfaced:
+                out[v.id] = (value, conf, text, substituted)
         return out
 
     def representative_raws(self, frame: Frame, window: WindowDef,

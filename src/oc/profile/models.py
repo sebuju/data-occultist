@@ -236,6 +236,15 @@ class FieldDef(BaseModel):
     # knob like ``isolate`` / ``min_confidence``, NOT a value rule. Reuses Preprocess (one
     # primitive, two attach points: WindowDef.preprocess and here).
     preprocess: Preprocess | None = None
+    # LIVE-READOUT phantom-precision gates (opt-in, per readout) — like ``preprocess`` /
+    # ``min_confidence`` these act AROUND OCR, not on the value. ``corroborate``: re-read a masked
+    # readout with a detection-gated second pass and suppress the value when the two disagree
+    # (kills a mis-segmented recognition-only phantom digit). ``confirm``: an empty->present
+    # readout must read present this many CONSECUTIVE ticks before it first surfaces (it clears on
+    # the first absent tick) — kills a one-frame flicker; 1 = off. Both trade a little recall for
+    # precision: the readout stays absent rather than show a phantom. Ignored for non-readout reads.
+    corroborate: bool = False
+    confirm: int = 1
 
 
 class RegionDef(BaseModel):

@@ -531,3 +531,187 @@ def test_symbol_key_field_unmatched_drops_the_record():
     fields = {f.id: f for f in window.fields}
     records, _sentinel = RegionReader(StubOcr([]), atlas=atlas).read(frame, window, fields)
     assert records == []
+
+
+# --- Phantom-precision gates (A component presence / B corroboration / C confirm) -----------
+
+_WHITE = Preprocess(mode=PreprocessMode.color, colors=["#ffffff"])
+
+
+def _masked_window(*, corroborate=False, confirm=1):
+    box = Box(x=0.1, y=0.1, w=0.2, h=0.2)
+    return WindowDef(
+        id="w",
+        fields=[FieldDef(id="cd", type=FieldType.number, preprocess=_WHITE,
+                         corroborate=corroborate, confirm=confirm)],
+        readouts=[ReadoutDef(id="cd_ro", box=box, field="cd")],
+    )
+
+
+def _masked_pending(window):
+    return [("cd_ro", window.readouts[0].box.to_fraction().to_pixels(1000, 400))]
+
+
+class ExplodeOcr(OcrEngine):
+    """Any OCR call is a failure — proves a box was gated to absent with zero OCR."""
+
+    def read_image(self, image):
+        raise AssertionError("OCR called on a box that should have been gated absent")
+
+    def read_lines(self, images):
+        raise AssertionError("read_lines called on a box that should have been gated absent")
+
+
+class SplitOcr(OcrEngine):
+    """Independent stubs for the two reads a corroborated masked readout makes: recognition-only
+    (``read_lines`` -> the primary) and detection-gated (``read_images`` -> the second opinion)."""
+
+    def __init__(self, rec, det):
+        self._rec = list(rec)      # list[(text, conf)]
+        self._det = list(det)      # list[list[OcrLine]]
+        self.rec_calls = self.det_calls = 0
+
+    def read_image(self, image):
+        raise AssertionError("expected batched reads, not read_image")
+
+    def read_lines(self, images):
+        self.rec_calls += 1
+        n = len(list(images))
+        out, self._rec = self._rec[:n], self._rec[n:]
+        return out
+
+    def read_images(self, images):
+        self.det_calls += 1
+        n = len(list(images))
+        out, self._det = self._det[:n], self._det[n:]
+        return out
+
+
+def test_A_scattered_noise_is_absent_not_read():
+    # A: a masked box with only SCATTERED near-colour pixels (>8 total, but no glyph-sized
+    # blob) is a confirmed-empty box -- the recognition head is never handed the noise, so no
+    # phantom digit. The old raw-pixel-count gate would have read it.
+    window = _masked_window()
+    img = np.zeros((400, 1000, 3), np.uint8)
+    for dx in range(0, 24, 3):          # 8 isolated 1px specks, spaced so none connect
+        img[45, 120 + dx] = 255
+    frame = Frame(image=img, client=PixelBox(0, 0, 1000, 400))
+    out = RegionReader(ExplodeOcr())._detect_reads(frame, window, _masked_pending(window), {"cd_ro": _WHITE})
+    assert out == {}
+
+
+def test_A_solid_glyph_blob_is_present_and_read():
+    # A: the same box with a solid glyph-sized blob passes presence and is read.
+    window = _masked_window()
+    img = np.zeros((400, 1000, 3), np.uint8)
+    img[50:80, 120:200] = 255           # one solid component (well above the area/height floor)
+    frame = Frame(image=img, client=PixelBox(0, 0, 1000, 400))
+    ocr = SplitOcr(rec=[("4", 0.9)], det=[])
+    out = RegionReader(ocr)._detect_reads(frame, window, _masked_pending(window), {"cd_ro": _WHITE})
+    assert out == {"cd_ro": ("4", 0.9)}
+
+
+def _blob_frame():
+    img = np.zeros((400, 1000, 3), np.uint8)
+    img[50:80, 120:200] = 255
+    return Frame(image=img, client=PixelBox(0, 0, 1000, 400))
+
+
+def test_B_corroboration_agreement_keeps_read():
+    window = _masked_window(corroborate=True)
+    ocr = SplitOcr(rec=[("4.00", 0.99)], det=[[OcrLine("4.00", PixelBox(0, 0, 10, 10), 0.9)]])
+    out = RegionReader(ocr)._detect_reads(
+        _blob_frame(), window, _masked_pending(window), {"cd_ro": _WHITE}, {"cd_ro"})
+    assert out == {"cd_ro": ("4.00", 0.99)}
+    assert ocr.det_calls == 1           # ONE batched second-opinion read
+
+
+def test_B_corroboration_numeric_equivalence_agrees():
+    # "4.00" vs "4.0" are the same number -> agree (a real decimal read two ways is not suppressed)
+    window = _masked_window(corroborate=True)
+    ocr = SplitOcr(rec=[("4.00", 0.99)], det=[[OcrLine("4.0", PixelBox(0, 0, 10, 10), 0.9)]])
+    out = RegionReader(ocr)._detect_reads(
+        _blob_frame(), window, _masked_pending(window), {"cd_ro": _WHITE}, {"cd_ro"})
+    assert out == {"cd_ro": ("4.00", 0.99)}
+
+
+def test_B_corroboration_disagreement_suppresses():
+    # primary recognition-only reads a confident phantom "8"; the detection-gated read disagrees
+    # -> suppress (precision over recall). The box is cached absent.
+    window = _masked_window(corroborate=True)
+    ocr = SplitOcr(rec=[("8", 0.99)], det=[[OcrLine("3", PixelBox(0, 0, 10, 10), 0.9)]])
+    out = RegionReader(ocr)._detect_reads(
+        _blob_frame(), window, _masked_pending(window), {"cd_ro": _WHITE}, {"cd_ro"})
+    assert out == {}
+
+
+def test_B_not_corroborated_when_field_opts_out():
+    # field.corroborate off -> no second read; the recognition-only value passes through as-is.
+    window = _masked_window(corroborate=False)
+    ocr = SplitOcr(rec=[("8", 0.99)], det=[])
+    out = RegionReader(ocr)._detect_reads(
+        _blob_frame(), window, _masked_pending(window), {"cd_ro": _WHITE}, set())
+    assert out == {"cd_ro": ("8", 0.99)}
+    assert ocr.det_calls == 0
+
+
+def test_B_corroboration_empty_second_read_suppresses():
+    # detection finds nothing on the second read (a noise blob that survived presence but is not
+    # a glyph) -> disagreement -> suppress.
+    window = _masked_window(corroborate=True)
+    ocr = SplitOcr(rec=[("7", 0.99)], det=[[]])
+    out = RegionReader(ocr)._detect_reads(
+        _blob_frame(), window, _masked_pending(window), {"cd_ro": _WHITE}, {"cd_ro"})
+    assert out == {}
+
+
+def test_C_confirm_gate_hysteresis():
+    reader = RegionReader(StubOcr([]))
+    k = ("w", "r")
+    assert reader._confirm_gate(k, True, 2) is False    # 1st present: warming up
+    assert reader._confirm_gate(k, True, 2) is True     # 2nd: confirmed live
+    assert reader._confirm_gate(k, True, 2) is True     # stays live while present
+    assert reader._confirm_gate(k, False, 2) is False   # clears on the FIRST absent tick
+    assert reader._confirm_gate(k, True, 2) is False    # must re-confirm from scratch
+
+
+def test_C_confirm_gate_off_when_one():
+    reader = RegionReader(StubOcr([]))
+    k = ("w", "r")
+    assert reader._confirm_gate(k, True, 1) is True      # passthrough (need=1 -> off)
+    assert reader._confirm_gate(k, False, 1) is False
+
+
+class MaskedRecOcr(OcrEngine):
+    """Masked rec-only readout that always reads the same value (corroboration off)."""
+
+    def __init__(self, text, conf=0.9):
+        self._t = (text, conf)
+
+    def read_image(self, image):
+        raise AssertionError("no detection expected")
+
+    def read_lines(self, images):
+        return [self._t] * len(list(images))
+
+
+def test_C_readout_withheld_until_confirmed():
+    # End-to-end at the emit layer: with the field's confirm=2 a newly-present readout is withheld
+    # on its first tick and surfaces on the second, so a one-frame flicker never reaches a trigger.
+    window = _masked_window(confirm=2)
+    fields = {f.id: f for f in window.fields}
+    frame = _blob_frame()
+    reader = RegionReader(MaskedRecOcr("4"))
+    assert reader.read_readouts_detailed(frame, window, fields) == {}                 # warming
+    surfaced = reader.read_readouts_detailed(frame, window, fields)                   # confirmed
+    assert surfaced["cd_ro"][0] == "4"
+
+
+def test_C_bypassed_for_teaching_reads():
+    # preview/teaching passes apply_gates=False: confirm never withholds (a one-shot read has no
+    # cross-tick state), so the raw value shows immediately.
+    window = _masked_window(confirm=2)
+    fields = {f.id: f for f in window.fields}
+    out = RegionReader(MaskedRecOcr("4")).read_readouts_detailed(
+        _blob_frame(), window, fields, apply_gates=False)
+    assert out["cd_ro"][0] == "4"

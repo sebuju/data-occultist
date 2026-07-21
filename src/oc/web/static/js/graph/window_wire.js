@@ -232,6 +232,8 @@ export function wireReadout(div, n) {
             if (k === "isolate") fld.isolate = e.target.checked;
             else if (k === "glyph_check") fld.glyph_check = e.target.checked;
             else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
+            else if (k === "corroborate") fld.corroborate = e.target.checked;
+            else if (k === "confirm") fld.confirm = Math.max(1, parseInt(e.target.value, 10) || 1);
         }, () => { autosave(winId); scheduleRefetch(); });   // read config changed -> re-read the value off the current image
     }));
     // per-readout preprocess override: same shared controls as the window,

@@ -566,6 +566,11 @@ export function fieldConfigBody(fd, cls, fid, afterConf = null, stability = fals
             { title: "glyph-check: after OCR, match each cleanly-separated character against the game's taught glyph atlas and fix confident single-glyph misreads the dictionary can't (e.g. Q↔G where both are valid). Teach glyphs on the atlas node." }),
         kv("conf", confMeter({ cls, k: "minconf", value: fd.min_confidence ?? 0, fid }),
             { title: "minimum OCR confidence this field must reach — a weaker genuine read drops the whole record (0 = use the global floor). Drag the bar to set it." }),
+        // readout-only phantom-precision gates (act around OCR, like conf/glyph-check — not value rules)
+        stability && kv("corroborate", h("input", { type: "checkbox", class: cls, dataset: { k: "corroborate", ...da }, checked: !!fd.corroborate }),
+            { title: "corroborate: re-read this readout with a second detection-gated pass and HIDE the value when the two disagree — kills a mis-segmented phantom digit on a masked readout (a cooldown swirl read as a number). Costs one extra read each time the box changes." }),
+        stability && kv("confirm", h("input", { type: "number", class: cls, dataset: { k: "confirm", ...da }, min: "1", max: "10", step: "1", value: fd.confirm ?? 1 }),
+            { title: "presence-confirm: how many consecutive reads this readout must be present before its value first surfaces (it clears the instant the box goes empty) — kills a one-frame flicker mid-animation. 1 = off; higher adds that many ticks of latency to a value first appearing." }),
         // per-readout OCR crop cleanup — the SAME controls as the window's Text appearance,
         // sunk into this readout's own preprocess (overrides the window's for this box). Masking
         // white/whitish HUD digits + upscale saves a thin decimal a busy background would drop.
