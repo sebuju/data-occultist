@@ -67,12 +67,6 @@ function facingGeom(a, b, nodeRects) {
     return null;
 }
 
-function distToRect(px, py, c) {
-    const dx = Math.max(c.x - px, 0, px - (c.x + c.w));
-    const dy = Math.max(c.y - py, 0, py - (c.y + c.h));
-    return Math.hypot(dx, dy);
-}
-
 // Spatial index of node rects, bucketed into a grid of `cell`-sized squares, so a band query only
 // tests the handful of nodes near it instead of all of them. A per-query generation stamp avoids
 // re-testing a node that spans several cells (no per-query allocation).
@@ -281,12 +275,28 @@ function makeLanes(corridors, laneGap) {
         const lo = c.axis === "v" ? c.x : c.y, hi = c.axis === "v" ? c.x + c.w : c.y + c.h;
         const center = (lo + hi) / 2, cap = Math.max(1, c.cap), gap = c.gap || laneGap, gridLanes = [];
         for (let slot = 0; slot < cap; slot++) gridLanes.push(center + (slot - (cap - 1) / 2) * gap);
+        const laneLo = gridLanes[0], laneHi = gridLanes[gridLanes.length - 1];   // extremes, BEFORE the centre-out sort
         gridLanes.sort((p, q) => Math.abs(p - center) - Math.abs(q - center));   // centre-out
-        return { ...c, idx, gridLanes };
+        return { ...c, idx, gridLanes, laneLo, laneHi, laneMid: center };
     });
 }
 // c's centre along its THIN axis — the coordinate at which a perpendicular corridor crosses it.
 function perpCenter(c) { return c.axis === "v" ? c.x + c.w / 2 : c.y + c.h / 2; }
+// THE RAMP. A wire boarding corridor c does not arrive at its centreline — it arrives at a LANE, and
+// the perpendicular hop from wherever it already is (`want`) onto that lane is real travel that every
+// cost term used to price at zero. `laneNear` is the closest lane c can actually offer; `rampCost` is
+// what reaching it costs. A 1500px-wide plaza whose edge touches the node is NOT free to board: ride
+// its centre lane and the wire pays ~750px out and ~750px back. Single definition, used by the
+// start-bus score, the lane pick and the path search alike.
+// (`clampLane` takes loose bounds so the flattened search, which holds typed arrays rather than lane
+// objects, prices its ramp through the same primitive instead of rewriting the clamp.)
+const clampLane = (want, lo, hi) => Math.min(Math.max(want, lo), hi);
+const laneNear = (c, want) => clampLane(want, c.laneLo, c.laneHi);
+const rampCost = (c, want) => Math.abs(laneNear(c, want) - want);
+// The coordinate a corridor is measured ACROSS (its thin axis) vs the one it runs ALONG.
+const crossOf = (c, x, y) => (c.axis === "v" ? x : y);
+// Gap from (x,y) to c's extent along c's LONG axis — 0 while the point is alongside the corridor.
+const longGap = (c, x, y) => (c.axis === "v" ? Math.max(c.y - y, 0, y - (c.y + c.h)) : Math.max(c.x - x, 0, x - (c.x + c.w)));
 // Which face of a node at (cx,cy) does corridor c sit off? This is the face a wire boarding c leaves
 // from — the same test resolveNode uses for srcSide once the lane is known, run early so a PINNED
 // port (a watch/trigger line that must leave its own port's face) can rule corridors out up front.
@@ -327,9 +337,20 @@ function releaseSpan(occ, axis, coord, lo, hi) {
     if (i >= 0) arr.splice(i, 1);
 }
 // reserve a lane within corridor c free over [lo,hi]; returns the lane coord, or null if none.
-function reserveSpan(occ, c, lo, hi, sep) {
+// `want` = [wLo,wHi], the cross-axis stretch this ride is already spanning (where it boards, where it
+// leaves). Any lane inside that stretch is free to use — the wire has to cross it regardless — so lanes
+// are tried by how far OUTSIDE it they sit, centre-out only as the tiebreak. Without `want` a wide
+// corridor hands back its centre lane and the wire pays a ramp of up to half the corridor's width in
+// each direction; that is exactly the "flies out into open canvas and comes back" bug.
+function reserveSpan(occ, c, lo, hi, sep, want) {
     if (lo > hi) { const t = lo; lo = hi; hi = t; }
-    for (const coord of c.gridLanes) if (laneFree(occ, c.axis, coord, lo, hi, sep)) { occAdd(occ, c.axis, coord, lo, hi); return coord; }
+    let order = c.gridLanes;
+    if (want) {
+        const wLo = Math.min(want[0], want[1]), wHi = Math.max(want[0], want[1]);
+        const outside = (v) => Math.max(wLo - v, 0, v - wHi);
+        order = c.gridLanes.slice().sort((p, q) => (outside(p) - outside(q)) || (Math.abs(p - c.laneMid) - Math.abs(q - c.laneMid)));
+    }
+    for (const coord of order) if (laneFree(occ, c.axis, coord, lo, hi, sep)) { occAdd(occ, c.axis, coord, lo, hi); return coord; }
     return null;
 }
 // Reserve a lane for an APPROACH or EXIT leg (the perpendicular hop between a node face and a bus).
@@ -383,8 +404,11 @@ function buildBusNet(lanes) {
     for (let i = 0; i < N; i++) perpC[i] = perpCenter(lanes[i]);
     const axisV = new Uint8Array(N);
     for (let i = 0; i < N; i++) axisV[i] = lanes[i].axis === "v" ? 1 : 0;
+    // lane extremes per corridor, so the search can price a ramp without holding the lane objects
+    const laneLo = new Float64Array(N), laneHi = new Float64Array(N);
+    for (let i = 0; i < N; i++) { laneLo[i] = lanes[i].laneLo; laneHi[i] = lanes[i].laneHi; }
     return {
-        N, E, base, nbr, owner, rev, perpC, axisV,
+        N, E, base, nbr, owner, rev, perpC, axisV, laneLo, laneHi,
         heap: makeHeap(Math.max(64, E)),
         g: new Float64Array(E + 1), prev: new Int32Array(E + 1), seen: new Int32Array(E + 1), gen: 0,
     };
@@ -397,14 +421,21 @@ function buildBusNet(lanes) {
 // directed hop (the flat slot), not a corridor. Each hop also pays `hopCost`, a flat turn penalty: a
 // corner costs real estate and readability, so distance alone shouldn't buy three jogs to save a few px.
 //
-// A goal corridor is terminal but its exit cost |tgtLong - inLong| varies per state, so the first goal
-// popped isn't necessarily the cheapest — keep the best total and stop once the heap's minimum can no
-// longer beat it. Avoids `blocked` (full) corridors. Returns [idx...] or null.
+// A goal corridor is terminal but its exit cost varies per state, so the first goal popped isn't
+// necessarily the cheapest — keep the best total and stop once the heap's minimum can no longer beat
+// it. That exit cost is |tgtLong - inLong| along the goal's LONG axis PLUS the ramp off it: a goal
+// corridor 1500px wide does not deliver the wire to the target's doorstep, and pricing only the long
+// axis made every fat corridor look like a free delivery. Avoids `blocked` (full) corridors.
+// (The boarding ramp onto `start` is deliberately NOT seeded here: `start` is fixed for the whole
+// call, so it would add the same constant to every path and change nothing. Boarding is priced where
+// it actually discriminates — the start-bus score in resolveNode.) Returns [idx...] or null.
 function busPathDist(net, start, srcLong, goalSet, tcx, tcy, blocked, hopCost) {
-    const { E, base, nbr, owner, rev, perpC, axisV, heap, g, prev, seen } = net;
+    const { E, base, nbr, owner, rev, perpC, axisV, laneLo, laneHi, heap, g, prev, seen } = net;
     if (blocked.has(start)) return null;
     const gen = ++net.gen;
     const tgtLong = (u) => (axisV[u] ? tcy : tcx);
+    const tgtCross = (u) => (axisV[u] ? tcx : tcy);
+    const exitRamp = (u) => { const w = tgtCross(u); return Math.abs(clampLane(w, laneLo[u], laneHi[u]) - w); };
     heap.clear();
     g[E] = 0; seen[E] = gen; prev[E] = -1;
     heap.push(0, E);
@@ -416,7 +447,7 @@ function busPathDist(net, start, srcLong, goalSet, tcx, tcy, blocked, hopCost) {
         const u = s === E ? start : owner[s];
         const inL = s === E ? srcLong : perpC[nbr[s]];
         if (goalSet.has(u)) {
-            const total = k + Math.abs(tgtLong(u) - inL);
+            const total = k + Math.abs(tgtLong(u) - inL) + exitRamp(u);
             if (total < best) { best = total; bestState = s === E ? -1 : s; }
         }
         for (let t = base[u], end = base[u + 1]; t < end; t++) {
@@ -514,12 +545,15 @@ function resolveNode(aId, lines, lanes, net, grid, committed, reachCache, index,
             if (dropped.has(l.key)) continue;
             const ex = excl.get(l.key), avoid = block.get(l.key), goal = goalOf.get(l.key);
 
-            // pick the start bus by lowest COST = distance to the corridor + a face-direction charge:
-            // boarding a corridor off the face pointing AWAY from the target costs up to `faceBias` px,
-            // 0 when that face points straight at it. Without this the router boards the merely-nearest
-            // corridor and a line leaves the wrong side (e.g. the TOP face when its target sits below).
-            // Mirrors route.js's faceBias; the bus router had no target-direction term at all. Near-ties
-            // on the combined cost still break toward the target's dominant axis.
+            // pick the start bus by lowest COST = what BOARDING it really costs + a face-direction
+            // charge: boarding a corridor off the face pointing AWAY from the target costs up to
+            // `faceBias` px, 0 when that face points straight at it. Without this the router boards the
+            // merely-nearest corridor and a line leaves the wrong side (e.g. the TOP face when its
+            // target sits below). Mirrors route.js's faceBias; the bus router had no target-direction
+            // term at all. Near-ties on the combined cost still break toward the target's dominant axis.
+            // Boarding cost is the RAMP onto the nearest lane the corridor can offer plus the gap along
+            // its long axis — NOT distance to its bounding rect, which is 0 the moment the node sits
+            // alongside it and so priced a 1500px-wide plaza as if the wire could board at its edge.
             const tdx = (l.b.x + l.b.w / 2) - acx, tdy = (l.b.y + l.b.h / 2) - acy, tL = Math.hypot(tdx, tdy) || 1;
             const faceAway = (face) => { const n = FACE_OUT[face]; return (faceBias || 0) * (1 - (n[0] * tdx + n[1] * tdy) / tL) / 2; };
             const dom = Math.abs(tdx) >= Math.abs(tdy) ? "h" : "v";
@@ -528,7 +562,7 @@ function resolveNode(aId, lines, lanes, net, grid, committed, reachCache, index,
                 if (ex.has(c.idx) || avoid.has(c.idx)) continue;
                 if (!reachSrc[c.idx]) continue;
                 if (l.pin && sideOf(c, acx, acy) !== l.pin) continue;   // pinned port: board only from that face
-                const score = distToRect(acx, acy, c) + faceAway(sideOf(c, acx, acy));
+                const score = rampCost(c, crossOf(c, acx, acy)) + longGap(c, acx, acy) + faceAway(sideOf(c, acx, acy));
                 if (!start || score < bd - TIE) { start = c; bd = score; continue; }   // clearly cheaper
                 if (score > bd + TIE) continue;                                        // clearly costlier
                 const mc = c.axis === dom ? 1 : 0, ms = start.axis === dom ? 1 : 0;
@@ -548,7 +582,13 @@ function resolveNode(aId, lines, lanes, net, grid, committed, reachCache, index,
             // (board/junction/exit points along that bus's long axis, padded by the crossing width).
             const r = { l, a, b: l.b, taken: [], path: P, pathLanes: [] };
             const srcLong = P[0].axis === "v" ? acy : acx;
-            const tgtLong = P[P.length - 1].axis === "v" ? (l.b.y + l.b.h / 2) : (l.b.x + l.b.w / 2);
+            const tcx = l.b.x + l.b.w / 2, tcy = l.b.y + l.b.h / 2;
+            const tgtLong = P[P.length - 1].axis === "v" ? tcy : tcx;
+            // Where the wire currently sits on each axis. A ride's lane wants to fall between where the
+            // wire already is on that axis and where it is ultimately headed — anywhere in that stretch
+            // is ground it has to cover anyway, so it costs nothing; outside it is pure detour. Choosing
+            // a lane on the corridor's cross axis MOVES the wire on that axis, hence the running update.
+            let curX = acx, curY = acy;
             let failIdx = -1;
             for (let i = 0; i < P.length; i++) {
                 const inL = i === 0 ? srcLong : perpCenter(P[i - 1]);
@@ -557,8 +597,10 @@ function resolveNode(aId, lines, lanes, net, grid, committed, reachCache, index,
                 const padOut = i === P.length - 1 ? (P[i].axis === "v" ? l.b.h : l.b.w) / 2 : perpHalf(P[i + 1], P[i]);
                 const lo = Math.min(inL, outL) - (inL <= outL ? padIn : padOut);
                 const hi = Math.max(inL, outL) + (inL <= outL ? padOut : padIn);
-                const coord = reserveSpan(grid, P[i], lo, hi, minSep);
+                const want = P[i].axis === "v" ? [curX, tcx] : [curY, tcy];
+                const coord = reserveSpan(grid, P[i], lo, hi, minSep, want);
                 if (coord == null) { failIdx = i; break; }
+                if (P[i].axis === "v") curX = coord; else curY = coord;
                 r.taken.push({ axis: P[i].axis, coord, lo, hi });
                 r.pathLanes.push(coord);
             }
@@ -570,7 +612,7 @@ function resolveNode(aId, lines, lanes, net, grid, committed, reachCache, index,
             // join points never stack and a leg never runs over a ride). A leg is perpendicular to its
             // bus: horizontal off a vertical bus, vertical off a horizontal bus.
             const startLane = r.pathLanes[0], lastLane = r.pathLanes[r.pathLanes.length - 1];
-            const last = P[P.length - 1], tcx = l.b.x + l.b.w / 2, tcy = l.b.y + l.b.h / 2;
+            const last = P[P.length - 1];
             r.srcSide = P[0].axis === "v" ? (startLane > acx ? "R" : "L") : (startLane > acy ? "B" : "T");
             r.tgtSide = last.axis === "v" ? (lastLane < tcx ? "L" : "R") : (lastLane < tcy ? "T" : "B");
             const legFor = (bus, side, node, faceCenter, busLane) => {
@@ -706,10 +748,13 @@ export function busRoute(links, nodeRects, corridors, opts = {}) {
 
     // FACING straight shots AFTER: each reserves a grid line WITHIN the overlap band, adapting its port
     // to whatever the bus lines left free, so shots fan apart and never overlap a bus line or another
-    // shot. A band with no free grid line falls back to its centre (best effort).
+    // shot. A band with no free grid line means the shot CANNOT be placed without stacking — two faces
+    // overlapping by less than a lane gap can hold exactly one line, and parking the rest on the band
+    // centre drew them all on top of each other. Hand those to the fallback router, which is free to
+    // bend around instead of insisting on the straight line.
     for (const { l, g } of straights) {
-        const coord = reserveLeg(grid, g.axis, g.bandLo, g.bandHi, Math.min(g.p0, g.p1), Math.max(g.p0, g.p1), (g.bandLo + g.bandHi) / 2, cfg.laneGap, cfg.minSep)
-            ?? (g.bandLo + g.bandHi) / 2;
+        const coord = reserveLeg(grid, g.axis, g.bandLo, g.bandHi, Math.min(g.p0, g.p1), Math.max(g.p0, g.p1), (g.bandLo + g.bandHi) / 2, cfg.laneGap, cfg.minSep);
+        if (coord == null) { stats.unrouted++; unrouted.push({ key: l.key, at: [g.p0, g.bandLo] }); continue; }
         const pts = g.axis === "h" ? [[g.p0, coord], [g.p1, coord]] : [[coord, g.p0], [coord, g.p1]];
         routes.set(l.key, { pts, src: l.aId, d1: g.d1, d2: g.d2, via: "facing" }); storeCommit(committed, pts); stats.facing++;
     }
