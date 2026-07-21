@@ -1762,6 +1762,11 @@ class SubsetDef(BaseModel):
     # see :class:`PivotSpec`. ``None`` (default) = no reshape.
     pivot: PivotSpec | None = None
     limit: int = 0                  # 0 = no limit
+    # Collapse duplicate result rows, applied AFTER sort (so sort decides which duplicate
+    # survives) and BEFORE limit (so limit counts distinct rows). ``distinct_by`` empty = key on
+    # the whole visible row; non-empty = key on just those columns, first (sort-order) wins.
+    distinct: bool = False
+    distinct_by: list[str] = Field(default_factory=list)
     config_collapsed: bool = False  # UI: the view's config block is folded away (persists per game)
 
     def inputs(self) -> list[str]:

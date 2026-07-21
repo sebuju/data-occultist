@@ -115,6 +115,33 @@ function renderHideToggles(el, s) {
     if (hides) { hides.replaceChildren(...[hideToggleNodes(s)].flat()); wireHideToggles(el, s); }
 }
 
+// distinct-by column picker — same chip layout as hideToggleNodes, but "on" means "part of the
+// distinct key" (highlighted), not "hidden". Empty selection = distinct on the whole visible row.
+function distinctToggleNodes(s) {
+    const on = new Set(s.distinct_by || []);
+    const cols = viewDisplayColumns(s);
+    if (!cols.length) return h("span", { class: "muted sub-empty" }, "no columns yet");
+    const btn = (c) => h("button", {
+        class: `sv-distinct-col${on.has(c) ? " on" : ""}`, dataset: { col: c },
+        title: `${on.has(c) ? "remove from" : "add to"} distinct key`,
+    }, c);
+    const groups = viewColumnGroups(s, cols);
+    if (!groups) return cols.map(btn);
+    return groups.flatMap((g) => [h("span", { class: "sv-hide-h" }, g.label), ...g.cols.map(btn)]);
+}
+
+// Wire the distinct-by chips. In-place toggle + refetch, no node rebuild (mirrors wireHideToggles).
+function wireDistinctToggles(host, s) {
+    host.querySelectorAll(".sv-distinct-col").forEach((b) => b.addEventListener("click", () => {
+        nodeEdit(`sub:${s.id}`, "recompute", () => {
+            model.toggleDistinctColumn(s.id, b.dataset.col);
+            const nowOn = (s.distinct_by || []).includes(b.dataset.col);
+            b.classList.toggle("on", nowOn);
+            b.title = `${nowOn ? "remove from" : "add to"} distinct key`;
+        }, () => { autosave(null); persist.flush().then(() => refreshSubsetNode(s.id)); });
+    }));
+}
+
 // Wire the visible/hide toggles. Standalone (not closed over wireSubset) so refreshSubsetNode
 // can re-render + re-wire just this block when the live column set arrives/changes.
 // Toggling does NOT rebuild the whole node (that wiped the vtable → "loading…" flash); it flips
@@ -329,6 +356,12 @@ function subConfigNode(s) {
         h("input", { type: "number", class: "sv-limit", min: "0", step: "1", value: s.limit || 0, placeholder: "0" }),
         labCell("latest batch", "only pull rows from each source's most recent collection batch (applied before everything else)"),
         h("input", { type: "checkbox", class: "sv-latest", checked: !!s.latest_batch }),
+        labCell("distinct", "collapse duplicate rows (first kept, applied after sort)"),
+        h("input", { type: "checkbox", class: "sv-distinct", checked: !!s.distinct }),
+        ...(s.distinct ? [
+            labCell("distinct by", "pick key columns; none = whole row", false, "vis-lab"),
+            h("div", { class: "sv-distincts" }, distinctToggleNodes(s)),
+        ] : []),
         pivotCfgNode(s),
         addLbl("filters", "all must pass", "sub-addf", "add filter"),
         h("div", { class: "sub-rows" }, filters),
@@ -583,6 +616,8 @@ function wireSubset(div, s) {
     fillNormSamples(div, s);   // sample each source's real join value, then render its example
     div.querySelectorAll(".sv-norm-eg").forEach((el) => el.addEventListener("click", () => cycleNormEg(el, s.id)));
     div.querySelector(".sv-latest")?.addEventListener("change", (e) => recompute(() => model.setSubsetLatestBatch(s.id, e.target.checked)));
+    // toggling distinct on/off changes whether the picker row shows, so rebuild the node
+    div.querySelector(".sv-distinct")?.addEventListener("change", (e) => restructure(() => model.setSubsetDistinct(s.id, e.target.checked)));
     div.querySelector(".sv-limit")?.addEventListener("change", (e) => recompute(() => { model.setSubsetLimit(s.id, e.target.value); e.target.value = s.limit || 0; }));
 
     // pivot: toggling it changes which rows show (the name/value/key/attributes inputs), so
@@ -612,6 +647,7 @@ function wireSubset(div, s) {
 
     // hide/show result columns — toggling changes the column set, so restructure
     wireHideToggles(div, s);
+    wireDistinctToggles(div, s);
     // sort/limit removed — the table sorts itself (click a column header)
 
     queueMicrotask(() => refreshSubsetNode(s.id, _bootDetails?.subsets?.[s.id] || null));

@@ -145,7 +145,7 @@ a.node.win:hover { border-color: var(--accent); }
 /* filters/columns/sort/visible ride the node's ONE lab-grid: the label (with its + button) is a
    col-1 cell, its rows/toggles fill col 2 — aligned with sources/limit/latest above them. */
 .lab-grid > .lab-add { margin-bottom: 0; align-self: start; }
-.lab-grid > .sub-rows, .lab-grid > .sv-hides { min-width: 0; align-self: start; }
+.lab-grid > .sub-rows, .lab-grid > .sv-hides, .lab-grid > .sv-distincts { min-width: 0; align-self: start; }
 .sub-rows > .sub-row:first-child { margin-top: 0; }
 .sub-empty { font-size: var(--fs-sm); padding: 1px 2px; }
 /* + buttons sit inline after the section label — bare "+" glyph tinted the node colour (--nt),
@@ -173,6 +173,14 @@ a.node.win:hover { border-color: var(--accent); }
     background: color-mix(in oklab, var(--nt, var(--accent)) 14%, transparent);
     color: var(--nt); }
 .sv-hide.off { opacity: 0.5; text-decoration: line-through; }
+.sv-distincts { display: flex; flex-wrap: wrap; gap: 4px; margin-left: 4px; }
+.sv-distincts > .sv-hide-h { flex: 0 0 100%; border-top: 0; padding-top: 0; margin-top: 8px; }
+.sv-distincts > .sv-hide-h:first-child { margin-top: 0; }
+/* distinct-key chips: unselected = dim outline, .on (part of the key) = the node-colour fill,
+   the inverse of .sv-hide's off-state (there dim means excluded, here dim means not-a-key). */
+.sv-distinct-col { font-size: var(--fs-sm); padding: 2px 8px; min-height: unset; border-radius: 10px;
+    background: transparent; color: var(--nt); opacity: 0.5; }
+.sv-distinct-col.on { opacity: 1; background: color-mix(in oklab, var(--nt, var(--accent)) 14%, transparent); }
 .sub-row { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; margin-left: 4px; }
 .sub-row select, .sub-row input { min-width: 0; }
 .sub-row select { max-width: 140px; }

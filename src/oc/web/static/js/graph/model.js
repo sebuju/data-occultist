@@ -2015,6 +2015,13 @@ export class GraphModel {
     }
     // cap the number of result rows (0 = no limit)
     setSubsetLimit(id, n) { const s = this.subsetDef(id); if (s) s.limit = Math.max(0, Math.floor(+n || 0)); }
+    setSubsetDistinct(id, on) { const s = this.subsetDef(id); if (s) s.distinct = !!on; }
+    toggleDistinctColumn(id, col) {
+        const s = this.subsetDef(id); if (!s) return;
+        s.distinct_by ||= [];
+        const i = s.distinct_by.indexOf(col);
+        if (i >= 0) s.distinct_by.splice(i, 1); else s.distinct_by.push(col);
+    }
     // swap one of a subset's source inputs for another (the row-select edit), preserving order +
     // the slot's per-source join config (only the dataset id changes)
     replaceSubsetInput(id, oldDs, newDs) {

@@ -187,6 +187,67 @@ def test_latest_batch_applied_before_limit():
     assert {r["name"] for r in rows} == {"c", "d"}           # only batch 2 survived, limit didn't pull batch 1
 
 
+def test_distinct_off_by_default_leaves_rows_untouched():
+    recs = [{"name": "A", "present": True}, {"name": "A", "present": True}]
+    rows = compute_subset(recs, SubsetDef(id="v", sources=[_src("d")]))["rows"]
+    assert len(rows) == 2                                     # no dedup without the knob
+
+
+def test_distinct_whole_row_collapses_exact_duplicates():
+    recs = [{"name": "A", "rank": "1", "present": True},
+            {"name": "A", "rank": "1", "present": True},
+            {"name": "B", "rank": "1", "present": True}]
+    sub = SubsetDef(id="v", sources=[_src("d")], distinct=True)
+    rows = compute_subset(recs, sub)["rows"]
+    assert {r["name"] for r in rows} == {"A", "B"}
+    assert len(rows) == 2                                     # exact duplicate collapsed
+
+
+def test_distinct_whole_row_ignores_hidden_bookkeeping_columns():
+    # rows differ only in the bookkeeping `_batch`/`present` cols (hidden from the view) -- they
+    # must still collapse, since whole-row distinct keys on the VISIBLE columns.
+    recs = [{"name": "A", "_batch": 1, "present": True},
+            {"name": "A", "_batch": 2, "present": True}]
+    sub = SubsetDef(id="v", sources=[_src("d")], distinct=True)
+    rows = compute_subset(recs, sub)["rows"]
+    assert len(rows) == 1
+
+
+def test_distinct_by_keeps_one_row_per_key_first_wins():
+    recs = [{"name": "A", "price": 10, "present": True},
+            {"name": "A", "price": 99, "present": True},
+            {"name": "B", "price": 5, "present": True}]
+    sub = SubsetDef(id="v", sources=[_src("d")], distinct=True, distinct_by=["name"])
+    rows = {r["name"]: r for r in compute_subset(recs, sub)["rows"]}
+    assert set(rows) == {"A", "B"}
+    assert rows["A"]["price"] == 10                            # first (join-order) row for the key wins
+
+
+def test_distinct_runs_after_sort_so_sort_picks_the_survivor():
+    recs = [{"name": "A", "price": 10, "present": True},
+            {"name": "A", "price": 99, "present": True}]
+    sub = SubsetDef(id="v", sources=[_src("d")], distinct=True, distinct_by=["name"],
+                    sort_by="price", sort_desc=True)
+    rows = compute_subset(recs, sub)["rows"]
+    assert len(rows) == 1 and rows[0]["price"] == 99          # sort-first row survives, not join-first
+
+
+def test_distinct_runs_before_limit_so_limit_counts_distinct_rows():
+    recs = [{"name": "A", "present": True}, {"name": "A", "present": True},
+            {"name": "B", "present": True}, {"name": "C", "present": True}]
+    sub = SubsetDef(id="v", sources=[_src("d")], distinct=True, limit=2)
+    rows = compute_subset(recs, sub)["rows"]
+    assert len(rows) == 2
+    assert {r["name"] for r in rows} == {"A", "B"}            # not truncated before the dupe collapsed
+
+
+def test_distinct_round_trips_through_profile(tmp_path):
+    p = GameProfile(name="g", subsets=[SubsetDef(id="v", sources=[_src("d")], distinct=True, distinct_by=["name"])])
+    save_profile(tmp_path, p)
+    s = load_profile(tmp_path, "g").subset_def("v")
+    assert s.distinct is True and s.distinct_by == ["name"]
+
+
 def test_store_records_expose_latest_batch(tmp_path):
     # the store tags each observation with its batch; records() surfaces the row's max _batch
     from oc.store.dataset_store import DatasetStore

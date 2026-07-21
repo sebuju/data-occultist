@@ -379,9 +379,18 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
     for rule in reversed(sort_rules):
         if rule.field:
             rows.sort(key=lambda r, f=rule.field: _sort_key(r.get(f)), reverse=rule.desc)
+    columns = _visible_columns(rows, sub)
+    if getattr(sub, "distinct", False):
+        rows = _distinct(rows, sub, columns)
     if sub.limit and sub.limit > 0:
         rows = rows[: sub.limit]
+    return {"columns": columns, "rows": rows}
 
+
+def _visible_columns(rows: list[dict], sub: SubsetDef) -> list[str]:
+    """The result's visible column order: every key seen across ``rows`` (join order), then
+    derived columns, minus ``hidden_columns``. The one source of truth for "what does this view
+    show" — both the returned ``columns`` and whole-row ``distinct`` key off it."""
     derived_names = [d.name for d in sub.derived if d.name]
     base: list[str] = []
     for row in rows:
@@ -389,8 +398,23 @@ def compute_view(inputs: list[tuple[str, list[dict]]], sub: SubsetDef) -> dict:
             if k not in base and k not in derived_names:
                 base.append(k)
     hidden = set(sub.hidden_columns or ())
-    columns = [c for c in base + derived_names if c not in hidden]
-    return {"columns": columns, "rows": rows}
+    return [c for c in base + derived_names if c not in hidden]
+
+
+def _distinct(rows: list[dict], sub: SubsetDef, visible: list[str]) -> list[dict]:
+    """First-wins row de-dup. Key on ``distinct_by`` columns, or (empty) the whole visible row
+    (``visible`` already excludes hidden + _HIDDEN bookkeeping cols). Runs after sort, so the
+    surviving row is the sort-order-first one; runs before limit, so limit counts distinct rows."""
+    keys = sub.distinct_by or visible
+    seen: set = set()
+    out: list[dict] = []
+    for r in rows:
+        k = tuple(r.get(c) for c in keys)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(r)
+    return out
 
 
 def compute_subset(records: list[dict], sub: SubsetDef) -> dict:
