@@ -250,6 +250,18 @@ export class GraphModel {
     // or "mirror" (a key gone from its visible scroll slice is removed — needs the window's scrollbar).
     datasetSyncMode(id) { const d = this.datasetDef(id); return (d && d.sync_mode) || "accumulate"; }
     setDatasetSyncMode(id, m) { this.ensureDatasetDef(id).sync_mode = m === "mirror" ? "mirror" : "accumulate"; }
+    // Rolling batch-retention window: keep the newest N batches, 0 = unlimited. Older batches are
+    // COMPACTED (each key's old reads fold into one base event under this dataset's aggregate),
+    // not deleted — so old keys and their sums/means survive, only per-read detail is lost.
+    datasetKeepBatches(id) { const d = this.datasetDef(id); return (d && d.keep_batches) || 0; }
+    setDatasetKeepBatches(id, n) { this.ensureDatasetDef(id).keep_batches = Math.max(0, +n || 0); }
+    // Folding only makes sense where a key HAS many observations to collapse. With dedup off or
+    // aggregate "all" every read is already its own row, so a fold could only delete — the knob
+    // is hidden for those (the store refuses too, so a stale UI can't destroy anything).
+    datasetCanCompact(id) {
+        const d = this.datasetDef(id);
+        return !!d && d.dedup !== false && this.datasetAggregate(id) !== "all";
+    }
     // SINGLE SOURCE OF TRUTH for every place ANY graph id is stored, as live get/set (or dict
     // re-key/drop) sites tagged with the entity KIND(s) that may occupy them. Every rename
     // (`_repoint`) and delete (`_unwire`) derives from this ONE registry, and `_declIds` lists
@@ -1155,7 +1167,7 @@ export class GraphModel {
     removeRouterTarget(id, bi, targetId) { const b = this._branch(id, bi); if (b) b.targets = (b.targets || []).filter((p) => p !== targetId); }
 
     // ---- action nodes: clear / clone / move a dataset's data when fired (a trigger target) ----
-    static ACTION_KINDS = ["", "clear", "clone_batches", "clone_resolved", "move_batches", "move_resolved"];
+    static ACTION_KINDS = ["", "clear", "compact", "clone_batches", "clone_resolved", "move_batches", "move_resolved"];
     actionNode(id) { return (this.profile.actions || []).find((x) => x.id === id) || null; }
     addAction() {
         this.profile.actions = this.profile.actions || [];
