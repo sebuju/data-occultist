@@ -735,6 +735,12 @@ export const sources = {
 // Returns { sweeps:[...], precapture: status|null, triggers:[...] }.
 export const activity = {
     get: (game, signal) => tfetch(`/api/activity/${_pg(game)}`, { signal }).then((r) => r.json()),
+    // Tell the server this viewer is on/off screen, so its activity beat can drop to the idle
+    // cadence while nobody is looking (events.py:_hidden_viewers). `keepalive` because the hide
+    // report is fired exactly as the tab goes away, and a plain fetch would be cancelled.
+    setVisible: (cid, visible) => tfetch(
+        `/api/events/visible?cid=${encodeURIComponent(cid)}&visible=${visible ? "true" : "false"}`,
+        { method: "POST", keepalive: true }).catch(() => { /* fail-safe: server treats it as visible */ }),
 };
 
 // Dictionaries: the shared term files under config/dictionaries/. The picker lists
