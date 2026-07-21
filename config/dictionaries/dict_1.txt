@@ -1,5 +1,4 @@
 Akbronco Prime Blueprint
-Uncommon
 Axi A10
 Aksomati Prime Link
 Forma Blueprint
@@ -1347,7 +1346,6 @@ Neo Z7
 Neo Z8
 Neo Z9
 Fass
-Rare
 Requiem ETERNA
 Jahu
 Khra

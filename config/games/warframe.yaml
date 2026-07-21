@@ -9,18 +9,24 @@ fields:
   min_confidence: 0.0
   isolate: false
   glyph_check: false
+  corroborate: false
+  confirm: 1
 - id: count
   type: number
   rules: []
   min_confidence: 0.0
   isolate: false
   glyph_check: false
+  corroborate: false
+  confirm: 1
 - id: rank
   type: number
   rules: []
   min_confidence: 0.0
   isolate: false
   glyph_check: false
+  corroborate: false
+  confirm: 1
 windows:
 - id: live_game_window
   fields:
@@ -30,6 +36,8 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   - id: rof_3
     type: number
     rules: []
@@ -44,6 +52,8 @@ windows:
       tolerance: 30
       scale: 1.0
       min_frac: 0.02
+    corroborate: false
+    confirm: 1
   - id: rof_5
     type: number
     rules: []
@@ -58,6 +68,8 @@ windows:
       tolerance: 30
       scale: 1.0
       min_frac: 0.02
+    corroborate: false
+    confirm: 1
   - id: rof_7
     type: number
     rules: []
@@ -72,6 +84,8 @@ windows:
       tolerance: 30
       scale: 1.0
       min_frac: 0.02
+    corroborate: false
+    confirm: 1
   - id: rof_9
     type: number
     rules: []
@@ -86,6 +100,8 @@ windows:
       tolerance: 30
       scale: 1.0
       min_frac: 0.02
+    corroborate: false
+    confirm: 1
   - id: rof_90
     type: text
     rules: []
@@ -99,6 +115,8 @@ windows:
       tolerance: 30
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   detect:
   - id: detect_group_badge
     enabled: true
@@ -232,6 +250,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   - id: count
     type: number
     rules:
@@ -244,12 +264,16 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   - id: arcane_level
     type: diamonds
     rules: []
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   data_area:
     x: 0.031884303692792056
     y: 0.17565452653306793
@@ -463,6 +487,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   - id: mod_drain
     type: number
     rules:
@@ -473,6 +499,8 @@ windows:
     min_confidence: 0.5
     isolate: true
     glyph_check: false
+    corroborate: false
+    confirm: 1
   - id: mod_count
     type: number
     rules:
@@ -492,6 +520,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   data_area:
     x: 0.04033210220688822
     y: 0.4859775443166545
@@ -670,6 +700,8 @@ windows:
     min_confidence: 0.5
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   data_area:
     x: 0.2472434730244972
     y: 0.19635388680544943
@@ -767,6 +799,8 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   - id: count
     type: number
     rules:
@@ -786,6 +820,8 @@ windows:
     min_confidence: 0.4
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   data_area:
     x: 0.04068236562341155
     y: 0.1729023165854181
@@ -956,6 +992,8 @@ windows:
     min_confidence: 0.75
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   - id: count
     type: number
     rules:
@@ -968,6 +1006,8 @@ windows:
     min_confidence: 0.0
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   data_area:
     x: 0.0449550474139316
     y: 0.17880592428756362
@@ -1203,18 +1243,24 @@ windows:
     min_confidence: 0.7
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   - id: drain
     type: number
     rules: []
     min_confidence: 0.7
     isolate: true
     glyph_check: false
+    corroborate: false
+    confirm: 1
   - id: rank
     type: pips
     rules: []
     min_confidence: 0.6
     isolate: false
     glyph_check: false
+    corroborate: false
+    confirm: 1
   - id: rof_9
     type: text
     rules: []
@@ -1227,6 +1273,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_2
     type: text
     rules: []
@@ -1239,6 +1287,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_4
     type: text
     rules: []
@@ -1251,6 +1301,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_6
     type: text
     rules: []
@@ -1263,6 +1315,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_8
     type: text
     rules: []
@@ -1275,6 +1329,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_10
     type: text
     rules: []
@@ -1287,6 +1343,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_12
     type: text
     rules: []
@@ -1299,6 +1357,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_14
     type: text
     rules: []
@@ -1311,6 +1371,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_16
     type: text
     rules: []
@@ -1323,6 +1385,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_18
     type: text
     rules: []
@@ -1335,6 +1399,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_20
     type: text
     rules: []
@@ -1347,6 +1413,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_22
     type: text
     rules: []
@@ -1359,6 +1427,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_2_split1
     type: number
     rules: []
@@ -1371,6 +1441,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_4_split1
     type: number
     rules: []
@@ -1383,6 +1455,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_6_split1
     type: number
     rules: []
@@ -1395,6 +1469,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_8_split1
     type: number
     rules: []
@@ -1407,6 +1483,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_10_split1
     type: number
     rules: []
@@ -1419,6 +1497,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_12_split1
     type: number
     rules: []
@@ -1431,6 +1511,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_14_split1
     type: number
     rules: []
@@ -1443,6 +1525,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_16_split1
     type: number
     rules: []
@@ -1455,6 +1539,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_18_split1
     type: number
     rules: []
@@ -1467,6 +1553,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_2_split2
     type: number
     rules: []
@@ -1479,6 +1567,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_4_split2
     type: text
     rules: []
@@ -1491,6 +1581,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_6_split2
     type: text
     rules: []
@@ -1503,6 +1595,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_48
     type: symbol
     rules: []
@@ -1515,6 +1609,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_50
     type: symbol
     rules: []
@@ -1527,6 +1623,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_52
     type: symbol
     rules: []
@@ -1539,6 +1637,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_54
     type: symbol
     rules: []
@@ -1551,6 +1651,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_56
     type: symbol
     rules: []
@@ -1563,6 +1665,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_58
     type: symbol
     rules: []
@@ -1575,6 +1679,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_60
     type: symbol
     rules: []
@@ -1587,6 +1693,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_62
     type: symbol
     rules: []
@@ -1599,6 +1707,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_64
     type: symbol
     rules: []
@@ -1611,6 +1721,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_66
     type: symbol
     rules: []
@@ -1623,6 +1735,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_68
     type: symbol
     rules: []
@@ -1635,6 +1749,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_70
     type: symbol
     rules: []
@@ -1647,6 +1763,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_72
     type: symbol
     rules: []
@@ -1659,6 +1777,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_74
     type: symbol
     rules: []
@@ -1671,6 +1791,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_76
     type: symbol
     rules: []
@@ -1683,6 +1805,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_78
     type: symbol
     rules: []
@@ -1695,6 +1819,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_80
     type: symbol
     rules: []
@@ -1707,6 +1833,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_82
     type: symbol
     rules: []
@@ -1719,6 +1847,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_84
     type: symbol
     rules: []
@@ -1731,6 +1861,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_86
     type: symbol
     rules: []
@@ -1743,6 +1875,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   - id: rof_88
     type: text
     rules: []
@@ -1755,6 +1889,8 @@ windows:
       tolerance: 60
       scale: 1.0
       min_frac: 0.0
+    corroborate: false
+    confirm: 1
   data_area:
     x: 0.044274970740152624
     y: 0.6241895892853566
@@ -3663,6 +3799,56 @@ subsets:
   latest_batch: false
   limit: 0
   config_collapsed: false
+- id: relic_rewards_with_price-copy
+  sources:
+  - dataset: relic_rewards_limit
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: true
+    mode: join
+  - dataset: prices_live
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: ''
+    required: false
+    mode: join
+  filters: []
+  derived:
+  - name: price
+    template: '{price_min|round:0}'
+  hidden_columns:
+  - total
+  - volume
+  - slug
+  - _seq
+  - count
+  - _item
+  - live_sellers
+  - live_median
+  - price_median
+  - live_ask
+  - key
+  - _pos
+  - price_min
+  - updated
+  - combined
+  sort:
+  - field: price_min
+    desc: true
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  config_collapsed: true
 producers:
 - id: wf_market_live
   type: http
@@ -3672,8 +3858,8 @@ producers:
   enabled: true
   queue_mode: drop
   sources:
-  - master
-  source_field: name
+  - relic_contents
+  source_field: item
   source_array: ''
   http:
     request:
@@ -4418,8 +4604,8 @@ file_sources:
   enabled: true
 triggers:
 - id: owned_refresh
-  kind: interval
-  interval_s: 7200.0
+  kind: true_interval
+  interval_s: 86400.0
   watch: []
   readout_watch: []
   register_watch: []
@@ -5262,7 +5448,6 @@ dictionaries:
   - dataset: relic_contents
     columns:
     - item
-    - rarity
     - name
 atlas:
 - label: G
@@ -7214,9 +7399,18 @@ layout:
       x: -960.0
       y: -5580.0
       collapsed: false
-    vt:ds:prices_live:
-      x: -540.0
-      y: -1260.0
+    sub:relic_rewards_with_price-copy:
+      x: 2880.0
+      y: -5840.0
+      w: 360.0
+      h: 900.0
+      collapsed: false
+      custW: false
+      custH: true
+      softH: true
+    vt:sub:relic_rewards_with_price-copy:
+      x: 3300.0
+      y: -5840.0
       collapsed: false
   tables:
     warframe:ds:master:
@@ -7337,6 +7531,7 @@ layout:
         _batch: 36
         price_min: 70
         price_median: 90
+        name: 153
     view:statistic_prices_joined:
       widths:
         _seq: 36
@@ -7798,6 +7993,9 @@ layout:
         raw: 79
         value: 79
         confidence: 79
+    prodhist:wf_market_live:
+      widths:
+        dataset: 123
   open_images:
   - atlas
   - live_game_window
@@ -7924,7 +8122,6 @@ layout:
     - producer:wf_market_live
     - trigger:owned_refresh
     - sub:master_prime_parts
-    - vt:ds:prices_live
     outline:
       color: '#8a91a0'
       style: none
@@ -8437,6 +8634,8 @@ layout:
     - hist:on_new_relic_fetched
     - vt:sub:relic_rewards_limit
     - vt:ds:relic_prices
+    - sub:relic_rewards_with_price-copy
+    - vt:sub:relic_rewards_with_price-copy
     outline:
       color: '#5ad7e6'
       style: none
@@ -8735,7 +8934,7 @@ layout:
   - rohist:live_game_window:value_ab_3
   - rohist:live_game_window:value_ab_4
   - reghist:value_ab_register
-  - vt:ds:prices_live
+  - vt:sub:relic_rewards_with_price-copy
   sub_groups:
   - id: subgroup_5
     parent: group_22
