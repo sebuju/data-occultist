@@ -126,6 +126,70 @@ def test_on_new_batch_settle_rearms_across_same_batch_flushes():
     assert calls == [("relic", None)]               # ONE sweep, reprices the whole source
 
 
+def _screen_runner(profile, clock):
+    calls = []
+    tr = TriggerRunner(profile, "data", fire=lambda pn, items: calls.append((pn.id, items)),
+                       clock=lambda: clock[0], timer_factory=_FakeTimer)
+    return tr, calls
+
+
+def test_on_new_batch_fires_once_per_screen_despite_settle_max_rearm():
+    # settle_max forces a flush while rows still drip; the LATER same-batch drips must NOT re-arm a
+    # fresh window and fire a SECOND time with identical data. One physical screen = one sweep.
+    p = _new_batch_profile()
+    p.triggers[0].settle_ms = 1000
+    p.triggers[0].settle_max_ms = 3000            # screen-continuity span = 3s
+    clock = [0.0]
+    tr, calls = _screen_runner(p, clock)
+    assert tr.on_change("relics_offered", [{"name": "A"}], batch=1) == []   # window opens at t=0
+    clock[0] = 1.5
+    assert tr.on_change("relics_offered", [{"name": "B"}], batch=1) == []   # re-arm, under the cap
+    clock[0] = 3.1
+    assert tr.on_change("relics_offered", [{"name": "C"}], batch=1) == []   # past 3s cap -> forced fire
+    assert calls == [("relic", None)]                                       # fired once (whole source)
+    clock[0] = 3.5
+    assert tr.on_change("relics_offered", [{"name": "D"}], batch=1) == []   # same screen -> NO re-fire
+    clock[0] = 4.0
+    assert tr.on_change("relics_offered", [{"name": "E"}], batch=1) == []
+    assert calls == [("relic", None)]                                       # STILL one fire
+
+
+def test_on_new_batch_coalesces_reopen_split_batch_within_screen():
+    # a still-visible screen whose OCR drops out briefly mints a SECOND batch number; arriving within
+    # the settle span it is the SAME screen -> no second (identical) fire.
+    p = _new_batch_profile()
+    p.triggers[0].settle_ms = 1000
+    p.triggers[0].settle_max_ms = 3000
+    clock = [0.0]
+    tr, calls = _screen_runner(p, clock)
+    assert tr.on_change("relics_offered", [{"name": "A"}], batch=1) == []
+    clock[0] = 1.0
+    tr._settle_flush("batchwatch")                                         # screen quiet -> ONE fire
+    assert calls == [("relic", None)]
+    clock[0] = 2.0                                                         # 1s later, within the span
+    assert tr.on_change("relics_offered", [{"name": "A"}], batch=2) == []  # reopen-split -> coalesced
+    assert calls == [("relic", None)]                                      # still one fire
+
+
+def test_on_new_batch_refires_for_a_new_screen_after_a_quiet_gap():
+    # a genuine new offering, after the previous screen went quiet longer than the span, fires again —
+    # the coalesce is per CONTINUOUS screen, not forever.
+    p = _new_batch_profile()
+    p.triggers[0].settle_ms = 1000
+    p.triggers[0].settle_max_ms = 3000
+    clock = [0.0]
+    tr, calls = _screen_runner(p, clock)
+    assert tr.on_change("relics_offered", [{"name": "A"}], batch=1) == []
+    clock[0] = 1.0
+    tr._settle_flush("batchwatch")
+    assert calls == [("relic", None)]
+    clock[0] = 6.0                                                         # quiet gap > 3s -> ended
+    assert tr.on_change("relics_offered", [{"name": "B"}], batch=2) == []
+    clock[0] = 7.0
+    tr._settle_flush("batchwatch")
+    assert calls == [("relic", None), ("relic", None)]                    # new screen re-fires
+
+
 def test_on_new_batch_needs_a_batch_and_nonempty_records():
     clock = [0.0]
     tr, calls = _runner(_new_batch_profile(), clock)

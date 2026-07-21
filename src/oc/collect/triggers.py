@@ -167,6 +167,18 @@ class TriggerRunner:
         # not only an increase, so a dataset clear (which resets the batch to 0) doesn't wedge the
         # trigger until the count climbs back past the last-fired number.
         self._new_batch_last: dict[tuple[str, str], int] = {}
+        # Fire-once-per-SCREEN state for on_new_batch (guarded by _settle_lock, keyed (trigger, ds)).
+        # A "screen" is a run of watched flushes with no gap longer than the trigger's settle span;
+        # one physical relic screen can drip across several ticks AND (on an OCR dropout) mint more
+        # than one batch number, so batch-number-alone double-fires. _last_flush_at times the gaps;
+        # _screen_fired_at is stamped on the actual emit (not on route, so a still-settling burst
+        # keeps re-arming) and suppresses every later flush of the same screen — same-batch drips,
+        # the settle_max re-arm, and reopen-split batches all coalesce to one fire. _settle_key
+        # carries the screen key into _settle_flush so the deferred emit stamps the right screen
+        # without threading (dataset, batch) through the shared _emit_fire.
+        self._last_flush_at: dict[tuple[str, str], float] = {}
+        self._screen_fired_at: dict[tuple[str, str], float] = {}
+        self._settle_key: dict[str, tuple[str, str]] = {}
         # trailing-settle debounce state (guarded by _settle_lock). For a trigger with settle_ms:
         # the pending fire args (kept latest-wins), the live timer, and the monotonic time the
         # current window opened (for the settle_max_ms deadline). A fire is deferred while the
@@ -289,13 +301,23 @@ class TriggerRunner:
             self._settle_timer.pop(tid, None)
             pending = self._settle_pending.pop(tid, None)
             self._settle_first.pop(tid, None)
+            skey = self._settle_key.pop(tid, None)   # on_new_batch screen key (None for other kinds)
+            # Stamp the on_new_batch screen NOW, before releasing the lock to emit (see
+            # _screen_fired_at): a drip that lands during the lock-free _emit_fire below must see the
+            # screen already fired and coalesce, never re-arm a fresh timer -> double fire. A
+            # throttle-suppressed emit rolls it back below so the screen can still fire later.
+            if skey is not None:
+                self._screen_fired_at[skey] = self._clock()
         if pending is None:
             return
         why, items, node, value = pending
         t = next((x for x in self._profile.triggers if x.id == tid), None)
         if t is None or not t.enabled:
             return
-        self._emit_fire(t, why, items, node, value)
+        fired = self._emit_fire(t, why, items, node, value)
+        if skey is not None and not fired:      # throttled -> undo the optimistic screen stamp
+            with self._settle_lock:
+                self._screen_fired_at.pop(skey, None)
 
     # ---- on_ready: a watched PRODUCER's sweep finished -----------------------
 
@@ -467,6 +489,24 @@ class TriggerRunner:
                 # then fires ~that long after the LAST row, not a long fixed wait after the first.
                 # With no settle window we fire once, on the first flush (skip the rest).
                 settling = bool(getattr(t, "settle_ms", 0) or 0)
+                # Fire once per continuous SCREEN (settle-window triggers only). One physical screen
+                # drips across ticks AND can mint a second batch number on an OCR dropout, so the
+                # settle machinery alone double-fires (settle_max re-arm; a reopen-split batch landing
+                # after the first window closed). A gap in flushes longer than the settle span means
+                # the previous screen ended (a real close, not a mid-screen dropout) -> re-arm;
+                # otherwise, once this screen has emitted, drop the flush. With no settle span the old
+                # per-batch coalesce below stands (a new batch number is a new fire).
+                span = (getattr(t, "settle_max_ms", 0) or getattr(t, "settle_ms", 0) or 0) / 1000.0
+                if span > 0:
+                    now = self._clock()
+                    with self._settle_lock:
+                        prev = self._last_flush_at.get(key)
+                        self._last_flush_at[key] = now
+                        if prev is not None and (now - prev) > span:
+                            self._screen_fired_at.pop(key, None)   # quiet gap -> prev screen ended
+                        if self._screen_fired_at.get(key) is not None:
+                            continue               # this screen already fired -> no re-arm, no fire
+                        self._settle_key[t.id] = key   # _settle_flush stamps the screen on emit
                 if not first and not settling:
                     continue                       # one fire per batch, settle off -> coalesce
                 # Fire with items=None (NOT the changed rows): the trip flush carries only the rows
@@ -478,6 +518,12 @@ class TriggerRunner:
                 why = f"{dataset} batch #{batch} ({len(changed_records)} rows, reprice source)"
                 if not self._route_fire(t, why, items=None):
                     continue   # throttled / deferred into a settle window — no watch-hop animation yet
+                # A synchronous emit (settle window off) fired right now; stamp its screen here. A
+                # deferred settle fire returns False above and stamps later in _settle_flush instead.
+                if span > 0:
+                    with self._settle_lock:
+                        self._screen_fired_at[key] = self._clock()
+                        self._settle_key.pop(t.id, None)
                 for w in justifying:
                     node = f"sub:{w}" if self._profile.subset_def(w) else f"ds:{w}"
                     publish_flow(self._profile.name, "watch", node, f"trigger:{t.id}", 1)
