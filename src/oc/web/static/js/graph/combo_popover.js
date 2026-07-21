@@ -1,5 +1,5 @@
 // The ONE searchable "add" combobox popover (rule 7 — the graph's first + only searchable dropdown),
-// plus the shared body-level popover SHELL (anchoredPopover) both it and reg_agg_picker.js build on.
+// plus the shared body-level popover SHELL (anchoredPopover) both it and rich_picker.js build on.
 // The sources-input "+" add control (sources_input.js) opens this instead of a native <select>: a
 // body-level floating panel with a focused search field on top and a live-filtered, node-distance-
 // ordered option list below. Built at document.body in screen coords so it escapes node overflow
@@ -26,7 +26,7 @@ export function closeCombo() {
 // The shared shell (rule 7): appends `panel` to document.body, clamps it fully on-screen under
 // `anchor` (the exact math ctxmenu / groups popover also use), and wires outside-press/Escape
 // dismiss via the shared onOutside primitive. Any caller wanting a transient body-level popover
-// (comboPopover's search+list, reg_agg_picker's grouped mode list, ...) builds its own panel
+// (comboPopover's search+list, rich_picker's grouped rich-row list, ...) builds its own panel
 // contents and hands them here instead of re-deriving the clamp/dismiss boilerplate. Closes
 // whatever popover this shell currently holds open before mounting a new one (single instance);
 // returns a `close()` fn the caller can invoke itself (e.g. after a pick).

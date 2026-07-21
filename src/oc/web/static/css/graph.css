@@ -1137,7 +1137,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .mr-val, .mr-mark { flex: 0 0 auto; min-width: 0; overflow-wrap: anywhere; text-align: right; }
 
 /* aggregate-picker trigger (register_node.js): a <button> standing in for the native <select> it
-   replaced (reg_agg_picker.js opens the grouped help popover instead). It rides the same de-input
+   replaced (rich_picker.js opens the grouped rich popover instead). It rides the same de-input
    :is() groups as every <select> on the row (transparent + borderless at rest, --nt text, box
    revealed on hover/focus), so it reads as just another select — only width + left-align here. */
 .reg-agg-btn { width: 100%; justify-content: flex-start; text-align: left;

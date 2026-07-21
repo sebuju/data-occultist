@@ -18,8 +18,8 @@ import { since } from "../datefmt.js";
 import { log, timed } from "../log.js";
 import { wireProducerNode, mapRow } from "./producer_node.js";
 import { renderTriggerHistory } from "./history_node.js";
-import { refreshRegister, populateRegister } from "./register_node.js";
-import { aggPickerPop } from "./reg_agg_picker.js";
+import { refreshRegister, populateRegister, REG_AGGREGATES, AGG_DESC } from "./register_node.js";
+import { richPickerPop } from "./rich_picker.js";
 import { renderProcessHistory } from "./process_history_node.js";
 import { wireSlotRows } from "./reg_slots.js";
 import { makeArmed } from "./armbtn.js";
@@ -448,14 +448,16 @@ function wireRegister(div, n) {
     wireArmedRemove(div, ".reg-rmsrc", (val) => { model.removeRegisterSource(x.id, val); rebuild(); });
     // ring depth per key: coerce (blank -> 1) then rebuild so the normalised value re-renders.
     $(".reg-cap")?.addEventListener("change", (e) => { model.setRegisterCapacity(x.id, e.target.value); rebuildNode(n.id); autosave(null); });
-    // ring aggregate (shown only when capacity > 1): opens the grouped help popover (reg_agg_picker.js)
-    // instead of a native <select> (option tooltips don't render cross-browser). The picked mode
-    // gates whether the arg-tuning input shows at all (AGG_ARG in register_node.js), so rebuild the
-    // body like `.reg-cap` does for its own threshold — then refetch so the membank's summary line
-    // repaints with the new fold.
+    // ring aggregate (shown only when capacity > 1): opens the grouped rich picker (rich_picker.js)
+    // instead of a native <select> (option tooltips don't render cross-browser), so each mode's
+    // description reads while browsing. The picked mode gates whether the arg-tuning input shows at
+    // all (AGG_ARG in register_node.js), so rebuild the body like `.reg-cap` does for its own
+    // threshold — then refetch so the membank's summary line repaints with the new fold.
     $(".reg-agg-btn")?.addEventListener("click", (e) => {
-        aggPickerPop({
+        richPickerPop({
             anchor: e.currentTarget, current: x.aggregate || "",
+            groups: REG_AGGREGATES.map(([grp, opts]) =>
+                [grp, opts.map(([v, lbl]) => ({ value: v, label: lbl, meta: AGG_DESC[v] || "" }))]),
             onPick: (v) => { model.setRegisterAggregate(x.id, v); rebuildNode(n.id); refreshRegister(x.id); autosave(null); },
         });
     });

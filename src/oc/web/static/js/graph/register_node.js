@@ -40,7 +40,7 @@ export const REG_AGGREGATES = [
 ];
 
 // One-line explanation per mode (mirrors RegisterDef.aggregate's doc, models.py) — shown under each
-// row in the aggregate picker popover (reg_agg_picker.js) so a mode's meaning is visible while
+// row in the aggregate picker popover (rich_picker.js) so a mode's meaning is visible while
 // browsing, not just after picking (native <option title> tooltips don't render cross-browser).
 export const AGG_DESC = {
     "": "expose the ring tail unchanged (newest read)",
@@ -351,7 +351,7 @@ export function registerParts(x, model) {
                 // meaningful (and only offered) once the ring holds more than one sample. The raw
                 // ring is always still shown in the membank (a summary line adds below it).
                 // native <option title> tooltips don't render cross-browser, so the mode roster is
-                // browsed in a grouped popover (reg_agg_picker.js) instead of a plain <select> —
+                // browsed in a grouped rich popover (rich_picker.js) instead of a plain <select> —
                 // each mode's meaning is visible while choosing (io_wire.js wires the click -> pick).
                 (x.capacity ?? 1) > 1 && kv("aggregate",
                     h("button", { class: "gi reg-agg-btn", type: "button",
