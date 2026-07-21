@@ -12,7 +12,7 @@ import { hierRoute } from "./hierRoute.js";
 import { deCollide } from "./decollide.js";
 import { busRouteGraph } from "./busgraph.js";
 import { gradeRoutes } from "./followable.js";
-import { faceKeep } from "./faces.js";
+import { faceKeep, faceToward, faceMidpoint, faceCss, OPPOSITE_FACE } from "./faces.js";
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot, urlFlag, freezeNodeSizes, thawNodeSizes } from "./state.js";
 import { selectedNodeId, wire, startWire, canDisable, nodeTypeOf } from "./main.js";
 import { setEdges, invalidateEdges, setCorridors } from "./edgecanvas.js";
@@ -88,66 +88,76 @@ function selClsFor(aId, bId) {
 // one — window, producer, dataset, view (subset), file source — anchors its data line at the port
 // dot and gets the animated flow. (Keep this prefix set in sync with `outPortSpec`.)
 const PORT_OUT_SRC = ["win:", "producer:", "ds:", "sub:", "src:", "ro:", "register:", "process:"];
+const isDataSource = (id) => PORT_OUT_SRC.some((p) => id.startsWith(p));
 // parent->child structural tethers (a node bonded to its companion/children): preview/vttable (img),
 // region+field boxes (field), item crops (item), tell boxes (tell). They attach at face CENTRES, not
 // corners; their middle segments are still evicted off bands/nodes, only the centred endpoints are spared.
 const TETHER_KINDS = ["img", "field", "item", "tell"];
 // a data edge leaves its source's out-port; a trigger's control edges (fires + watch) leave the
-// trigger's out-ports too — `fires` from the RIGHT `.port.out`, `watch` from the LEFT `.port.pwatch`.
+// trigger's out-ports too — `fires` from `.port.out`, `watch` from `.port.pwatch`, each on whichever
+// of the node's four faces that port voted onto below.
 const fromPortOut = (aId, kind) =>
-    (kind === "data" && PORT_OUT_SRC.some((p) => aId.startsWith(p))) ||
+    (kind === "data" && isDataSource(aId)) ||
     ((kind === "trigger" || kind === "watch") && aId.startsWith("trigger:"));
 
-// Out-ports all share ONE face for a uniform look, but WHICH face is negotiated every route:
-// whichever side most data lines want (target right of source -> R, else L) wins, then EVERY data
-// out-port uses it. `outSide` holds the current winner.
-let outSide = "R";
-function negotiateOutSide(links) {
-    let r = 0, l = 0;
+// EVERY node is four-faced and EVERY out-port below picks its face the same way — a data source is
+// not a special case of a trigger. Each line votes for the face its own target points at
+// (`faceToward`: the DOMINANT axis wins, so a target sitting directly below votes "B" rather than
+// whichever of L/R a tie-break lands on) and the face with the most votes takes it; R breaks every
+// tie, the historical default. `tallyFaces` + `winningFace` are that one vote, shared by both
+// callers below.
+function tallyFaces(links, want) {
+    const box = { L: 0, R: 0, T: 0, B: 0 };
     for (const ln of links) {
-        if (!ln.port || ln.portKind === "watch") continue;
-        if (!PORT_OUT_SRC.some((p) => ln.aId.startsWith(p))) continue;   // data sources vote; triggers don't
-        const sc = ln.ra.x + ln.ra.w / 2, tc = ln.rb.x + ln.rb.w / 2;
-        if (tc >= sc) r++; else l++;
+        if (!want(ln)) continue;
+        const dx = (ln.rb.x + ln.rb.w / 2) - (ln.ra.x + ln.ra.w / 2), dy = (ln.rb.y + ln.rb.h / 2) - (ln.ra.y + ln.ra.h / 2);
+        box[faceToward(dx, dy)]++;
     }
-    return l > r ? "L" : "R";   // tie -> R (the historical default)
+    return box;
 }
-// A trigger's two control ports each face their OWN targets, not a shared face. The fires-port
-// (`.port.out`) goes L when most of the producers / sources / datasets it fires sit to the trigger's
-// left, else R; the watch-port (`.port.pwatch`) goes to the side of the dataset/subset it watches.
+const winningFace = (box) => ["L", "T", "B"].reduce((best, f) => (box[f] > box[best] ? f : best), "R");
+
+// A data source's out-port face, per node. This used to be ONE face negotiated globally and shared by
+// every data source for a uniform look; with four faces to choose from that vote sits near-tied, so a
+// single node moving could flip every port in the graph at once. Per-node has no such coupling.
+const outSides = new Map();   // data-source node id -> face
+function computeOutSides(links) {
+    outSides.clear();
+    const ids = new Set();
+    for (const ln of links) if (ln.port && ln.portKind !== "watch" && isDataSource(ln.aId)) ids.add(ln.aId);
+    for (const id of ids) outSides.set(id, winningFace(tallyFaces(links, (ln) => ln.port && ln.portKind !== "watch" && ln.aId === id)));
+}
+// A trigger's two control ports each face their OWN targets, not the shared data face. The fires-port
+// (`.port.out`) takes whichever face most of the producers / sources / datasets it fires sit off —
+// including T/B, so a target stacked directly above or below gets a straight drop instead of a
+// bracket around the side; the watch-port (`.port.pwatch`) faces the dataset/subset it watches.
 // The one hard rule: when BOTH ports are wired they must sit on OPPOSITE faces or their lines would
-// stack — so the watch-port takes the side opposite fires (which equals its own target side whenever
-// the two targets are on different sides, and splits them apart when they'd collide, fires winning
-// since a mis-faced fires line is the visible bug). Recomputed every route from live geometry, so a
-// target that moves (or a re-wire) re-picks the faces and no line wraps back around the node.
-const triggerSides = new Map();   // trigger id -> { fires: "L"|"R", watch: "L"|"R" }
-const flip = (s) => (s === "L" ? "R" : "L");
+// stack — so the watch-port takes the face opposite fires (which equals its own target's face
+// whenever the two targets are on different faces, and splits them apart when they'd collide, fires
+// winning since a mis-faced fires line is the visible bug). Recomputed every route from live
+// geometry, so a target that moves (or a re-wire) re-picks the faces and no line wraps around.
+const triggerSides = new Map();   // trigger id -> { fires: face, watch: face }
 function computeTriggerSides(links) {
     triggerSides.clear();
-    const votes = new Map();   // trigger id -> { fires:{l,r}, watch:{l,r} }
-    for (const ln of links) {
-        if (!ln.port || !ln.aId.startsWith("trigger:")) continue;
-        const sc = ln.ra.x + ln.ra.w / 2, tc = ln.rb.x + ln.rb.w / 2;
-        const v = votes.get(ln.aId) || votes.set(ln.aId, { fires: { l: 0, r: 0 }, watch: { l: 0, r: 0 } }).get(ln.aId);
-        const box = ln.portKind === "watch" ? v.watch : v.fires;   // fires + dataset-action share the fires port
-        if (tc < sc) box.l++; else box.r++;
-    }
-    for (const [id, v] of votes) {
-        const fires = v.fires.l > v.fires.r ? "L" : "R";                  // no fire targets -> default R
-        // watch is ALWAYS opposite fires, wired or not: an idle watch handle that defaulted to L would
-        // sit under a left-facing fires port. Default fires R keeps the historical watch-on-L home.
-        triggerSides.set(id, { fires, watch: flip(fires) });
+    const ids = new Set();
+    for (const ln of links) if (ln.port && ln.aId.startsWith("trigger:")) ids.add(ln.aId);
+    for (const id of ids) {
+        // fires + dataset-action share the fires port; only `watch` lines vote for the watch port
+        const fires = winningFace(tallyFaces(links, (ln) => ln.port && ln.aId === id && ln.portKind !== "watch"));
+        // watch is ALWAYS opposite fires, wired or not: an idle watch handle left on its own face
+        // could sit under the fires port. Default fires R keeps the historical watch-on-L home.
+        triggerSides.set(id, { fires, watch: OPPOSITE_FACE[fires] });
     }
 }
-// The face a port line leaves: a data source uses the negotiated shared side; a trigger's fires /
-// watch ports use the sides computed above (defaults: fires R, watch L when a trigger fires nothing).
+// The face a port line leaves — whichever its own node voted for above (defaults: out/fires R, watch L
+// when nothing is wired to vote).
 function sideForPort(l) {
     if (l.aId.startsWith("trigger:")) {
         const s = triggerSides.get(l.aId);
         return l.portKind === "watch" ? (s ? s.watch : "L") : (s ? s.fires : "R");
     }
     if (l.portKind === "watch") return "L";
-    return PORT_OUT_SRC.some((p) => l.aId.startsWith(p)) ? outSide : "R";
+    return outSides.get(l.aId) || "R";
 }
 function buildLinks() {
     const links = [];
@@ -187,8 +197,8 @@ const MIN_PORT_GAP = 11;   // hard floor between adjacent fanned port dots (dot 
 // both node ids belong to the same (non-null) group
 function sameGroup(aId, bId) { const g = groups.groupOf(aId); return !!g && g === groups.groupOf(bId); }
 function computePorts(links) {
-    outSide = negotiateOutSide(links);   // pick the shared out-port face before pinning any line
-    computeTriggerSides(links);          // per-trigger fires-port faces (independent of the shared face)
+    computeOutSides(links);              // pick each data source's out-port face before pinning any line
+    computeTriggerSides(links);          // per-trigger fires/watch port faces
     for (const l of links) {
         // geometric facing — the pre-route default for a brand-new line; the router picks the real
         // faces (and the routed result's ports override these in drawEdges/runRouting).
@@ -197,10 +207,7 @@ function computePorts(links) {
         // Provisional only: seat the elbow on the port's own face so a brand-new line leaves the dot
         // it belongs to. Unpinned lines (data out, watch) may then be routed onto any face and the
         // dot follows — same as it has always worked for data out-lines.
-        if (l.port) {
-            if (sideForPort(l) === "L") { l.d1 = "L"; l.p1 = [l.ra.x, l.ra.y + l.ra.h / 2]; }
-            else { l.d1 = "R"; l.p1 = [l.ra.x + l.ra.w, l.ra.y + l.ra.h / 2]; }
-        }
+        if (l.port) { l.d1 = sideForPort(l); l.p1 = faceMidpoint(l.ra, l.d1); }
         l.align = false;
         l.relax = sameGroup(l.aId, l.bId);
     }
@@ -336,12 +343,13 @@ function placePortDots(links) {
         if (!l.port) continue;
         push(l.portKind === "watch" ? srcWatch : srcOut, l.aId, l);   // leaving end -> source family
     }
-    // a data source's idle out-dot sits on the negotiated face (left only when `outSide` flipped); a
-    // trigger's idle watch handle sits opposite its fires port (CSS home is left, so it only needs a
-    // style when fires went L). A WIRED dot ignores all of this — styleDot puts it on the routed face.
+    // a data source's idle out-dot sits on its node's chosen face; a trigger's idle watch handle sits
+    // opposite its fires port. `faceCss` parks either on any of the four. A WIRED dot ignores all of
+    // this — styleDot puts it on the routed face.
     for (const [id, node] of nodeEls) {
-        const outIdle = (outSide === "L" && PORT_OUT_SRC.some((p) => id.startsWith(p))) ? "left:-4px;right:auto" : "";
-        const watchIdle = triggerSides.get(id)?.watch === "R" ? "right:-4px;left:auto" : "";
+        const outIdle = outSides.has(id) ? faceCss(outSides.get(id)) : "";
+        const watch = triggerSides.get(id)?.watch;
+        const watchIdle = watch ? faceCss(watch) : "";
         placeSrcDots(node, srcOut.get(id), ".port.out:not(.port-extra)", ".port.out.port-extra", "port-extra", node._outSpec, outIdle);
         placeSrcDots(node, srcWatch.get(id), ".port.pwatch:not(.pw-extra)", ".port.pwatch.pw-extra", "pw-extra", node._watchSpec, watchIdle);
     }
@@ -862,20 +870,19 @@ function runRouting() {
     // unlike everything else and dropped to `no-bus-route` more often. Only the trigger FIRES line
     // stays pinned. `port` still flags every port line so the router fans + centres its endpoint on
     // whatever face it lands on.
-    const unpinned = (l) => l.portKind === "watch" || (l.portKind === "out" && PORT_OUT_SRC.some((p) => l.aId.startsWith(p)));
+    const unpinned = (l) => l.portKind === "watch" || (l.portKind === "out" && isDataSource(l.aId));
     const edges = links.map((l) => ({ from: l.aId, to: l.bId, key: l.key, port: l.port, pinSrc: (l.port && !unpinned(l)) ? sideForPort(l) : null, tether: TETHER_KINDS.some((k) => l.cls.split(" ").includes(k)),
         // watch ends in a diamond sunk slightly into the watched node; trigger ends in a hollow ring
         // pulled back by its radius (3px) so the ring centres ON the fired node's edge. The data-flow
         // arrow needs NO inset: its marker is centred (refX=5) so it already straddles the edge, and
         // insetting would only push the line stub visibly inside the card (flow lines draw on top).
         insetEnd: l.portKind === "watch" ? 3 : (/\btrigger\b/.test(l.cls) ? 3 : 0) }));
-    // every data source parks its out-port on the negotiated shared face (`outSide`); the router
-    // keeps arriving lines off that dot when it's idle (`reserveMid`). A trigger's fires-port parks
-    // on the side facing its targets (default R when it fires nothing).
+    // every out-port parks on the face its own lines picked; the router keeps arriving lines off that
+    // dot when it's idle (`reserveMid`). Default R for a source/trigger with nothing wired.
     const outPorts = new Map();
     for (const n of nodes) {
-        if (PORT_OUT_SRC.some((p) => n.id.startsWith(p))) outPorts.set(n.id, outSide);       // negotiated shared face
-        else if (n.id.startsWith("trigger:")) outPorts.set(n.id, triggerSides.get(n.id)?.fires || "R");   // faces its targets
+        if (isDataSource(n.id)) outPorts.set(n.id, outSides.get(n.id) || "R");
+        else if (n.id.startsWith("trigger:")) outPorts.set(n.id, triggerSides.get(n.id)?.fires || "R");
     }
     const prevSides = new Map();
     for (const [k, c] of routeCache) if (c.d1) prevSides.set(k, { d1: c.d1, d2: c.d2 });

@@ -13,6 +13,29 @@ export function insetEndpoint(pts, side, by) {
     return pts;
 }
 
+export const OPPOSITE_FACE = { L: "R", R: "L", T: "B", B: "T" };
+
+// A node has FOUR faces and a port may sit on any of them. These three are the whole vocabulary for
+// picking one, kept here beside FACE_OUT so no caller re-derives "which way is that" by hand:
+//   faceToward  — the face a delta points at; the DOMINANT axis wins, so a target directly below is
+//                 "B", not whichever of L/R a tie-break happens to fall on.
+//   faceMidpoint— the centre of that face, where an unfanned port parks.
+//   faceCss     — the inline style that parks an IDLE dot on it. ALWAYS a full override: the two port
+//                 elements have different CSS homes (`.port.out` right, `.port.pwatch` left), so
+//                 "leave it to the stylesheet" would mean a different face for each.
+export const faceToward = (dx, dy) => (Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? "L" : "R") : (dy < 0 ? "T" : "B"));
+export function faceMidpoint(r, face) {
+    if (face === "L") return [r.x, r.y + r.h / 2];
+    if (face === "R") return [r.x + r.w, r.y + r.h / 2];
+    if (face === "T") return [r.x + r.w / 2, r.y];
+    return [r.x + r.w / 2, r.y + r.h];
+}
+export const faceCss = (face) =>
+    face === "L" ? "left:-4px;right:auto;top:50%;bottom:auto;transform:translateY(-50%)"
+        : face === "T" ? "top:-4px;bottom:auto;left:50%;right:auto;transform:translateX(-50%)"
+            : face === "B" ? "top:auto;bottom:-4px;left:50%;right:auto;transform:translateX(-50%)"
+                : "left:auto;right:-4px;top:50%;bottom:auto;transform:translateY(-50%)";
+
 export const PORT_MIN = 12;      // hard floor between fanned out-port dots on one face (dot is 8px) — no overlap
 export const PORT_END_KEEP = 18; // min distance an endpoint stays off a node corner (> corner radius 14) so the
                                  // rounded bend can't swallow the stub
