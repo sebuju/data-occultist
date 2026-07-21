@@ -29,16 +29,17 @@
     overflow: hidden; text-overflow: ellipsis; }
 .sv-combo-opt:hover, .sv-combo-opt.hl { background: var(--accent-bg); }
 .sv-combo-empty { padding: 5px 8px; color: var(--muted); font-style: italic; }
-/* the register aggregate picker (js/graph/reg_agg_picker.js) — a fixed, grouped, no-search browse
-   list built on the sv-combo-* shell above. Wider than the add-combo (descriptions run long) and
-   its rows wrap to two lines (label + description) instead of the add-combo's single-line clip. */
-.agg-pick-pop { max-width: 420px; }
+/* the rich picker (js/graph/rich_picker.js) — a fixed, no-search browse list built on the
+   sv-combo-* shell above, used by the register aggregate fold and the live feed-session dropdown.
+   Wider than the add-combo (meta lines run long) and its rows wrap to two lines (label + meta)
+   instead of the add-combo's single-line clip. */
+.rich-pick-pop { max-width: 420px; }
 .sv-combo-group { padding: 5px 8px 2px; font-size: var(--fs-xs); letter-spacing: .04em;
     text-transform: uppercase; color: var(--muted); }
-.agg-pick-opt { display: flex; flex-direction: column; gap: 1px; white-space: normal;
+.rich-pick-opt { display: flex; flex-direction: column; gap: 1px; white-space: normal;
     overflow: visible; text-overflow: clip; }
-.agg-pick-lbl { color: var(--text); }
-.agg-pick-opt.sel .agg-pick-lbl::before { content: "\203a  "; color: var(--accent); }   /* current mode marker */
+.rich-pick-lbl { color: var(--text); }
+.rich-pick-opt.sel .rich-pick-lbl::before { content: "\203a  "; color: var(--accent); }   /* current selection marker */
 .sv-combo-meta { font-size: var(--fs-xs); color: var(--muted); white-space: normal; }
 
 /* modals */
@@ -110,6 +111,21 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
     min-height: 1.3em; line-height: 1.3em; }
 .cap-empty { padding: 16px; color: var(--muted); }
+/* live tab, level 1: the saved recordings (one per live-capture start). Click a row to drill into
+   its thumbnails; the ✕ deletes that recording (armed two-click). `‹ name` in the head goes back. */
+.cap-sess-list { display: flex; flex-direction: column; gap: 4px; padding: 0 12px 12px; }
+.cap-sess { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 8px; cursor: pointer; color: var(--text); }
+.cap-sess:hover { border-color: var(--accent); }
+.cap-sess-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-sess-meta { font-size: var(--fs-xs); white-space: nowrap; }
+.cap-sess-del { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 4px; }
+.cap-sess-del:hover, .cap-sess-del[data-armed="1"] { color: var(--danger, #e06c6c); }
+.cap-back { background: transparent; border: 0; color: var(--muted); cursor: pointer;
+    padding: 3px 4px; font-size: var(--fs-sm); max-width: 220px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+.cap-back:hover { color: var(--text); }
 /* split picker: thumbs on the left (owns the scroll — .modal.large .modal-body is overflow:hidden),
    a large hover-driven preview pinned on the right. */
 .cap-split { display: flex; height: 100%; min-height: 0; }
@@ -212,6 +228,15 @@ body.booting *:not(#bootveil):not(#bootveil *)::after {
    whole UI is blocked while we can't reach the server; auto-dismissed by conn.js. */
 .offline-overlay { z-index: 4000; }
 .offline-overlay[hidden] { display: none; }
+/* profile-checker overlay: same shell, lower priority than the offline banner (it can't
+   fix itself by retrying) but still above the boot veil so a bad YAML surfaces at once. */
+.profile-alert-overlay { z-index: 3000; }
+.profile-alert-overlay[hidden] { display: none; }
+.profile-alert-overlay .startup-halt-box { max-width: 640px; text-align: left; }
+.profile-alert-overlay .startup-halt-box h3 { text-align: center; }
+.profile-alert-list { list-style: none; margin: 10px 0; padding: 0; max-height: 40vh;
+    overflow: auto; font: var(--fs-sm)/1.5 var(--font-mono); }
+.profile-alert-list li { padding: 3px 0; border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 60%); }
 .log-body { display: none; max-height: 38vh; overflow: auto; padding: 4px 10px 8px;
     border-top: 1px solid var(--line); overscroll-behavior: contain; }
 .logbar.open .log-body { display: block; }

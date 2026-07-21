@@ -181,12 +181,23 @@ async def lifespan(_app: FastAPI):
         # Sweep orphan stat CSVs once per boot: a renamed/deleted node (or an out-of-band write)
         # leaves a file that _ensure_loaded would otherwise glob back as a ghost card forever.
         # prune_stale is conservative (no-op on an empty live set), so a failed profile load skips.
+        from ..eventlog import publish as _publish_log
+        from ..profile.checker import check_profile
         for _name in list_profiles(get_settings().profiles_dir):
             try:
-                _live = load_profile(get_settings().profiles_dir, _name).stat_node_ids()
+                _profile = load_profile(get_settings().profiles_dir, _name)
+                _live = _profile.stat_node_ids()
                 _purged = stats_store.prune_stale(_name, _live)
                 if _purged:
                     print(f"[stats] pruned {len(_purged)} orphan node file(s) for {_name}: {', '.join(_purged)}")
+                # Cross-reference every id/field a profile's nodes point at against what's
+                # actually declared — a renamed/deleted node or a stale merge leftover left
+                # a dangling reference behind. Reported over the SAME log bus a trigger fire
+                # or price fetch note uses, tagged so the UI can also raise a boot banner.
+                for issue in check_profile(_profile):
+                    level = "err" if issue.severity == "error" else "warn"
+                    _publish_log(f"{issue.node}: {issue.msg}", level=level, game=_name,
+                                 kind="profile_check")
             except Exception:  # noqa: BLE001 - one bad profile must not skip the rest
                 pass
     except Exception:  # noqa: BLE001 - best-effort

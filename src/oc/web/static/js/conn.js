@@ -11,6 +11,7 @@
 //     server or mutates the DOM while we're blind.
 
 import { h } from "./dom.js";
+import { createHaltOverlay } from "./haltoverlay.js";
 
 const HEALTH_URL = "/api/ocr/device";   // cheapest always-present GET; also serve.ps1's up-probe
 const PROBE_MS = 2500;                   // auto-retry cadence while offline
@@ -80,9 +81,7 @@ let el = null, btn = null, reasonEl = null;
 
 function ensureEl() {
     if (el) return;
-    el = document.createElement("div");
-    el.className = "startup-halt offline-overlay";
-    el.hidden = true;
+    el = createHaltOverlay("offline-overlay");
     // Heading states only what we KNOW (a request didn't get a response); the cause
     // line below shows the actual failing request/error rather than guessing whether
     // the server is "down". The probe decides reachable-vs-not and auto-dismisses.

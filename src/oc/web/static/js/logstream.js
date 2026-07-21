@@ -9,14 +9,19 @@
 // it at the game and fan its log events into the log bar.
 import { log } from "./log.js";
 import * as dsevents from "./graph/dsevents.js";
+import * as profileAlert from "./profile_alert.js";
 
 let unsub = null;
 
 export function openLogStream(game) {
     closeLogStream();
+    profileAlert.clearIssues();   // drop the previous game's stale banner, if any
     if (!game) return;
     dsevents.setGame(game);   // ensure the shared stream is pointed at the game (idempotent)
-    unsub = dsevents.subscribeLog((ev) => log(ev.msg, ev.level || "info"));
+    unsub = dsevents.subscribeLog((ev) => {
+        log(ev.msg, ev.level || "info");
+        if (ev.kind === "profile_check") profileAlert.reportIssue(ev);
+    });
 }
 
 export function closeLogStream() {
