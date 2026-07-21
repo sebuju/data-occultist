@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 from fastapi import APIRouter, Request
 
@@ -25,11 +26,39 @@ from .activity import build_activity
 
 router = APIRouter(prefix="/api/events", tags=["events"])
 
-# Activity keepalive cadence (seconds): fast while a worker runs, idle otherwise. Mirrors the
-# old hub.js FAST/IDLE cadence — but with NO backgrounded penalty, because SSE isn't timer-
-# throttled, so a hidden tab now stays as fresh as an idle foreground one (the whole point).
-_ACT_FAST_S = 0.8
+# Activity keepalive cadence (seconds): fast while a worker runs, idle otherwise. The fast beat
+# is paced to just outrun the collector's readout production (``tuning.gate_interval`` = 0.25s,
+# see collector._ocr_due) so a fresh live value ships on the next beat instead of waiting out a
+# slower keepalive — the push, not the OCR loop, was the node view's bottleneck.
+_ACT_FAST_S = 0.2
 _ACT_IDLE_S = 2.5
+
+# Connections whose viewer reported itself HIDDEN (``?cid=`` -> ``POST /api/events/visible``).
+#
+# SSE isn't timer-throttled when a tab is backgrounded, which is why the heartbeat was moved onto
+# this stream in the first place — a hidden tab is the NORM here (the game must be foregrounded).
+# But "keeps beating" no longer has to mean "beats FAST": the one thing that genuinely can't wait
+# for a beat, the trigger-fire sound cue, rides its own instant ``fire`` channel now, and the
+# history rings are server-side and shipped whole (see collect/readout_history.py), so a skipped
+# beat loses no data — it only delays a repaint nobody is looking at. So a hidden viewer drops to
+# the idle cadence, and unhiding repaints at once via ``hub.kick()``'s one-off GET.
+#
+# Membership only — an unknown cid counts as VISIBLE, so an old client, a dropped POST, or a
+# browser without occlusion detection fails SAFE (fast) rather than silently stale.
+_hidden_viewers: set[str] = set()
+
+
+@router.post("/visible")
+def set_viewer_visible(cid: str, visible: bool = True) -> dict:
+    """Report whether the viewer holding stream ``cid`` is on screen. Called by ``hub.js`` on
+    ``visibilitychange`` — one event, no poll."""
+    if not cid:              # a cid-less stream is the fail-safe (visible) case; never mark it
+        return {"cid": cid, "visible": True}
+    if visible:
+        _hidden_viewers.discard(cid)
+    else:
+        _hidden_viewers.add(cid)
+    return {"cid": cid, "visible": visible}
 
 
 def _act_busy(snap: dict) -> bool:
@@ -53,7 +82,7 @@ def _act_sig(snap: dict) -> str:
 
 
 @router.get("/{game}")
-async def events(game: str, request: Request, after: int = 0):
+async def events(game: str, request: Request, after: int = 0, cid: str = ""):
     """A short-lived ``text/event-stream`` MULTIPLEXING every event kind for ``game`` over ONE
     connection — so the whole page holds a SINGLE SSE socket, not one per kind. The browser caps
     ~6 connections per host; each extra always-on stream permanently eats one and starves plain
@@ -68,7 +97,10 @@ async def events(game: str, request: Request, after: int = 0):
       arrives (the client caps blobs per event).
     * ``log`` — activity-log lines (trigger watch/fire, external API fetches). ``?after=`` is the
       last seq the client saw; backfill replays lines since it (skips already-shown) before going
-      live, so reconnects don't drop or duplicate lines."""
+      live, so reconnects don't drop or duplicate lines.
+
+    ``?cid=`` identifies this viewer so it can report itself hidden and slow its own activity
+    beat — see ``_hidden_viewers``."""
 
     def subscribe_fn(push):
         # this ONE socket is the page's liveness signal: while any is open a front end
@@ -92,15 +124,17 @@ async def events(game: str, request: Request, after: int = 0):
             if g == game:
                 push(("fire", {"trigger": trigger_id, "sounds": sounds}))
 
-        # Activity is a POLLED aggregate (no event bus), so a per-connection task recomputes it and
-        # pushes on change (+ an adaptive keepalive to refresh the countdown). This replaces the old
-        # client-side hub.js poll: pushed over SSE, it isn't timer-throttled when the tab is hidden.
+        # Activity is a POLLED aggregate (no event bus), so a per-connection task recomputes it at
+        # the fast/idle cadence and pushes only when it actually changed (+ an _ACT_IDLE_S
+        # keepalive). This replaces the old client-side hub.js poll: pushed over SSE, it isn't
+        # timer-throttled when the tab is hidden.
         async def pump_activity():
             last = None
+            last_push = float("-inf")
             while True:
                 try:
                     # build_activity reads disk (sweep sidecars, session status, schedules); at
-                    # 0.8–2.5s cadence that's steady on-loop I/O, so run it OFF the event loop.
+                    # this cadence that's steady on-loop I/O, so run it OFF the event loop.
                     snap = await asyncio.to_thread(build_activity, game, get_settings())
                 except Exception:   # a transient build error must not kill the stream
                     await asyncio.sleep(_ACT_IDLE_S)
@@ -108,16 +142,29 @@ async def events(game: str, request: Request, after: int = 0):
                 sig = _act_sig(snap)
                 changed = sig != last
                 last = sig
-                # Always push (a keepalive) so the countdown + new-subscriber replay stay fresh;
-                # run fast while a worker is busy or right after a change, idle otherwise. A fire
-                # flips last_fired (in the signature) -> `changed` -> the follow-up ticks fast.
-                push(("activity", snap))
-                await asyncio.sleep(_ACT_FAST_S if (changed or _act_busy(snap)) else _ACT_IDLE_S)
+                # Push on real CHANGE only, plus a keepalive no slower than _ACT_IDLE_S. The loop
+                # rate is the CHECK rate, not the wire rate: at the fast cadence an unconditional
+                # push would ship several fat snapshots/sec (they carry the producer/readout/
+                # register/process history rings) and run every hub subscriber's reconcile pass
+                # that often, for no new information. Safe to skip a beat because `_act_sig`
+                # excludes the per-second `next_in` countdown and the client interpolates it
+                # locally (ago.js), and a newly-opened panel is seeded by hub.kick()'s one-off
+                # GET, not by this stream. A fire flips last_fired (in the signature) -> pushes
+                # immediately, and the follow-up ticks fast.
+                now = time.monotonic()
+                if changed or (now - last_push) >= _ACT_IDLE_S:
+                    push(("activity", snap))
+                    last_push = now
+                # A hidden viewer holds the idle cadence even while a worker runs: the fast beat
+                # only buys repaint latency, and there is nothing on screen to repaint.
+                fast = (changed or _act_busy(snap)) and cid not in _hidden_viewers
+                await asyncio.sleep(_ACT_FAST_S if fast else _ACT_IDLE_S)
 
         task = asyncio.ensure_future(pump_activity())
         offs = [subscribe(on_change), subscribe_flow(on_flow), subscribe_log(on_log),
                 subscribe_fire(on_fire)]
-        return lambda: (gpu_watch.client_disconnected(), task.cancel(), [off() for off in offs])
+        return lambda: (gpu_watch.client_disconnected(), task.cancel(), [off() for off in offs],
+                        _hidden_viewers.discard(cid))   # this viewer is gone -> don't leak its cid
 
     async def fmt(first, queue: asyncio.Queue) -> str:
         tag, payload = first
