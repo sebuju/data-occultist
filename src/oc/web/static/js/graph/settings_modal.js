@@ -7,7 +7,7 @@ import { $, model, setStatus } from "./state.js";
 import { h } from "../dom.js";
 import { openModal } from "../modal.js";
 import { timed } from "../log.js";
-import { fmtBytes } from "./panels/precap.js";
+import { fmtBytes } from "../bytefmt.js";
 import { applyLiveInterval } from "./panels/livewin.js";
 import { buildBackups } from "./backups.js";
 import { createGame, loadGame } from "./main.js";

@@ -7,7 +7,8 @@ import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
 import { $, setStatus, model, readoutPreview } from "../state.js";
 import { registerWorker, unregisterWorker } from "../workers.js";
-import { pc, precapOpen, precapBusy, fmtBytes } from "./precap.js";
+import { pc, precapOpen, precapBusy } from "./precap.js";
+import { fmtBytes } from "../../bytefmt.js";
 import { prevHost, refreshDetect, refreshPreview } from "../imaging.js";
 import { refreshLive } from "../main.js";
 import { panZoomTo } from "../camera.js";
@@ -15,6 +16,8 @@ import { h, svg } from "../../dom.js";
 import { confTier } from "../conf.js";
 import { bgSetTimeout, bgClearTimeout } from "../../bgtimer.js";
 import { fmtTimeSec } from "../../datefmt.js";
+import { richPickerPop } from "../rich_picker.js";
+import { sessLabel, sessMeta } from "./live_sess.js";
 
 let timer = null;
 // live floating panel state — declared BEFORE buildLiveWindow() runs at module-eval
@@ -52,6 +55,11 @@ let liveSaveRecog = false;
 // (the session reads not-running -> reflectExternalStop drops the toggle). Disabled when the live/
 // bucket is empty (nothing to feed).
 let liveFeed = false;
+// Saved live sessions (one per live-capture start), newest first, and which one the feed replays.
+// Refreshed alongside the saved-image stat; liveFeedSess defaults to the newest session and is
+// re-pinned when the selected one disappears (flushed) — "" means "let the server pick the newest".
+let liveSessions = [];
+let liveFeedSess = "";
 // Frame limiter (min SECONDS between collector reads) now lives in the SETTINGS modal and is
 // persisted server-side; the collector reads it on start. applyLiveInterval() (exported) restarts
 // a running collector when the modal changes it, so the new limit takes effect immediately.
@@ -137,7 +145,13 @@ function mountLive(adapter) {
                 h("label", { class: "live-toggle" },
                     h("button", { class: "act-enable live-feed", role: "switch", "aria-checked": "false", title: "replay the saved live images through the pipeline instead of capturing new frames — paced by their timestamps, writes records, stops when all are fed. Saving is disabled while feeding." },
                         switchSvg()),
-                    h("span", { class: "live-feed-lbl" }, "feed saved images"))));
+                    h("span", { class: "live-feed-lbl" }, "feed saved images"))),
+            // which saved session the feed replays — a rich dropdown (rich_picker.js) so each
+            // option shows its image count + recording length, which a native <select> can't.
+            h("div", { class: "live-row live-sess-row" },
+                h("span", { class: "live-int-lbl", title: "which saved live session the feed replays (newest first)" }, "session"),
+                h("button", { class: "live-feed-sess", type: "button",
+                    title: "pick the saved live session to replay" }, "newest")));
         // Stats collapsible (open by default): live-run readouts as fixed rows with placeholders so
         // the height is stable whether live is on or off. Boxed body, styled like the OCR log below.
         const stats = collapsible({ title: "stats", open: statsOpen, bodyClass: "live-statbox", headTitle: "live run stats (phase / saved / rate / rows)" });
@@ -190,6 +204,14 @@ function mountLive(adapter) {
         liveRoot.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
         liveRoot.querySelector(".live-saverecog").addEventListener("click", () => setLiveSaveRecog(!liveSaveRecog));
         liveRoot.querySelector(".live-feed").addEventListener("click", () => setLiveFeed(!liveFeed));
+        // pick the session to replay: rich rows (start time + "N imgs · length"), newest first.
+        liveRoot.querySelector(".live-feed-sess").addEventListener("click", (ev) => {
+            richPickerPop({
+                anchor: ev.currentTarget, current: selectedSession(),
+                groups: [[null, liveSessions.map((s) => ({ value: s.id, label: sessLabel(s), meta: sessMeta(s, { withBytes: true }) }))]],
+                onPick: (id) => { liveFeedSess = id; renderLiveWindow(); },
+            });
+        });
         // skip the replay to the next image now (feed mode) — kick the heartbeat so the readout
         // reflects the jump without waiting for the next beat.
         liveRoot.querySelector(".live-feed-skip").addEventListener("click", () => {
@@ -201,7 +223,7 @@ function mountLive(adapter) {
         clr.addEventListener("click", () => {
             if (clr.dataset.armed !== "1") { clr.dataset.armed = "1"; clr.textContent = "sure?"; setTimeout(() => { if (clr.dataset.armed === "1") { clr.dataset.armed = "0"; clr.textContent = "flush"; } }, 2500); return; }
             clr.dataset.armed = "0"; clr.textContent = "flush";
-            if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch((e) => log(`clear live images failed: ${e.message || e}`, "err"));
+            if (model.profile.name) api.liveCaptures.clear(model.profile.name).then((s) => { liveImg = s; liveSessions = []; renderLiveWindow(); }).catch((e) => log(`clear live images failed: ${e.message || e}`, "err"));
         });
         if (model.profile.name) api.liveCaptures.stats(model.profile.name).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
         // stats header toggles its section; OCR-log header toggles its section (and its gated poll),
@@ -398,6 +420,16 @@ function renderLiveWindow() {
     };
     setDisabled(liveRoot.querySelector(".live-feed"), !liveImg.count && !liveFeed);   // needs images; keep on mid-feed
     setDisabled(liveRoot.querySelector(".live-saverecog"), liveFeed);                 // no image saving while feeding
+    // feed session dropdown: names the picked session (or the newest fallback); locked while a feed
+    // runs (the collector started with that session) and dead when nothing is saved.
+    const sessBtn = liveRoot.querySelector(".live-feed-sess");
+    if (sessBtn) {
+        const cur = liveSessions.find((s) => s.id === selectedSession());
+        const txt = cur ? `${sessLabel(cur)} · ${sessMeta(cur)}` : "no saved sessions";
+        if (sessBtn.textContent !== txt) sessBtn.textContent = txt;
+        const off = !liveSessions.length || (liveFeed && liveOn);
+        if (sessBtn.disabled !== off) sessBtn.disabled = off;
+    }
     // Stats render as fixed rows below the window list; "–" placeholder when off so height holds.
     // collecting (armed): show what the server collector saved; tuning (disarmed): client img rate.
     const collecting = liveOn && (liveSave || liveFeed);   // feed runs the server collector too
@@ -651,8 +683,9 @@ function startServerCollect() {
     // would schedule the hub at IDLE cadence (~3s) — so activity:live-gated elements lagged badly.
     // Requesting a beat on resolution flips them as soon as the worker is up.
     // null => server uses the persisted frame limiter; liveSaveRecog => save every recognised grab
-    // (forced off while feeding — a replay saves nothing); liveFeed => replay the saved images.
-    api.live.start(game, null, liveFeed ? false : liveSaveRecog, liveFeed).then(() => hub.kick()).catch((e) => setStatus(String(e.message || e)));
+    // (forced off while feeding — a replay saves nothing); liveFeed => replay the picked saved
+    // session (blank = whatever the server sees as newest).
+    api.live.start(game, null, liveFeed ? false : liveSaveRecog, liveFeed, liveFeed ? selectedSession() : "").then(() => hub.kick()).catch((e) => setStatus(String(e.message || e)));
     subscribeCollector();
     hub.kick();   // beat now so collection status shows immediately
 }
@@ -670,6 +703,7 @@ async function syncLiveFromServer() {
     if (!st?.running || liveOn) return;   // re-check liveOn: the await may have raced a user toggle
     liveOn = true; liveSave = true; liveSawServer = true;
     liveFeed = !!st.feeding;   // reflect a feed-saved-images run adopted on reload
+    if (st.feed_session) liveFeedSess = st.feed_session;   // ...and which session it's replaying
     liveColStatus = st;
     registerWorker("live", "live collection", () => setLiveMode(false));
     showLiveStats(true);
@@ -686,6 +720,7 @@ function adoptServerCollect(s) {
     const lv = s && s.live;
     liveOn = true; liveSave = true; liveSawServer = true;
     liveFeed = !!(lv && lv.feeding);   // reflect a feed-saved-images run adopted off the heartbeat
+    if (lv && lv.feed_session) liveFeedSess = lv.feed_session;   // ...and which session it's replaying
     liveColStatus = lv || null;
     registerWorker("live", "live collection", () => setLiveMode(false));
     showLiveStats(true);
@@ -706,6 +741,7 @@ function reflectExternalStop() {
     unregisterWorker("live");
     showLiveStats(false);
     stopDebugPoll();   // collector gone -> nothing to poll
+    syncTuningSession();   // live is off now -> close any tuning session
     log("live mode stopped (external)");
     renderLiveWindow();
 }
@@ -721,6 +757,30 @@ function refreshLiveImgStat(force = false) {
     if (!force && liveImgStatT0 && now - liveImgStatT0 < 5000) return;
     liveImgStatT0 = now;
     api.liveCaptures.stats(game).then((s) => { liveImg = s; renderLiveWindow(); }).catch(() => {});
+    // the session list rides the same throttle — the feed dropdown reads from it
+    api.liveCaptures.sessions(game).then((ss) => { liveSessions = ss || []; renderLiveWindow(); }).catch(() => {});
+}
+
+// The read-only tuning loop saves its frames through /live/grab, which has no start or stop of its
+// own — so the client marks the boundary: one tuning run = one session folder. The armed collector
+// opens and closes its own session server-side, so this only tracks the disarmed loop. Idempotent
+// (a repeated same-state call is dropped), and safe to call on every live/save/feed edge.
+let tuningSess = false;
+function syncTuningSession() {
+    const want = liveOn && !liveSave && !liveFeed;
+    const game = model.profile.name;
+    if (!game || want === tuningSess) return;
+    tuningSess = want;
+    (want ? api.liveCaptures.sessionBegin(game) : api.liveCaptures.sessionEnd(game))
+        .then(() => { if (!want) refreshLiveImgStat(true); })   // a closed session is a new pickable recording
+        .catch(() => {});
+}
+
+// Which session the feed will replay: the picked one while it still exists, else the newest
+// (what the server falls back to when we send no session at all).
+function selectedSession() {
+    if (liveFeedSess && liveSessions.some((s) => s.id === liveFeedSess)) return liveFeedSess;
+    return liveSessions.length ? liveSessions[0].id : "";
 }
 function stopServerCollect() {
     const game = model.profile.name;
@@ -762,6 +822,7 @@ function setLiveMode(on) {
         stopServerCollect();   // harmless if not running
     }
     syncDebugPoll();   // live edge: start the OCR-log poll (if open) on, stop it on off
+    syncTuningSession();   // disarmed loop -> its own session folder, opened/closed on this edge
     renderLiveWindow();   // reflect the toggle + cleared dots
 }
 
@@ -778,6 +839,7 @@ function setLiveSave(on) {
         registerWorker("live", liveFeed ? "live feed" : on ? "live collection" : "live view", () => setLiveMode(false));
         log(on ? "live saving armed" : "live saving disarmed", on ? "run" : undefined);
     }
+    syncTuningSession();   // armed <-> disarmed swaps who owns the session
     renderLiveWindow();
 }
 
@@ -796,6 +858,7 @@ function setLiveFeed(on) {
         registerWorker("live", liveFeed ? "live feed" : liveSave ? "live collection" : "live view", () => setLiveMode(false));
     }
     log(on ? "feeding saved images" : "feed stopped");
+    syncTuningSession();   // dropping back to the tuning loop opens its session (and vice versa)
     renderLiveWindow();
 }
 

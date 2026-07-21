@@ -1,5 +1,5 @@
-"""Feed SAVED live images back through the collector pipeline instead of grabbing fresh window
-frames — a "replay" of a recorded live session.
+"""Feed one SAVED live session's images back through the collector pipeline instead of grabbing
+fresh window frames — a "replay" of a recorded live session.
 
 The collector is reused verbatim: it grabs frames through ``engine.capture.grab_window`` and
 resolves every window recognises a window via ``engine.process``/``engine.window``. Swapping those
@@ -43,21 +43,27 @@ def parse_stamp(name: str) -> datetime | None:
         return None
 
 
-def build_image_list(captures_dir: Path | str, game: str) -> list[tuple[datetime, Path]]:
-    """Every replayable live image as ``(timestamp, path)`` sorted OLDEST first.
+def build_image_list(captures_dir: Path | str, game: str,
+                     session: str | None = None) -> list[tuple[datetime, Path]]:
+    """One live SESSION's images as ``(timestamp, path)`` sorted OLDEST first — a session is one
+    live-capture start, so its frames are a single contiguous recording the pacing clock can
+    replay honestly. ``session=None`` picks the newest one.
 
-    Source is the game's ``live/`` bucket. ``captures_store.listing`` returns newest-first and
-    only well-formed ``*.jpg`` names, but we re-derive the timestamp from each name (the pacing
-    clock needs it) and drop anything unparseable."""
+    ``captures_store.live_listing`` returns newest-first and only well-formed ``*.jpg`` names, but
+    we re-derive the timestamp from each name (the pacing clock needs it) and drop anything
+    unparseable."""
     from ..web import captures_store
 
     base = Path(captures_dir)
+    sid = session or captures_store.newest_live_session(base, game)
+    if not sid:
+        return []
     out: list[tuple[datetime, Path]] = []
-    for name in captures_store.listing(base, game, sub=captures_store.LIVE):
+    for name in captures_store.live_listing(base, game, sid):
         ts = parse_stamp(name)
         if ts is None:
             continue
-        p = captures_store.path_for(base, game, name, sub=captures_store.LIVE)
+        p = captures_store.live_path_for(base, game, sid, name)
         if p is not None:
             out.append((ts, p))
     out.sort(key=lambda it: it[0])

@@ -3,12 +3,19 @@
 Stashed under ``captures/<game>/<timestamp>.jpg``. The teaching UI can list and
 reselect them, so you can refine boxes against an old capture without the game
 being on that screen.
+
+Live mode's frames go one level deeper — ``captures/<game>/live/<session>/<timestamp>.jpg`` —
+so each live-capture start is its own browsable, replayable, individually-deletable recording
+(see the ``live_*`` helpers below and :mod:`oc.web.live_sessions`, which decides which session
+a save belongs to).
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shutil
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,32 +31,50 @@ def _safe(name: str) -> str:
     return _SAFE.sub("_", name)
 
 
-def save(captures_dir: Path | str, game: str, data: bytes, clock=None, sub: str = "") -> str:
-    """Save a JPEG under ``captures/<game>[/<sub>]/<stamp>.jpg`` and return its filename."""
+_id_lock = threading.Lock()
+_last_session_id = ""
+
+
+def new_session_id(clock=None) -> str:
+    """Id for a fresh live session — the capture stamp of its start (same scheme as precapture's
+    sessions). The Windows clock only ticks every ~1-16 ms, so two sessions started back to back
+    read the SAME microsecond stamp; bump past the last id issued so ids stay unique and still
+    sort chronologically (two runs must never share a folder)."""
+    global _last_session_id
+    sid = (clock or (lambda: datetime.now(timezone.utc)))().strftime("%Y%m%d-%H%M%S-%f")
+    with _id_lock:
+        if sid <= _last_session_id:
+            stem, us = _last_session_id.rsplit("-", 1)
+            sid = f"{stem}-{int(us) + 1:06d}"
+        _last_session_id = sid
+    return sid
+
+
+def save(captures_dir: Path | str, game: str, data: bytes, clock=None) -> str:
+    """Save a JPEG under ``captures/<game>/<stamp>.jpg`` and return its filename."""
     stamp = (clock or (lambda: datetime.now(timezone.utc)))().strftime("%Y%m%d-%H%M%S-%f")
     name = f"{stamp}.jpg"
-    base = Path(captures_dir) / _safe(game)
-    path = (base / _safe(sub) / name) if sub else (base / name)
+    path = Path(captures_dir) / _safe(game) / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return name
 
 
-def listing(captures_dir: Path | str, game: str, sub: str = "") -> list[str]:
-    """Filenames of the .jpg files in ``captures/<game>[/<sub>]/`` (non-recursive), newest first.
-    ``sub`` reaches a bucket like ``LIVE`` — the top-level listing (``sub=""``) never sees those."""
+def listing(captures_dir: Path | str, game: str) -> list[str]:
+    """Filenames of the .jpg files in ``captures/<game>/`` (non-recursive), newest first. The
+    live bucket is a sub-folder, so it never shows up here — see :func:`live_listing`."""
     d = Path(captures_dir) / _safe(game)
-    if sub:
-        d = d / _safe(sub)
     if not d.exists():
         return []
     return sorted((p.name for p in d.glob("*.jpg")), reverse=True)
 
 
-def stats(captures_dir: Path | str, game: str, sub: str = "") -> dict:
-    """{count, bytes} of the .jpg files in ``captures/<game>[/<sub>]/`` (non-recursive)."""
-    base = Path(captures_dir) / _safe(game)
-    d = (base / _safe(sub)) if sub else base
+def stats(captures_dir: Path | str, game: str) -> dict:
+    """{count, bytes} of the .jpg files in ``captures/<game>/`` (non-recursive)."""
+    return _dir_stats(Path(captures_dir) / _safe(game))
+
+
+def _dir_stats(d: Path) -> dict:
     count, nbytes = 0, 0
     if d.exists():
         for p in d.glob("*.jpg"):
@@ -61,10 +86,9 @@ def stats(captures_dir: Path | str, game: str, sub: str = "") -> dict:
     return {"count": count, "bytes": nbytes}
 
 
-def clear(captures_dir: Path | str, game: str, sub: str = "") -> int:
-    """Delete every .jpg in ``captures/<game>[/<sub>]/`` and return how many were removed."""
-    base = Path(captures_dir) / _safe(game)
-    d = (base / _safe(sub)) if sub else base
+def clear(captures_dir: Path | str, game: str) -> int:
+    """Delete every .jpg in ``captures/<game>/`` and return how many were removed."""
+    d = Path(captures_dir) / _safe(game)
     removed = 0
     if d.exists():
         for p in d.glob("*.jpg"):
@@ -76,29 +100,188 @@ def clear(captures_dir: Path | str, game: str, sub: str = "") -> int:
     return removed
 
 
-def path_for(captures_dir: Path | str, game: str, name: str, sub: str = "") -> Path | None:
-    # Guard against traversal: only a bare filename in the game's folder (or its ``sub`` bucket).
-    if "/" in name or "\\" in name or ".." in name:
+def path_for(captures_dir: Path | str, game: str, name: str) -> Path | None:
+    # Guard against traversal: only a bare filename in the game's folder.
+    if not _bare(name):
         return None
-    base = Path(captures_dir) / _safe(game)
-    if sub:
-        base = base / _safe(sub)
-    p = base / name
+    p = Path(captures_dir) / _safe(game) / name
     return p if p.exists() else None
 
 
-def promote_live(captures_dir: Path | str, game: str, name: str) -> str | None:
-    """Copy a live-bucket image up into the top-level (permanent) captures folder so it survives a
-    live-bucket flush. Returns the (unchanged) filename, or None if the source is missing. Idempotent
+def _bare(name: str) -> bool:
+    """True when ``name`` is a plain filename — no separators, no parent hops."""
+    return bool(name) and "/" not in name and "\\" not in name and ".." not in name
+
+
+# ---- live sessions (one folder per live-capture start) --------------------
+
+def _live_base(captures_dir: Path | str, game: str) -> Path:
+    return Path(captures_dir) / _safe(game) / LIVE
+
+
+def _live_dir(captures_dir: Path | str, game: str, session: str) -> Path:
+    return _live_base(captures_dir, game) / _safe(session)
+
+
+def _live_session_dirs(captures_dir: Path | str, game: str) -> list[Path]:
+    try:
+        return [p for p in _live_base(captures_dir, game).iterdir() if p.is_dir()]
+    except OSError:
+        return []
+
+
+def _stamp_of(name: str) -> datetime | None:
+    """Capture time out of a ``%Y%m%d-%H%M%S-%f.jpg`` filename, or None for a stray file."""
+    try:
+        return datetime.strptime(Path(name).stem, "%Y%m%d-%H%M%S-%f")
+    except ValueError:
+        return None
+
+
+def save_live(captures_dir: Path | str, game: str, data: bytes, session: str, clock=None) -> str:
+    """Save a live frame under ``captures/<game>/live/<session>/<stamp>.jpg``. The session folder
+    is created HERE, on the first actual write — a live start that never captures anything leaves
+    no empty folder behind."""
+    stamp = (clock or (lambda: datetime.now(timezone.utc)))().strftime("%Y%m%d-%H%M%S-%f")
+    name = f"{stamp}.jpg"
+    d = _live_dir(captures_dir, game, session)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_bytes(data)
+    return name
+
+
+def live_listing(captures_dir: Path | str, game: str, session: str) -> list[str]:
+    """Filenames in one live session, newest first."""
+    d = _live_dir(captures_dir, game, session)
+    if not d.exists():
+        return []
+    return sorted((p.name for p in d.glob("*.jpg")), reverse=True)
+
+
+def list_live_sessions(captures_dir: Path | str, game: str) -> list[dict]:
+    """Every saved live session, newest first:
+    ``{id, label, count, bytes, first, last, span}`` — ``first``/``last`` are the session's
+    oldest/newest capture stamps (ISO) and ``span`` their gap in seconds, i.e. how long the
+    recording runs (what the feed dropdown shows next to the image count)."""
+    migrate_flat_live(captures_dir, game)
+    out = []
+    for d in _live_session_dirs(captures_dir, game):
+        stamps, nbytes, count = [], 0, 0
+        try:
+            for p in d.glob("*.jpg"):
+                count += 1
+                ts = _stamp_of(p.name)
+                if ts is not None:
+                    stamps.append(ts)
+                try:
+                    nbytes += p.stat().st_size
+                except OSError:
+                    pass
+        except OSError:
+            continue
+        if not count:      # an empty leftover folder is not a recording
+            continue
+        first, last = (min(stamps), max(stamps)) if stamps else (None, None)
+        out.append({
+            "id": d.name, "label": _read_meta(d).get("label", ""),
+            "count": count, "bytes": nbytes,
+            "first": first.isoformat() if first else None,
+            "last": last.isoformat() if last else None,
+            "span": (last - first).total_seconds() if first and last else 0.0,
+        })
+    out.sort(key=lambda s: s["id"], reverse=True)
+    return out
+
+
+def newest_live_session(captures_dir: Path | str, game: str) -> str | None:
+    """Id of the most recent non-empty live session, or None when nothing is saved."""
+    sessions = list_live_sessions(captures_dir, game)
+    return sessions[0]["id"] if sessions else None
+
+
+def live_stats(captures_dir: Path | str, game: str, session: str | None = None) -> dict:
+    """``{count, bytes, sessions}`` for one live session, or summed across ALL of them when
+    ``session`` is None (the live panel's saved-image stat line)."""
+    if session:
+        st = _dir_stats(_live_dir(captures_dir, game, session))
+        st["sessions"] = 1 if st["count"] else 0
+        return st
+    sessions = list_live_sessions(captures_dir, game)
+    return {
+        "count": sum(s["count"] for s in sessions),
+        "bytes": sum(s["bytes"] for s in sessions),
+        "sessions": len(sessions),
+    }
+
+
+def live_clear(captures_dir: Path | str, game: str, session: str | None = None) -> int:
+    """Delete one live session's folder, or every session when ``session`` is None. Returns how
+    many sessions were removed."""
+    dirs = ([_live_dir(captures_dir, game, session)] if session
+            else _live_session_dirs(captures_dir, game))
+    removed = 0
+    for d in dirs:
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+            removed += 1
+    return removed
+
+
+def live_path_for(captures_dir: Path | str, game: str, session: str, name: str) -> Path | None:
+    if not _bare(name) or not _bare(session):
+        return None
+    p = _live_dir(captures_dir, game, session) / name
+    return p if p.exists() else None
+
+
+def promote_live(captures_dir: Path | str, game: str, session: str, name: str) -> str | None:
+    """Copy a live image up into the top-level (permanent) captures folder so it survives a
+    live flush. Returns the (unchanged) filename, or None if the source is missing. Idempotent
     — if a top-level file of that name already exists it's left as-is."""
-    src = path_for(captures_dir, game, name, sub=LIVE)
+    src = live_path_for(captures_dir, game, session, name)
     if src is None:
         return None
     dst = Path(captures_dir) / _safe(game) / src.name
     if not dst.exists():
-        import shutil
         shutil.copy2(src, dst)
     return src.name
+
+
+def _meta_path(d: Path) -> Path:
+    return d / "meta.json"
+
+
+def _read_meta(d: Path) -> dict:
+    try:
+        return json.loads(_meta_path(d).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def migrate_flat_live(captures_dir: Path | str, game: str) -> str | None:
+    """Fold a pre-sessions flat ``live/*.jpg`` bucket into one session labelled ``recovered``.
+    Idempotent (a no-op once the bucket holds only folders) and cheap — one non-recursive glob.
+    Returns the new session id, or None when there was nothing to migrate."""
+    base = _live_base(captures_dir, game)
+    try:
+        flat = sorted(base.glob("*.jpg"))
+    except OSError:
+        return None
+    if not flat:
+        return None
+    # name the session after the OLDEST frame so it sorts into the timeline where it belongs
+    sid = Path(flat[0]).stem if _stamp_of(flat[0].name) else new_session_id()
+    dst = base / _safe(sid)
+    try:
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in flat:
+            f.replace(dst / f.name)
+        _meta_path(dst).write_text(
+            json.dumps({"created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "label": "recovered"}), encoding="utf-8")
+    except OSError:
+        return None
+    return sid
 
 
 # ---- frozen item cutouts (the item template's saved image) ----------------

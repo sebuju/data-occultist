@@ -314,18 +314,26 @@ export function captureUrl(game, name) {
     return `/api/captures/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }
 
-// Saved live-mode images live in their own bucket: grab one now (live tuning calls this
-// each round), read the {count,bytes} stat, or clear them all. grab returns the new stats.
+// Saved live-mode images live in their own bucket, one folder per live-capture start: grab one
+// now (live tuning calls this each round, into the open session), read the {count,bytes,sessions}
+// stat across every session, or clear one session / all of them. grab + clear return the stats.
 export const liveCaptures = {
     grab: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/grab`, { method: "POST" }, OCR_MS).then((r) => ok(r, "live grab")).then((r) => r.json()),
     stats: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/stats`).then((r) => r.json()),
-    clear: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/clear`, { method: "POST" }).then((r) => ok(r, "clear live")).then((r) => r.json()),
-    // Live-bucket image names (newest first) for the picker's live tab, the URL to load one, and
-    // "promote" — copy a live image into the permanent bucket so a flush can't delete it (returns
-    // the chosen filename, now a normal capture).
-    list: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/list`).then((r) => (r.ok ? r.json() : [])),
-    imgUrl: (game, name) => `/api/captures/${encodeURIComponent(game)}/live/img/${encodeURIComponent(name)}`,
-    promote: (game, name) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/promote?name=${encodeURIComponent(name)}`, { method: "POST" }).then((r) => ok(r, "promote live")).then((r) => r.json()).then((j) => j.name),
+    clear: (game, session = "") => tfetch(`/api/captures/${encodeURIComponent(game)}/live/clear${session ? `?session=${encodeURIComponent(session)}` : ""}`, { method: "POST" }).then((r) => ok(r, "clear live")).then((r) => r.json()),
+    // Saved sessions (newest first): [{id, label, count, bytes, first, last, span}] — the feed
+    // dropdown and the picker's live tab both browse these.
+    sessions: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/sessions`).then((r) => (r.ok ? r.json() : [])),
+    // One session's image names (newest first), the URL to load one, and "promote" — copy a live
+    // image into the permanent bucket so a flush can't delete it (returns the chosen filename,
+    // now a normal capture).
+    list: (game, session) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/list?session=${encodeURIComponent(session)}`).then((r) => (r.ok ? r.json() : [])),
+    imgUrl: (game, session, name) => `/api/captures/${encodeURIComponent(game)}/live/img/${encodeURIComponent(session)}/${encodeURIComponent(name)}`,
+    promote: (game, session, name) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/promote?session=${encodeURIComponent(session)}&name=${encodeURIComponent(name)}`, { method: "POST" }).then((r) => ok(r, "promote live")).then((r) => r.json()).then((j) => j.name),
+    // Session boundary for the READ-ONLY tuning loop (the armed collector opens/closes its own):
+    // live mode on -> begin, off -> end, so a tuning run is one folder.
+    sessionBegin: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/session/begin`, { method: "POST" }).then((r) => r.json()),
+    sessionEnd: (game) => tfetch(`/api/captures/${encodeURIComponent(game)}/live/session/end`, { method: "POST" }).then((r) => r.json()),
 };
 
 // URL of one frame image (NNNNN.jpg) of a saved precapture session — for the capture picker.
@@ -502,14 +510,16 @@ export const live = {
     // overrides it (the live panel's frame limiter — min seconds between collector reads).
     // saveRecognized => the collector saves every OCR-due grab whose frame matched a window to
     // the live/ bucket, not only writes.
-    // feedImages => replay the saved live/ images through the pipeline instead of live capture,
-    // paced server-side by their timestamps (see collect/replay.py). Saves nothing while feeding.
-    start: (game, interval, saveRecognized, feedImages, signal) => {
+    // feedImages => replay ONE saved live session through the pipeline instead of live capture,
+    // paced server-side by its timestamps (see collect/replay.py). Saves nothing while feeding;
+    // feedSession picks which session (blank/omitted = the newest one).
+    start: (game, interval, saveRecognized, feedImages, feedSession, signal) => {
         let url = `/api/live/${encodeURIComponent(game)}/start`;
         const q = [];
         if (interval != null && Number.isFinite(interval)) q.push(`interval=${encodeURIComponent(interval)}`);
         if (saveRecognized) q.push("save_recognized=1");
         if (feedImages) q.push("feed_images=1");
+        if (feedImages && feedSession) q.push(`feed_session=${encodeURIComponent(feedSession)}`);
         if (q.length) url += `?${q.join("&")}`;
         return tfetch(url, { method: "POST", signal }).then((r) => r.json());
     },

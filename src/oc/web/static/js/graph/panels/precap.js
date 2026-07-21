@@ -7,6 +7,8 @@ import { openModal } from "../../modal.js";
 import { registerKey, SCOPE } from "../../inputbus.js";
 import { makeReorderable, arrayMove } from "../../pretty/reorder.js";
 import { fmtDateTimeSec } from "../../datefmt.js";
+import { fmtBytes } from "../../bytefmt.js";
+import { sessLabel, sessMeta } from "./live_sess.js";
 import { log } from "../../log.js";
 import { createFloatWin } from "../floatwin.js";
 import { persist } from "../persist.js";
@@ -834,16 +836,6 @@ function renderPrecapLeft(left, st) {
     }
 }
 
-// Human-readable byte size (1 KB = 1024 B). Whole numbers for B and >=100;
-// one decimal otherwise — so "47f · 12.3 MB" reads cleanly in the session list.
-function fmtBytes(n) {
-    if (!n) return "0 B";
-    const u = ["B", "KB", "MB", "GB", "TB"];
-    let v = n, i = 0;
-    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
-    return `${i === 0 || v >= 100 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
-}
-
 // Capture filenames are "YYYYMMDD-HHMMSS-ffffff.jpg" — pull the time out for display.
 function fmtCaptureTime(name) {
     const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name);
@@ -931,15 +923,18 @@ async function openCaptureModal(winId) {
         node.className = "cap-split";
         node.replaceChildren(left, right);
         let previewName = null, previewLive = false;
-        let tab = "stashed", live = null;   // picker tab; live = lazily-loaded live-bucket names (null = unloaded)
+        // picker tab; the live tab is two levels — the saved SESSIONS (one per live-capture start,
+        // null = not loaded yet), then the images inside the one drilled into (liveSid/liveNames).
+        let tab = "stashed", sessions = null, liveSid = "", liveNames = null;
         // show `name` big on the right; null -> the hint. `liveOnly` previews a not-yet-promoted
-        // live-bucket image from its live URL. Caption: time · page N (or "live") · bound windows.
+        // live image (from the drilled-into session) via its live URL. Caption: time · page N (or
+        // "live") · bound windows.
         const setPreview = (name, liveOnly = false) => {
             previewName = name; previewLive = liveOnly && !!name;
             const on = !!name;
             previewImg.hidden = !on; previewCap.hidden = !on; previewEmpty.hidden = on;
             if (!on) return;
-            previewImg.src = previewLive ? api.liveCaptures.imgUrl(game, name) : api.captureUrl(game, name);
+            previewImg.src = previewLive ? api.liveCaptures.imgUrl(game, liveSid, name) : api.captureUrl(game, name);
             const pg = order.indexOf(name), wins = usedBy(name);
             previewCap.textContent = [fmtCaptureTime(name),
                 previewLive ? "live" : (pg >= 0 ? `page ${pg + 1}` : null),
@@ -950,7 +945,7 @@ async function openCaptureModal(winId) {
         // delete it), then selects it and flips to the stashed tab so the kept capture is visible.
         const promoteLive = async (name) => {
             try {
-                const nm = await api.liveCaptures.promote(game, name);
+                const nm = await api.liveCaptures.promote(game, liveSid, name);
                 if (!nm) return;
                 if (!caps.includes(nm)) caps.unshift(nm);   // newest-first, like a fresh grab
                 if (!order.includes(nm)) order.push(nm);
@@ -965,36 +960,79 @@ async function openCaptureModal(winId) {
                 title: saved ? `${name} (saved)` : name,
                 onClick: () => promoteLive(name), onMouseEnter: () => setPreview(name, !saved),
             },
-                h("img", { loading: "lazy", src: api.liveCaptures.imgUrl(game, name), alt: "" }),
+                h("img", { loading: "lazy", src: api.liveCaptures.imgUrl(game, liveSid, name), alt: "" }),
                 h("span", { class: "cap-time" }, fmtCaptureTime(name)),
                 h("span", { class: "cap-wins" }, saved ? "saved" : ""));
         };
-        // switch tabs; lazy-load the live bucket the first time its tab opens.
+        const loadSessions = async () => {
+            try { sessions = await api.liveCaptures.sessions(game); } catch { sessions = []; }
+        };
+        // drill into a session (load its image names) or back out to the session list.
+        const openSession = async (sid) => {
+            liveSid = sid; liveNames = null; previewName = null; draw();
+            try { liveNames = await api.liveCaptures.list(game, sid); } catch { liveNames = []; }
+            draw();
+        };
+        const backToSessions = () => { liveSid = ""; liveNames = null; previewName = null; draw(); };
+        // delete one recording — armed two-click (no blocking dialog, rule 2).
+        const deleteSession = async (btn, sid) => {
+            if (btn.dataset.armed !== "1") {
+                btn.dataset.armed = "1"; btn.textContent = "sure?";
+                setTimeout(() => { if (btn.isConnected && btn.dataset.armed === "1") { btn.dataset.armed = "0"; btn.textContent = "✕"; } }, 2500);
+                return;
+            }
+            try {
+                await api.liveCaptures.clear(game, sid);
+                await loadSessions();
+                if (liveSid === sid) backToSessions(); else draw();
+            } catch (e) { setStatus(String(e.message || e)); }
+        };
+        // one session row: when it was recorded + how many images, how big, how long it runs.
+        const sessRow = (s) => {
+            const del = h("button", { class: "cap-sess-del", dataset: { armed: "0" }, title: "delete this recording" }, "✕");
+            del.addEventListener("click", (ev) => { ev.stopPropagation(); deleteSession(del, s.id); });
+            return h("button", { class: "cap-sess", title: s.id, onClick: () => openSession(s.id) },
+                h("span", { class: "cap-sess-name" }, sessLabel(s)),
+                h("span", { class: "muted cap-sess-meta" }, sessMeta(s, { withBytes: true })),
+                del);
+        };
+        // switch tabs; lazy-load the live sessions the first time that tab opens.
         const switchTab = async (t) => {
             if (tab === t) return;
             tab = t;
-            if (t === "live" && live === null) {
-                try { live = await api.liveCaptures.list(game); } catch { live = []; }
-            }
+            if (t === "live" && sessions === null) await loadSessions();
             draw();
         };
 
         const draw = () => {
             const tabBtn = (t, label) => h("button",
                 { class: "cap-tab" + (tab === t ? " on" : ""), onClick: () => switchTab(t) }, label);
+            const sess = (sessions || []).find((s) => s.id === liveSid) || null;
+            const liveTotal = (sessions || []).reduce((a, s) => a + s.count, 0);
             const head = h("div", { class: "cap-head" },
                 tabBtn("stashed", "stashed"),
-                tabBtn("live", live && live.length ? `live (${live.length})` : "live"),
+                tabBtn("live", liveTotal ? `live (${liveTotal})` : "live"),
+                // drilled into a session -> a back crumb naming it
+                tab === "live" && liveSid
+                    ? h("button", { class: "cap-back", onClick: backToSessions, title: "back to the recordings" }, `‹ ${sessLabel(sess)}`)
+                    : null,
                 h("span", { class: "spacer" }),
                 tab === "stashed" ? h("button", { class: "cap-new", onClick: onCapNew }, "capture") : null,
-                h("span", { class: "muted" }, tab === "live"
-                    ? `${(live || []).length} live` : `${order.length} of ${caps.length} selected`));
+                h("span", { class: "muted" }, tab !== "live"
+                    ? `${order.length} of ${caps.length} selected`
+                    : (liveSid ? sessMeta(sess) : `${(sessions || []).length} recordings · ${liveTotal} imgs`)));
             const kids = [head];
             let chosen = null;
-            if (tab === "live") {
-                kids.push((live && live.length)
-                    ? h("div", { class: "cap-grid" }, live.map((n) => liveCell(n)))
-                    : h("p", { class: "cap-empty" }, live === null ? "loading…" : "no live images saved"));
+            if (tab === "live" && !liveSid) {
+                // level 1: the recordings themselves, newest first
+                kids.push((sessions && sessions.length)
+                    ? h("div", { class: "cap-sess-list" }, sessions.map((s) => sessRow(s)))
+                    : h("p", { class: "cap-empty" }, sessions === null ? "loading…" : "no live images saved"));
+            } else if (tab === "live") {
+                // level 2: the images inside the drilled-into recording
+                kids.push((liveNames && liveNames.length)
+                    ? h("div", { class: "cap-grid" }, liveNames.map((n) => liveCell(n)))
+                    : h("p", { class: "cap-empty" }, liveNames === null ? "loading…" : "this recording is empty"));
             } else {
                 // chosen row (page order, drag to reorder) sits above the full pool grid.
                 chosen = order.length
@@ -1014,10 +1052,11 @@ async function openCaptureModal(winId) {
                 itemSel: ".cap-cell", axis: "wrap",
                 onReorder: (from, insertBefore) => { arrayMove(order, from, insertBefore); dirty = true; draw(); },
             });
-            // keep the last hover if still valid, else default: first live image (live tab) / first chosen.
+            // keep the last hover if still valid, else default: first image of the drilled-into
+            // recording (live tab) / first chosen. The session LIST level has nothing to preview.
             if (tab === "live") {
-                const keep = previewName && (live || []).includes(previewName);
-                const pn = keep ? previewName : ((live || [])[0] || null);
+                const names = liveSid ? (liveNames || []) : [];
+                const pn = (previewName && names.includes(previewName)) ? previewName : (names[0] || null);
                 setPreview(pn, pn ? !caps.includes(pn) : false);
             } else {
                 setPreview(previewName && caps.includes(previewName) ? previewName : (order[0] || null));
@@ -1032,5 +1071,5 @@ async function openCaptureModal(winId) {
 export {
     pc, pcState, precapOpen, precapBusy,
     buildPrecap, mountPrecap, showPrecap, hidePrecap, renderPrecap, renderPrecapData, renderPrecapLeft,
-    openCaptureModal, fmtBytes, fmtCaptureTime, PC_PAGE,
+    openCaptureModal, fmtCaptureTime, PC_PAGE,
 };

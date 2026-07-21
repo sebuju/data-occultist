@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 
 from ...profile import list_profiles
 from ...runtime import load_live_profile
-from .. import captures_store
+from .. import captures_store, live_sessions
 from ..deps import get_engine, get_locator, get_settings
 from ..encode import frame_to_jpeg
 
@@ -68,9 +68,23 @@ def list_captures(game: str):
     return captures_store.listing(get_settings().captures_dir, game)
 
 
+@router.post("/captures/{game}/live/session/begin")
+def live_session_begin(game: str):
+    """Open a live session for the read-only tuning loop (the client toggles live mode, and its
+    per-round grabs all land in this one session's folder). Returns the new session id."""
+    return {"session": live_sessions.begin(game)}
+
+
+@router.post("/captures/{game}/live/session/end")
+def live_session_end(game: str):
+    """Close the game's live session — the next grab starts a new one."""
+    live_sessions.end(game)
+    return {"ok": True}
+
+
 @router.post("/captures/{game}/live/grab")
 def live_grab(game: str):
-    """Capture the live window and save the frame into the game's ``live`` bucket.
+    """Capture the live window and save the frame into the game's open live session.
 
     Called once per live-tuning round so live mode persists what it sees. Returns the
     running {count, bytes} of saved live images so the panel can show the stat. A missing
@@ -83,44 +97,51 @@ def live_grab(game: str):
     if win is not None:
         frame = get_engine().capture.grab_window(win)
         jpeg = frame_to_jpeg(frame)
-        captures_store.save(settings.captures_dir, game, jpeg, sub=captures_store.LIVE)
-    return captures_store.stats(settings.captures_dir, game, captures_store.LIVE)
+        captures_store.save_live(settings.captures_dir, game, jpeg,
+                                 session=live_sessions.current_or_begin(game))
+    return captures_store.live_stats(settings.captures_dir, game)
 
 
 @router.get("/captures/{game}/live/stats")
 def live_stats(game: str):
-    """{count, bytes} of saved live images for the game."""
-    return captures_store.stats(get_settings().captures_dir, game, captures_store.LIVE)
+    """{count, bytes, sessions} of saved live images for the game, across every session."""
+    return captures_store.live_stats(get_settings().captures_dir, game)
+
+
+@router.get("/captures/{game}/live/sessions")
+def live_sessions_list(game: str):
+    """Saved live sessions, newest first: {id, label, count, bytes, first, last, span}."""
+    return captures_store.list_live_sessions(get_settings().captures_dir, game)
 
 
 @router.post("/captures/{game}/live/clear")
-def live_clear(game: str):
-    """Delete all saved live images for the game; returns the (now-zero) stats."""
+def live_clear(game: str, session: str = Query("")):
+    """Delete one live session (``session=``) or every one of them; returns the new stats."""
     settings = get_settings()
-    captures_store.clear(settings.captures_dir, game, captures_store.LIVE)
-    return captures_store.stats(settings.captures_dir, game, captures_store.LIVE)
+    captures_store.live_clear(settings.captures_dir, game, session or None)
+    return captures_store.live_stats(settings.captures_dir, game)
 
 
 @router.get("/captures/{game}/live/list")
-def list_live(game: str):
-    """Saved live-bucket image filenames for the game, newest first (the picker's live tab)."""
-    return captures_store.listing(get_settings().captures_dir, game, captures_store.LIVE)
+def list_live(game: str, session: str = Query(...)):
+    """One live session's image filenames, newest first (the picker's live tab)."""
+    return captures_store.live_listing(get_settings().captures_dir, game, session)
 
 
-@router.get("/captures/{game}/live/img/{name}")
-def get_live_image(game: str, name: str):
-    """Serve one live-bucket image (the picker's live-tab thumbnail/preview)."""
-    path = captures_store.path_for(get_settings().captures_dir, game, name, sub=captures_store.LIVE)
+@router.get("/captures/{game}/live/img/{session}/{name}")
+def get_live_image(game: str, session: str, name: str):
+    """Serve one live image (the picker's live-tab thumbnail/preview)."""
+    path = captures_store.live_path_for(get_settings().captures_dir, game, session, name)
     if path is None:
         raise HTTPException(status_code=404, detail="live image not found")
     return FileResponse(str(path), media_type="image/jpeg")
 
 
 @router.post("/captures/{game}/live/promote")
-def promote_live_image(game: str, name: str = Query(...)):
+def promote_live_image(game: str, session: str = Query(...), name: str = Query(...)):
     """Copy a live image into the permanent top-level bucket so it survives a live flush; returns
     its (unchanged) filename. Called when the picker chooses a live image."""
-    nm = captures_store.promote_live(get_settings().captures_dir, game, name)
+    nm = captures_store.promote_live(get_settings().captures_dir, game, session, name)
     if nm is None:
         raise HTTPException(status_code=404, detail="live image not found")
     return {"name": nm}

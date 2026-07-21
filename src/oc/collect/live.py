@@ -142,12 +142,17 @@ class LiveSession:
         # consumed + cleared by the next _on_tick). Surfaced in the debug log only in
         # capture-recognised mode so the OCR log names the image each grab was written to.
         self._last_saved_frame: str | None = None
-        # "feed saved images" mode: replay the game's saved live/ images through the collector
+        # "feed saved images" mode: replay ONE saved live session's images through the collector
         # instead of grabbing fresh window frames (paced by their timestamps — see collect.replay).
-        # Read into _loop on start(); _replay is the live ReplayCapture (for the current/total
-        # progress readout), set under the lock while the feed loop runs.
+        # Read into _loop on start(); _feed_session is which session to replay (None = newest);
+        # _replay is the live ReplayCapture (for the current/total progress readout), set under the
+        # lock while the feed loop runs.
         self._feed_images = False
+        self._feed_session: str | None = None
         self._replay = None
+        # The live session this run's saved frames go into — one folder per live start (see
+        # web.live_sessions / captures_store.save_live). None while feeding (a replay saves nothing).
+        self._session_id: str | None = None
 
     # ---- profile -----------------------------------------------------------
 
@@ -175,16 +180,21 @@ class LiveSession:
         return bool(t is not None and t.is_alive())
 
     def start(self, interval: float | None = None, save_recognized: bool = False,
-              feed_images: bool = False) -> None:
+              feed_images: bool = False, feed_session: str | None = None) -> None:
         if self.is_running():
             return
         if interval is None:
             interval = self._engine.settings.tuning.collect_interval
         self._join_prev()
+        # A capturing run owns a live session (its saved frames land in that one folder); a feed
+        # saves nothing, so it opens none. The folder itself is created by the first actual save.
+        session = None if feed_images else self._begin_session()
         with self._lock:
             self._interval = max(0.0, float(interval))
             self._save_recognized = bool(save_recognized)
             self._feed_images = bool(feed_images)
+            self._feed_session = feed_session or None
+            self._session_id = session
             self._replay = None
             self._recog = {}
             self._written = 0
@@ -225,6 +235,24 @@ class LiveSession:
 
     # ---- worker ------------------------------------------------------------
 
+    def _begin_session(self) -> str | None:
+        """Open this run's live session id (the folder its saved frames go into). Best-effort —
+        a failure here must never block starting collection; frames just fall back to a fresh
+        session at save time."""
+        try:
+            from ..web import live_sessions
+            return live_sessions.begin(self._profile.name)
+        except Exception:  # pragma: no cover - defensive
+            return None
+
+    def _end_session(self) -> None:
+        """Close this run's live session so the next start records into a new folder."""
+        try:
+            from ..web import live_sessions
+            live_sessions.end(self._profile.name)
+        except Exception:  # pragma: no cover - defensive
+            pass
+
     def _loop(self) -> None:
         restore = enter_device(self._engine, self.batch_device)
         try:
@@ -242,10 +270,12 @@ class LiveSession:
             with self._lock:
                 self._error = str(exc)
         finally:
+            if not self._feed_images:
+                self._end_session()   # a capturing run's session closes with the loop
             exit_device(self._engine, restore)
 
     def _feed_loop(self) -> None:
-        """Replay the game's saved live/ images through the SAME collector, paced by their
+        """Replay ONE saved live session's images through the SAME collector, paced by their
         timestamps (see collect.replay). Backends are swapped behind the ABCs so the pipeline is
         unchanged; nothing is saved (feeding must not write new images). The loop ends when the
         replay clock passes the last image (exhausted) — the session then reads not-running and the
@@ -254,7 +284,8 @@ class LiveSession:
 
         from .replay import ReplayCapture, ReplayProcess, ReplayWindow, build_image_list
 
-        images = build_image_list(self._engine.settings.captures_dir, self._profile.name)
+        images = build_image_list(self._engine.settings.captures_dir, self._profile.name,
+                                  self._feed_session)
         if not images:
             with self._lock:
                 self._error = "no saved live images to feed"
@@ -282,18 +313,20 @@ class LiveSession:
                       triggers=self._trigger_runner())
 
     def _save_frame(self, frame) -> None:
-        """Save one frame into the game's live/ image bucket — the same bucket the read-only
-        tuning loop writes to. Called on a tick that WROTE a record (bucket fills with frames that
-        produced data), or on every recognised grab when the "capture recognised windows" toggle
-        is on. Best-effort: an encode/disk hiccup must never disturb collection."""
+        """Save one frame into this run's live session folder — the same place the read-only
+        tuning loop writes to. Called on a tick that WROTE a record (the session fills with frames
+        that produced data), or on every recognised grab when the "capture recognised windows"
+        toggle is on. Best-effort: an encode/disk hiccup must never disturb collection."""
         try:
             import cv2
 
-            from ..web import captures_store
+            from ..web import captures_store, live_sessions
             ok, buf = cv2.imencode(".jpg", frame.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
             if ok:
-                name = captures_store.save(self._engine.settings.captures_dir, self._profile.name,
-                                           buf.tobytes(), sub=captures_store.LIVE)
+                # start() opened the session; fall back to the registry if that failed
+                sid = self._session_id or live_sessions.current_or_begin(self._profile.name)
+                name = captures_store.save_live(self._engine.settings.captures_dir,
+                                                self._profile.name, buf.tobytes(), session=sid)
                 # remember the file this tick wrote so _on_tick can name it in the debug log
                 # (capture-recognised mode only). Same worker thread as _on_tick -> no lock needed.
                 self._last_saved_frame = name
@@ -1138,6 +1171,10 @@ class LiveSession:
                 # "feed saved images" replay progress: feeding flag + current/total position (the
                 # panel shows a "feed" stat row). None when this run isn't a replay.
                 "feeding": self._feed_images and running,
+                # which saved session is being replayed (feed) / recorded into (capture), so a
+                # client adopting a run on reload shows the right session selected.
+                "feed_session": self._feed_session if self._feed_images else None,
+                "session": None if self._feed_images else self._session_id,
                 "feed": ({"index": self._replay.index, "total": self._replay.total,
                           "wait": self._replay.seconds_to_next()}
                          if self._replay is not None else None),

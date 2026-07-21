@@ -350,6 +350,14 @@
     border: 1px solid var(--float-line); background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; }
 .live-feed-skip:hover { background: var(--accent); color: var(--on-accent); }
 .live-feed-skip[hidden] { display: none; }
+/* feed-session dropdown: which saved recording the feed replays. A rich picker (rich_picker.js)
+   opens under it, so the trigger is a plain full-width button reading the current pick. */
+.live-feed-sess { flex: 1; min-width: 0; text-align: left; font-size: var(--fs-xs);
+    padding: 2px 8px; border: 1px solid var(--float-line); border-radius: 4px;
+    background: var(--panel); color: var(--text); cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-feed-sess:hover:not(:disabled) { border-color: var(--accent); }
+.live-feed-sess:disabled { opacity: 0.4; cursor: default; }
 /* detection count at the right edge (reuses .live-statval; flex:none so the label takes the slack) */
 .live-wcount { flex: none; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 /* detection dot: grey = not detected, green (glow) = currently on screen */

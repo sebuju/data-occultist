@@ -105,7 +105,7 @@ def set_interval(seconds: float):
 
 @router.post("/{game}/start")
 def start(game: str, interval: float | None = None, save_recognized: bool = False,
-          feed_images: bool = False):
+          feed_images: bool = False, feed_session: str | None = None):
     s = _session(game, create=True)
     _refresh_profile(game, s)   # pick up profile edits made since the last run
     # auto-mode runs the live loop on GPU (then frees it on stop); cpu/gpu leave the device
@@ -113,9 +113,11 @@ def start(game: str, interval: float | None = None, save_recognized: bool = Fals
     s.batch_device = "gpu" if read_mode() == "auto" else None
     if interval is None:
         interval = _read_interval()   # persisted frame limiter (settings modal owns it)
-    # feed_images replays the saved live/ images through the pipeline instead of live capture
-    # (paced by their timestamps); it saves nothing, so save_recognized is ignored in that mode.
-    s.start(interval=interval, save_recognized=save_recognized, feed_images=feed_images)
+    # feed_images replays ONE saved live session through the pipeline instead of live capture
+    # (paced by its timestamps; feed_session picks it, blank = newest); it saves nothing, so
+    # save_recognized is ignored in that mode.
+    s.start(interval=interval, save_recognized=save_recognized, feed_images=feed_images,
+            feed_session=feed_session)
     _fire_on_capture(game)
     _fire_lifecycle(game, "fire_live_start")   # a live start is also its own distinct event
     return s.status()
