@@ -3,7 +3,7 @@
 // unpositioned nodes, and the node-drag loop (single/shift-subtree/multi-select). Split out of
 // main.js; buildNode/positionNode/render/renderNodeViews stay in main and are imported back.
 import { $, model, pos, nodeEls, selected, view } from "./state.js";
-import { snap, beginDrag, suppressNextClick } from "./dragresize.js";
+import { snap, beginDrag, suppressNextClick, requestDragFrame } from "./dragresize.js";
 import { requestEdges, flushEdges, setDraggingNodes, nodeRect } from "./routing.js";
 import { showGuides, flashGuides } from "./guides.js";
 import { viewportCenterWorld, resizeCanvas } from "./camera.js";
@@ -195,18 +195,24 @@ export function moveNodes(id, extra, ev) {
     for (const mid of moved) nodeEls.get(mid)?.classList.add("snapping");
     // shared drag loop (dragresize.js) — onMove does the world-space + grid-snap work
     beginDrag(ev, {
+        // The world math runs on EVERY move (it's pure arithmetic, and `pos` must stay authoritative
+        // for anything reading it this frame); the DOM work is coalesced to one frame, so several
+        // mousemoves inside a frame cost one reposition + one group/guide pass, not one each.
         onMove: (e) => {
             const w = toWorld(e);
             const dx = w.x - g0.x, dy = w.y - g0.y;
             p.x = snap(start.px + dx);
             p.y = snap(start.py + dy);
-            positionNode(id);
-            for (const g of starts) { g.gp.x = snap(g.sx + dx); g.gp.y = snap(g.sy + dy); positionNode(g.gid); }
+            for (const g of starts) { g.gp.x = snap(g.sx + dx); g.gp.y = snap(g.sy + dy); }
             requestEdges();   // one edge redraw per frame, coalescing this move with others
-            groups.renderGroups();   // group boxes hug their members live
-            showGuides(moved);   // live alignment guides to whatever the moving cluster lines up with
+            requestDragFrame(() => {
+                positionNode(id);
+                for (const g of starts) positionNode(g.gid);
+                groups.renderGroups();   // group boxes hug their members live
+                showGuides(moved);   // live alignment guides to whatever the moving cluster lines up with
+            });
         },
-        onSettle: () => {
+        onSettle: () => {   // beginDrag has already flushed the pending drag frame
             for (const mid of moved) nodeEls.get(mid)?.classList.remove("snapping");
             setDraggingNodes(false);
             flushEdges();   // paint the final positions now, dropping any pending coalesced frame

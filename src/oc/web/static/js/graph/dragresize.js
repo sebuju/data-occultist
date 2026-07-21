@@ -41,21 +41,18 @@ export function hideSizeHud() { if (_sizeHud) _sizeHud.style.display = "none"; }
 // graph nodes, style.left for floating panels).
 // `snapEdge(axis, value)` (optional) snaps a moving edge to nearby alignment lines — floating
 // panels pass it so resize lines up with other panels; graph nodes leave it null.
-// `onResetW` / `onResetH` (optional) each add small hover-revealed reset dots clustered beside the
-// bottom-corner grip(s): a WIDTH dot beside the grip resets width, a HEIGHT dot on top of it resets
-// height. The pair is mirrored to the LEFT corner too wherever a left grip exists. Shift-clicking
-// ANY dot resets BOTH axes (calls both callbacks). A dot is only added when its callback is given,
-// so a width-only element gets just the width dots.
+// Resetting a size is NOT a grip concern: the corner reset carets are gone, replaced by the
+// seltoolbar's "reset size" button (nodes) and the panel header's reset button (floatwin).
 // `screenClamp` (panels only) caps the new size so the element never grows past the viewport
 // edges — its anchored top + fixed corner stay put, so only the moving edge/bottom is limited,
 // leaving `margin` px clear. Graph nodes leave it off (they live in zoomed/panned canvas space,
 // not viewport space, so a viewport clamp would be meaningless there).
-export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onResizeStart = null, onSettle = null, snapEdge = null, onResetW = null, onResetH = null, screenClamp = false, margin = 0, bottomMargin = null } = {}) {
+export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, snap: snapGrid = false, onResize = null, onResizeStart = null, onSettle = null, snapEdge = null, screenClamp = false, margin = 0, bottomMargin = null } = {}) {
     if (el.querySelector(":scope > .rz-grip")) return;   // once only
     el.classList.add("rz-host");   // marks the near-hover cluster parent
     const q = (v) => (snapGrid ? snapUp(v) : v);   // grid-step nodes (round up); panels resize smoothly
-    // Near-hover reveal (no CSS :has): entering a corner's grip or reset dot flags .rzc-r/.rzc-l on
-    // the host so that whole corner cluster (grip + its dots) fades in; leaving clears it.
+    // Near-hover reveal (no CSS :has): entering a corner's grip flags .rzc-r/.rzc-l on the host so
+    // that corner's grip fades in; leaving clears it.
     const hoverCluster = (elm, corner) => {
         elm.addEventListener("mouseenter", () => el.classList.add(`rzc-${corner}`));
         elm.addEventListener("mouseleave", () => el.classList.remove(`rzc-${corner}`));
@@ -80,7 +77,19 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
             const rect = screenClamp ? el.getBoundingClientRect() : null;   // fixed-edge anchor in viewport px
             let lastW = startW, lastH = startH;
             let movedW = false, movedH = false;   // which axes actually changed across the whole drag
+            let pendW = false, pendH = false, hudX = 0, hudY = 0;   // queued for the next frame's apply
             document.body.style.cursor = side === "left" ? "nesw-resize" : "nwse-resize";
+            // The ONE place this loop touches the DOM, run at most once per animation frame. It writes
+            // the queued size, then re-reads offset* for the right-edge anchor + the W×H readout — a
+            // read-after-write that forces layout, which is exactly why it must not run per EVENT.
+            const apply = () => {
+                if (pendW) el.style.width = `${lastW}px`;
+                if (pendH) el.style.height = `${lastH}px`;
+                pendW = pendH = false;
+                if (side === "left") left(startL - (el.offsetWidth - startW));   // anchor right edge
+                showSizeHud(el.offsetWidth, el.offsetHeight, hudX, hudY);   // live W×H readout
+                onResize && onResize();
+            };
             const mv = (e) => {
                 let w = Math.max(1, q(side === "left" ? startW - (e.clientX - sx) / z : startW + (e.clientX - sx) / z));
                 let h = Math.max(1, q(startH + (e.clientY - sy) / z));
@@ -105,40 +114,18 @@ export function addResizeGrips(el, { both = false, zoom = () => 1, left = null, 
                 // and write only the dimension that actually changed (don't touch the other axis)
                 const dw = w !== lastW, dh = allowH && h !== lastH;
                 if (!dw && !dh) return;
-                lastW = w; lastH = h;
-                if (dw) { el.style.width = `${w}px`; movedW = true; }
-                if (dh) { el.style.height = `${h}px`; movedH = true; }
-                if (side === "left") left(startL - (el.offsetWidth - startW));   // anchor right edge
-                showSizeHud(el.offsetWidth, el.offsetHeight, e.clientX, e.clientY);   // live W×H readout
-                onResize && onResize();
+                if (dw) { lastW = w; movedW = true; pendW = true; }
+                if (dh) { lastH = h; movedH = true; pendH = true; }
+                hudX = e.clientX; hudY = e.clientY;
+                requestDragFrame(apply);   // several moves in a frame collapse to ONE write+measure
             };
             const up = () => {
                 document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
+                flushDragFrame();   // land the last move's size before onSettle measures the box
                 document.body.style.cursor = ""; hideSizeHud(); onSettle && onSettle({ w: movedW, h: movedH });
             };
             document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
         });
-    }
-    // reset-size dots (hover-revealed via CSS like the grips), clustered beside each bottom-corner
-    // grip: a WIDTH dot beside the grip + a HEIGHT dot on top of it. Mirrored to the LEFT corner too
-    // (only where a left grip exists — i.e. `left` was given). A plain click resets that dot's own
-    // axis; Shift+click resets BOTH axes (fires whichever callbacks exist).
-    const mkReset = (axis, corner, resetOwn) => {
-        const r = document.createElement("div");
-        r.className = `rz-reset rz-reset-${axis} rz-reset-${corner}`;
-        r.title = `reset ${axis === "w" ? "width" : "height"} (shift: both)`;
-        el.appendChild(r);
-        hoverCluster(r, corner);
-        r.addEventListener("mousedown", (ev) => { if (ev.button !== 0) return; ev.preventDefault(); ev.stopPropagation(); });   // left only: don't start a drag/resize; right-click keeps its menu + pans
-        r.addEventListener("click", (ev) => {
-            ev.preventDefault(); ev.stopPropagation();
-            if (ev.shiftKey) { onResetW && onResetW(); onResetH && onResetH(); }   // both axes
-            else resetOwn();
-        });
-    };
-    for (const corner of (left ? ["r", "l"] : ["r"])) {   // left cluster only when a left grip exists
-        if (onResetW) mkReset("w", corner, onResetW);
-        if (onResetH) mkReset("h", corner, onResetH);
     }
 }
 
@@ -184,10 +171,35 @@ export function beginDrag(ev, { threshold = 0, cursor = "", onStart = null, onMo
         document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", up);
         if (cursor) document.body.style.cursor = "";
     };
-    const up = (e) => { const wasActive = active; stop(); if (wasActive) onSettle && onSettle(e); };
+    // flush BEFORE onSettle: a caller that deferred its DOM writes to a drag frame must see them
+    // applied when it settles (measures, absorbs, persists) — never a frame that fires afterwards.
+    const up = (e) => { const wasActive = active; stop(); if (wasActive) { flushDragFrame(); onSettle && onSettle(e); } };
     document.addEventListener("mousemove", mv); document.addEventListener("mouseup", up);
     if (threshold <= 0) activate();   // no gate -> drag from the first pixel
     return stop;
+}
+
+// Coalesce a drag's DOM work into ONE apply per animation frame. mousemove can fire several times
+// per frame; without this the whole per-move body (reposition, group boxes, alignment guides) runs
+// once per EVENT, each pass re-dirtying layout. The newest callback replaces the pending one and
+// rides the already-queued frame, so the apply always reflects the LATEST drag state — the same
+// contract as routing.js's requestEdges (which coalesces the canvas repaint the same way).
+// The caller keeps its own state (pos, sizes) up to date synchronously; only the DOM writes defer.
+let _dragRaf = 0, _dragApply = null;
+export function requestDragFrame(fn) {
+    _dragApply = fn;
+    if (_dragRaf) return;   // a frame is already queued; it'll run the newest callback when it fires
+    _dragRaf = requestAnimationFrame(() => {
+        _dragRaf = 0;
+        const f = _dragApply; _dragApply = null;
+        f && f();
+    });
+}
+// Run the pending frame NOW (on settle) — a drag must not end with its last move unapplied.
+export function flushDragFrame() {
+    if (_dragRaf) { cancelAnimationFrame(_dragRaf); _dragRaf = 0; }
+    const f = _dragApply; _dragApply = null;
+    f && f();
 }
 
 // Drag a column-boundary grip — the ONE column-resize loop, shared by every table that

@@ -11,10 +11,10 @@ import {
 import { drawEdges, requestEdges, flushEdges, setDraggingNodes } from "./routing.js";
 import { resizeCanvas } from "./camera.js";
 import { persist } from "./persist.js";
-import { snap, snapUp } from "./dragresize.js";
+import { snap, snapUp, requestDragFrame, flushDragFrame } from "./dragresize.js";
 import { registerKey, SCOPE } from "../inputbus.js";
 import { renderNodeViews } from "./panels/nodemap.js";
-import { WIDTH_ONLY_NODES, applySavedSize, markNodeSized } from "./node_resize.js";
+import { WIDTH_ONLY_NODES, applySavedSize, resetSelectionSize, resettableSizeIds } from "./node_resize.js";
 import {
     render, autosave, positionNode, armConfirm, deselectAll, removeNode, isRemovable,
     nodeTypeOf, selectedNodeId,
@@ -159,9 +159,12 @@ export function syncMultiSelect() {
     // size copy shows for a single selected node; paste shows only once a size is copied and there's
     // a resizable target. (Both hidden in group-mode — those buttons act on the node selection.) Set
     // BEFORE collapseSeparators so their group's separators fold from the fresh state, not last tick's.
-    const cpy = $("selCopySizeBtn"), pst = $("selPasteSizeBtn");
+    const cpy = $("selCopySizeBtn"), pst = $("selPasteSizeBtn"), rst = $("selResetSizeBtn");
     if (cpy) cpy.hidden = groupMode || nsel !== 1;
     if (pst) pst.hidden = groupMode || !sizeClip || !ids.some(isSizeTarget);
+    // reset shows only when something in the selection actually carries a user-set size — same rule
+    // the reset itself acts on, so the button can never appear with nothing to do.
+    if (rst) rst.hidden = groupMode || !resettableSizeIds(ids).length;
     if (bar) collapseSeparators(bar);   // hide any `.sel-sep` that now borders nothing (unremovable node, group-mode, etc.)
     drawEdges();   // selection changed -> repaint so selected nodes' lines pick up the `sel` colour
     notifySelect();
@@ -256,7 +259,7 @@ function cloneNodeSize(srcId, dstId) {
     const copy = { ...s };
     nodeSizes.set(dstId, copy);
     const el = nodeEls.get(dstId);
-    if (el) { applySavedSize(el, copy); markNodeSized(el, dstId); }
+    if (el) applySavedSize(el, copy);
 }
 // After a clone the fresh copies ride the cursor (keeping their relative offsets) until the
 // user's next mouse click OR key press, which drops them where they are. That terminating
@@ -273,14 +276,18 @@ function carryClones(ids) {
     setDraggingNodes(true, ids);   // freeze routing while the copies float
     for (const id of ids) nodeEls.get(id)?.classList.add("snapping");
     document.body.style.cursor = "grabbing";
+    // World math every move (pos stays authoritative), DOM work coalesced to one frame — same
+    // contract as the node-drag loop in node_layout.js.
     const move = (e) => {
         const w = toWorld(e);
-        for (const o of offs) { const p = pos.get(o.id); if (!p) continue; p.x = snap(w.x + o.dx); p.y = snap(w.y + o.dy); positionNode(o.id); }
-        requestEdges(); groups.renderGroups();
+        for (const o of offs) { const p = pos.get(o.id); if (!p) continue; p.x = snap(w.x + o.dx); p.y = snap(w.y + o.dy); }
+        requestEdges();
+        requestDragFrame(() => { for (const o of offs) positionNode(o.id); groups.renderGroups(); });
     };
     let offKey = null;
     const drop = (e) => {
         e.preventDefault(); e.stopPropagation();
+        flushDragFrame();   // apply the last move's DOM writes even if its frame never fired
         document.removeEventListener("mousemove", move);
         document.removeEventListener("mousedown", drop, true);
         offKey?.(); offKey = null;
@@ -331,10 +338,19 @@ function pasteSize() {
             : { w, h, custW: true, custH: true, softW: false, softH: false };
         nodeSizes.set(id, s);
         const el = nodeEls.get(id);
-        if (el) { applySavedSize(el, s); markNodeSized(el, id); }
+        if (el) applySavedSize(el, s);
     }
     flushEdges(); groups.renderGroups(); persist.layout();   // re-route + record undo + save
     setStatus(`pasted size to ${targets.length} node${targets.length === 1 ? "" : "s"}`);
+}
+// Drop the user's size on every sized node in the selection (both axes) — the toolbar face of
+// Shift+R. resetSelectionSize owns the re-route + persist, so this only reports and re-syncs the
+// bar (the button hides itself once nothing is left to reset).
+function resetSize() {
+    const hit = resetSelectionSize(selectionIds());
+    if (!hit.length) return;
+    setStatus(`reset size on ${hit.length} node${hit.length === 1 ? "" : "s"}`);
+    syncMultiSelect();
 }
 
 // entity id -> node id (mirror of the `<type>:<id>` derivation in model.nodes()).
@@ -431,5 +447,6 @@ export function wireSelectionToolbar() {
     $("selCloneBtn").addEventListener("click", cloneSelection);
     $("selCopySizeBtn").addEventListener("click", copySize);
     $("selPasteSizeBtn").addEventListener("click", pasteSize);
+    $("selResetSizeBtn").addEventListener("click", resetSize);
     $("selClearBtn").addEventListener("click", () => deselectAll());
 }

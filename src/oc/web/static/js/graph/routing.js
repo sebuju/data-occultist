@@ -13,7 +13,7 @@ import { deCollide } from "./decollide.js";
 import { busRouteGraph } from "./busgraph.js";
 import { gradeRoutes } from "./followable.js";
 import { faceKeep } from "./faces.js";
-import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot, urlFlag } from "./state.js";
+import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot, urlFlag, freezeNodeSizes, thawNodeSizes } from "./state.js";
 import { selectedNodeId, wire, startWire, canDisable, nodeTypeOf } from "./main.js";
 import { setEdges, invalidateEdges, setCorridors } from "./edgecanvas.js";
 import { typeColor, grayscale, cssVar } from "./colors.js";
@@ -981,7 +981,14 @@ function freezeRouting() {
 // main.js owns the drag interaction; it flips this flag so drawEdges keeps the cached routed lines
 // frozen (greying any whose node has moved off them) instead of re-routing every frame; the clean
 // route is computed once on settle.
-export function setDraggingNodes(v, ids = null) { draggingNodes = v; draggedIds = v ? new Set(ids || []) : null; }
+// Also the ONE place node geometry freezes: while a drag is up, nw/nh serve a snapshot instead of
+// measuring the DOM, so the per-frame guide/group passes stop forcing layout for every node (the
+// dragged ids stay live — a resize really does change its own size). freezeNodeSizes is idempotent,
+// which matters: the resize loop re-arms this flag on every move.
+export function setDraggingNodes(v, ids = null) {
+    draggingNodes = v; draggedIds = v ? new Set(ids || []) : null;
+    if (v) freezeNodeSizes(draggedIds); else thawNodeSizes();
+}
 
 // World-space routed polyline for the edge between two node ids (the same key buildLinks uses,
 // `${from} ${to}`), or null if that edge isn't drawn/routed yet. The ONE accessor for an edge's

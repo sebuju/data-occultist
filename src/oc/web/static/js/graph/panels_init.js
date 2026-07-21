@@ -8,7 +8,7 @@ import { floatWins } from "./floatwin.js";
 import { hist, undo, redo } from "./history.js";
 import { createHistoryPanel } from "../history_panel.js";
 import { vtableById, liveVTables, reapplyPersistedVTables } from "../vtable.js";
-import { applySavedSize, markNodeSized } from "./node_resize.js";
+import { applySavedSize } from "./node_resize.js";
 import {
     nmState, nlState, buildNodeMap, buildNodeList, setNodeMapVisible, setNodeListVisible,
 } from "./panels/nodemap.js";
@@ -83,7 +83,7 @@ export function initPanels() {
             nodeSize: (id) => { const el = nodeEls.get(id); return el ? { w: el.offsetWidth, h: el.offsetHeight } : null; },
             resizeNode: (id, w, h) => {
                 nodeSizes.set(id, { w, h, custW: true, custH: true, softW: false, softH: false });
-                const el = nodeEls.get(id); if (el) { applySavedSize(el, nodeSizes.get(id)); markNodeSized(el, id); }
+                const el = nodeEls.get(id); if (el) applySavedSize(el, nodeSizes.get(id));
                 persist.layout();
             },
             // vttable column width through the real funnel: write the store, apply live, persist -> record.

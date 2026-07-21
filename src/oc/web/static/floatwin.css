@@ -27,6 +27,11 @@
     background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; line-height: 1;
 }
 .fw-head button:hover { background: var(--accent); color: var(--on-accent); }
+/* reset-size button: replaces the old corner reset carets. Nothing to reset until the panel
+   carries a user-set size, so it only exists once the host is marked .fw-sized. */
+.fw-head .fw-reset { display: none; align-items: center; justify-content: center; }
+.floatwin.fw-sized .fw-head .fw-reset { display: inline-flex; }
+.fw-head .fw-reset svg { display: block; }
 .fw-body { padding: 6px; flex: 1; min-height: 0; overflow: auto; }
 
 /* collapsed: rolled up to just the header bar (visibility itself is the topbar button's
@@ -36,7 +41,7 @@
 .floatwin.collapsed .fw-head { border-bottom: none; }
 .floatwin.collapsed .fw-head button:not(.fw-collapse) { display: none; }
 .floatwin.collapsed .fw-body { display: none; }
-.floatwin.collapsed .rz-grip, .floatwin.collapsed .rz-reset { display: none; }
+.floatwin.collapsed .rz-grip { display: none; }
 
 /* the last-touched panel rides above every other panel (beats both the expanded 40 and the
    collapsed 30). Listed after .collapsed so a focused-collapsed panel still wins. */
@@ -410,7 +415,7 @@
 /* Its own panel opens wide (500px, set in JS) and at FULL usable height like pretty view's
    inspector: pin the height to the usable rectangle (same reserves as the .floatwin max-height
    cap) so it fills top-to-bottom regardless of content. autoFit is off in JS, so nothing writes an
-   inline height to fight this; a manual resize (inline height) still wins and the height reset dot
+   inline height to fight this; a manual resize (inline height) still wins and the reset button
    clears back to full. Guarded off while collapsed so the shade still rolls up to the header. */
 #inspector:not(.collapsed) { height: calc(100dvh - var(--fw-top, 56px) - var(--fw-bot, 40px)); }
 #inspector .fw-body { display: flex; flex-direction: column; }

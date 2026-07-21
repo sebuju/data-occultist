@@ -20,7 +20,7 @@ import { clearTools } from "./drawtool.js";
 import { undo, redo } from "./history.js";
 import { persist } from "./persist.js";
 import { nodeIdOf, editBox, rectEditCanvasSync } from "./imaging.js";
-import { WIDTH_ONLY_NODES, resetNodeAxis, nudgeAxisToGrid, markNodeSized, quantizeWidthOnlyHeight } from "./node_resize.js";
+import { WIDTH_ONLY_NODES, resetSelectionSize, nudgeAxisToGrid, quantizeWidthOnlyHeight } from "./node_resize.js";
 import {
     activeOverlayKey, selectedNodeId, nodeTypeOf, NUDGE,
     deselectAll, focusNode, selectionIds, deleteSelection, positionNode, autosave,
@@ -229,7 +229,8 @@ registerKey({
     // Shift+R: reset the manual size of the selection — wherever Shift+WASD can resize something,
     // Shift+R resets it back to its natural/auto box. Group-mode resets every ctrl-selected group's
     // explicit w/h back to auto-hugging its members (groups.js resetGroupSize, mirrors stepGroupSize
-    // below); otherwise it resets every selected node's saved size (same as pressing its reset dots).
+    // below); otherwise it resets every selected node's saved size — the same resetSelectionSize()
+    // the seltoolbar's reset-size button calls, so key and button can never drift apart.
     if (ev.shiftKey && ev.key.toLowerCase() === "r" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
         if (overlays.get(activeOverlayKey)) return;   // a live box overlay owns the keys
         const gids = groups.selectedGroupIds();
@@ -240,14 +241,7 @@ registerKey({
             ev.preventDefault();
             return;
         }
-        const selIds = selectionIds().filter((id) => nodeSizes.has(id) && !collapsed.has(id) && nodeEls.has(id));
-        for (const id of selIds) {
-            const div = nodeEls.get(id);
-            const widthOnly = WIDTH_ONLY_NODES.has(nodeTypeOf(id));
-            resetNodeAxis(div, id, "w", widthOnly);
-            if (!widthOnly) resetNodeAxis(div, id, "h", false);
-        }
-        if (selIds.length) ev.preventDefault();
+        if (resetSelectionSize(selectionIds()).length) ev.preventDefault();
         return;
     }
     const dir = NUDGE[ev.key.toLowerCase()];
@@ -290,10 +284,9 @@ registerKey({
                     let softW = prev.softW, softH = prev.softH;
                     if (dir[0]) softW = nudgeAxisToGrid(el, "w", Math.max(GRID, snap(el.offsetWidth + dir[0] * GRID)));
                     if (dir[1]) softH = nudgeAxisToGrid(el, "h", Math.max(GRID, snap(el.offsetHeight + dir[1] * GRID)));
-                    // only the nudged axis becomes customized (reveals its reset per-axis)
+                    // only the nudged axis becomes customized
                     nodeSizes.set(id, { w: el.offsetWidth, h: el.offsetHeight, softW, softH, custW: !!dir[0] || !!prev.custW, custH: !!dir[1] || !!prev.custH });
                 }
-                markNodeSized(el, id);
                 return true;
             };
             const selIds = selectionIds().filter((id) => pos.has(id));

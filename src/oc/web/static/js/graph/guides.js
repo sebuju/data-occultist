@@ -15,7 +15,20 @@ import { pos, nw, nh, nodeEls, view } from "./state.js";
 const SVGNS = "http://www.w3.org/2000/svg";
 const TOL = 4;   // world px: two coords within this count as aligned (grid snap makes exact common)
 
-const rectOf = (id) => { const p = pos.get(id); return p && { x: p.x, y: p.y, w: nw(id), h: nh(id) }; };
+// `live`: read the node's PAINTED box instead of its target position. A node mid-grid-snap is eased
+// to its new left/top by CSS (.gnode.snapping, 90ms) — so for the length of that ease the box on
+// screen trails `pos`. Guides drawn from `pos` therefore detach from the node edge, which shows up
+// worst on the distance guides (their line endpoint + px label sit right on that edge). offsetLeft/
+// offsetTop return the INTERPOLATED value mid-transition, and #gnodes is the offsetParent at the
+// world origin, so they're the same coordinate space as `pos`.
+// Only the moving subject is ever easing; every other node is static, so `pos` is exact for them —
+// and far cheaper, which matters because the guide pass reads every node in the graph.
+const rectOf = (id, live) => {
+    const el = live && nodeEls.get(id);
+    if (el) return { x: el.offsetLeft, y: el.offsetTop, w: nw(id), h: nh(id) };
+    const p = pos.get(id);
+    return p && { x: p.x, y: p.y, w: nw(id), h: nh(id) };
+};
 // the 3 alignment coords on each axis: near edge, centre, far edge
 const xsOf = (r) => [r.x, r.x + r.w / 2, r.x + r.w];
 const ysOf = (r) => [r.y, r.y + r.h / 2, r.y + r.h];
@@ -36,7 +49,34 @@ function ensureLayer() {
 let clearTimer = null;
 function cancelTimer() { if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; } }
 
-export function clearGuides() { cancelTimer(); if (layer) layer.replaceChildren(); }
+// The ids the CURRENTLY VISIBLE guides were drawn for (null = nothing showing). Remembering the
+// subject is what lets any node move re-derive the same guides at the new positions instead of
+// leaving the old lines behind — see refreshGuides.
+let subject = null;
+let dirty = false, _raf = 0;
+
+export function clearGuides() {
+    cancelTimer();
+    subject = null; dirty = false;
+    if (_raf) { cancelAnimationFrame(_raf); _raf = 0; }
+    if (layer) layer.replaceChildren();
+}
+
+// Redraw the visible guides at the nodes' CURRENT positions. Called from positionNode — the one
+// writer of a node's left/top — so guides stay glued to the geometry no matter what moved a node
+// (drag, clone-drag, keyboard nudge, undo, group absorb, a full render). No-op when nothing is
+// showing, so this never makes guides APPEAR; it only keeps existing ones honest.
+// Coalesced to one redraw per frame: positionNode runs in tight loops (a render places every node),
+// and the guide pass scans all nodes, so a redraw per call would be quadratic.
+export function refreshGuides() {
+    if (!subject) return;
+    dirty = true;
+    schedule();
+}
+function schedule() {
+    if (_raf) return;
+    _raf = requestAnimationFrame(() => { _raf = 0; if (dirty) { dirty = false; draw(); } });
+}
 
 function guideLine(x1, y1, x2, y2) {
     const el = document.createElementNS(SVGNS, "line");
@@ -118,12 +158,35 @@ function drawSpacing(frag, mbox, others) {
 // reference is the UNION bounding box of `ids`, so a single drag, a shift-subtree drag and a
 // multi-select drag all align the same way (the cluster's edges + centre).
 export function showGuides(ids) {
+    cancelTimer();   // a live (drag) redraw owns the layer — drop any pending flash auto-clear
+    subject = [...ids];
+    // This draw supersedes any queued re-sync: drop it rather than leave a no-op frame callback
+    // pending every frame of a drag (positionNode queues one, then this runs later in the same frame).
+    dirty = false;
+    if (_raf) { cancelAnimationFrame(_raf); _raf = 0; }
+    draw();
+}
+
+// Draw the guides for the current `subject`. Split out of showGuides so a plain re-sync
+// (refreshGuides) redraws the SAME subject without re-stating who it is.
+function draw() {
     const svg = ensureLayer();
     if (!svg) return;
-    cancelTimer();   // a live (drag) redraw owns the layer — drop any pending flash auto-clear
+    const ids = subject || [];
     const moving = new Set(ids);
-    const rects = ids.map(rectOf).filter(Boolean);
+    const rects = ids.map((id) => rectOf(id, true)).filter(Boolean);   // painted box — see rectOf
     if (!rects.length) { svg.replaceChildren(); return; }
+    // Still easing toward the target? Keep redrawing until the painted box ARRIVES. Position changes
+    // alone don't cover the TAIL of the ease: hold the pointer still mid-drag (or finish a WASD
+    // glide) and nothing calls back, so the guides would freeze while the node slides out from under
+    // them. Release is already fine — settle drops `.snapping` first, which lands the node at once.
+    // Gated on `.snapping` (the class that carries the transition) AND a ≥1px gap: offsetLeft is
+    // integer-rounded while pos can be fractional, so chasing exact equality could spin forever.
+    if (ids.some((id) => {
+        const el = nodeEls.get(id), p = pos.get(id);
+        if (!el || !p || !el.classList.contains("snapping")) return false;
+        return Math.abs(el.offsetLeft - p.x) >= 1 || Math.abs(el.offsetTop - p.y) >= 1;
+    })) { dirty = true; schedule(); }
     const bx = Math.min(...rects.map((r) => r.x)), by = Math.min(...rects.map((r) => r.y));
     const br = Math.max(...rects.map((r) => r.x + r.w)), bb = Math.max(...rects.map((r) => r.y + r.h));
     const mbox = { x: bx, y: by, w: br - bx, h: bb - by };

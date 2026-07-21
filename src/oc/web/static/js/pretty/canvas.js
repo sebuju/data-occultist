@@ -697,7 +697,7 @@ export function renderPage(surface, page, ctx) {
         // widget keeps the group (so it can be dragged in tandem), else it becomes the sole selection.
         frame.addEventListener("mousedown", (ev) => {
             if (ev.button !== 0) return;
-            if (ev.target.closest(".rz-grip, .rz-reset, .pw-del")) return;
+            if (ev.target.closest(".rz-grip, .pw-del")) return;
             if (ev.shiftKey) ctx.selectWidget(widget.id, true);
             else if (!ctx.selectionIds().has(widget.id)) ctx.selectWidget(widget.id);
         });
@@ -708,7 +708,7 @@ export function renderPage(surface, page, ctx) {
         let sx = 0, sy = 0, movers = [];
         makeDraggable(frame, {
             handle: frame, threshold: 3, cursor: "grabbing",
-            ignore: "input, select, textarea, button, a, .rz-grip, .rz-reset",
+            ignore: "input, select, textarea, button, a, .rz-grip",
             onStart: (ev) => {
                 sx = ev.clientX; sy = ev.clientY;
                 const sel = ctx.selectionIds();

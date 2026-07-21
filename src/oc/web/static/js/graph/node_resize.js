@@ -1,5 +1,5 @@
 // Node sizing: the grid-snap resize primitives (soft-grow / hard-shrink per axis), the shared
-// resize-grip opts builder, the reset-to-natural-box dots, and the ResizeObserver wrapper that
+// resize-grip opts builder, the reset-to-natural-box helpers, and the ResizeObserver wrapper that
 // keeps edges glued to a node without ever snapping/settling itself. Split out of main.js;
 // `positionNode` and `nodeTypeOf` stay in main and are imported back.
 import { pos, nodeEls, nodeSizes, collapsed, view, boot } from "./state.js";
@@ -47,23 +47,23 @@ export function quantizeWidthOnlyHeight(el, id) {
 // size + min so `el.offset*` reads the natural box. GROW (target ≥ natural) -> soft min (content
 // fills the extra room); SHRINK -> hard size (body scrolls). Returns true=soft, false=hard.
 // The single primitive both the drag-settle (settleAxis) and keyboard nudge build on (rule 7).
-export function sizeAxisToGrid(el, axis, target) {
+function sizeAxisToGrid(el, axis, target) {
     const nat = axis === "w" ? el.offsetWidth : el.offsetHeight;   // natural (this axis already cleared)
     if (target >= nat) { el.style[axis === "w" ? "minWidth" : "minHeight"] = `${target}px`; return true; }
     el.style[axis === "w" ? "width" : "height"] = `${target}px`; return false;
 }
 // Settle ONE axis on grip release: clear the axis to expose its natural (grid-fit) size, then only
 // STAMP a size when the target DIFFERS from it, reusing sizeAxisToGrid for the grow(min)/shrink(hard)
-// decision. Landing exactly on natural leaves the axis UNSTAMPED: nothing to record, no reset dot, so
-// a drag back to the fit size is as if the axis was never sized. Returns { size, soft, cust }.
-export function settleAxis(el, axis, target) {
+// decision. Landing exactly on natural leaves the axis UNSTAMPED: nothing to record, nothing to
+// reset, so a drag back to the fit size is as if the axis was never sized. Returns { size, soft, cust }.
+function settleAxis(el, axis, target) {
     el.style[axis === "w" ? "width" : "height"] = ""; el.style[axis === "w" ? "minWidth" : "minHeight"] = "";
     const nat = snapUp(axis === "w" ? el.offsetWidth : el.offsetHeight);   // grid-fit size at content
     if (target === nat) return { size: nat, soft: true, cust: false };     // exactly natural -> leave cleared
     return { size: target, soft: sizeAxisToGrid(el, axis, target), cust: true };
 }
 // Settle both axes (targets captured BEFORE any clear — clearing width reflows height).
-export function settleGridSize(el, wTarget, hTarget) {
+function settleGridSize(el, wTarget, hTarget) {
     return { w: settleAxis(el, "w", wTarget), h: settleAxis(el, "h", hTarget) };
 }
 // One-axis keyboard nudge: clear THIS axis (so the natural box is re-measured) WITHOUT touching
@@ -88,25 +88,25 @@ export function applySavedSize(el, s) {
     if (s.h && s.custH !== false) { if (s.softH !== false) el.style.minHeight = `${s.h}px`; else el.style.height = `${s.h}px`; }
 }
 // drop all inline grid sizing (back to the natural box: CSS width + content height)
-export function clearGridSize(el) { el.style.width = ""; el.style.height = ""; el.style.minWidth = ""; el.style.minHeight = ""; }
+function clearGridSize(el) { el.style.width = ""; el.style.height = ""; el.style.minWidth = ""; el.style.minHeight = ""; }
 // A trigger's history satellite (`hist:<id>`) shows session-only data (trigger_history.py's ring
 // is wiped on restart) — its height is otherwise content-driven (custH:false), so a just-reloaded,
 // still-empty panel collapses to the .hist-host CSS floor (120px) even though it was resized taller
 // last session. Dataset/subset vt-table satellites persist their rows, so their content-driven
 // height is trustworthy and must NOT get this floor.
-export const isTransientSatellite = (id) => id.startsWith("hist:") || id.startsWith("rohist:") || id.startsWith("prodhist:");
+const isTransientSatellite = (id) => id.startsWith("hist:") || id.startsWith("rohist:") || id.startsWith("prodhist:");
 // Stamp a min-height floor from the LAST saved height on a transient satellite whose height was
 // never explicitly customized (custH:false) — applySavedSize leaves that axis unstamped (by
 // design, for content-driven nodes), so without this the node shows its true saved size only until
 // content empties it out. custH:true nodes are already handled by applySavedSize; left alone here.
-export function applySatelliteHeightFloor(el, id, s) {
+function applySatelliteHeightFloor(el, id, s) {
     if (s?.h && s.custH === false && isTransientSatellite(id)) el.style.minHeight = `${s.h}px`;
 }
 // The box size that fits the node's content with NO scroll in EITHER axis. offsetWidth/Height alone
 // isn't enough: the body clips wide content into a HORIZONTAL scroll (the node's CSS width is fixed,
 // so content wider than it overflows rather than widening the box). Add back whatever the body can't
 // currently show, so a reset can size the node to actually contain its content.
-export function naturalBox(el) {
+function naturalBox(el) {
     const body = el.querySelector(".gn-body");
     const hOver = body ? Math.max(0, body.scrollWidth - body.clientWidth) : 0;
     const vOver = body ? Math.max(0, body.scrollHeight - body.clientHeight) : 0;
@@ -151,14 +151,21 @@ export function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
         },
         // Fires only from the grip loop (a live user drag). Keep the soft grid mins cleared so a
         // prior grow's min-width/height can't block a shrink, and freeze routing like a node drag.
-        onResize: () => { div.style.minWidth = ""; div.style.minHeight = ""; setDraggingNodes(true, [id]); requestEdges(); groups.renderGroups(); showGuides([id]); },
+        // Runs INSIDE the grip loop's coalesced frame (one per animation frame), so this body does
+        // not defer again — it would only push the group/guide pass a frame further behind the size.
+        // The min-clears are guarded: re-writing "" every frame would re-dirty layout for nothing.
+        onResize: () => {
+            if (div.style.minWidth) div.style.minWidth = "";
+            if (div.style.minHeight) div.style.minHeight = "";
+            setDraggingNodes(true, [id]); requestEdges(); groups.renderGroups(); showGuides([id]);
+        },
         // Settle to the grid, but only KEEP a size on an axis that ends up different from its natural
         // (grid-fit) box — an axis dragged back to natural is left unstamped and un-customized, so it
-        // shows no reset dot; a node natural on BOTH axes drops its entry entirely (as if never sized).
+        // has nothing to reset; a node natural on BOTH axes drops its entry entirely (as if never sized).
         // widthOnly nodes (item/window) wrap a fixed-aspect canvas — width only, height aspect-driven.
         // The grip loop fires this ONCE on release (passing {w,h} moved flags we don't need — it
         // settles both axes idempotently regardless).
-        onSettle: () => {
+        onSettle: () => {   // addResizeGrips has already flushed the pending drag frame
             if (widthOnly) {
                 const wTarget = snapUp(div.offsetWidth);   // quantize to the grid once, on release
                 div.style.width = ""; div.style.minWidth = "";
@@ -174,29 +181,18 @@ export function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
                 if (w.cust || h.cust) nodeSizes.set(id, { w: w.size, h: h.size, softW: w.soft, softH: h.soft, custW: w.cust, custH: h.cust });
                 else nodeSizes.delete(id);   // natural on both axes -> as if never sized
             }
-            markNodeSized(div, id); setDraggingNodes(false); flushEdges(); groups.renderGroups(); persist.layout();
+            setDraggingNodes(false); flushEdges(); groups.renderGroups(); persist.layout();
             flashGuides([id]);   // keep the resting alignment/spacing shown briefly, then fade
         },
-        // reset dots (one per axis): drop the user's size on THAT axis, then snap the node's NATURAL
-        // size UP to the grid using a soft min set DIRECTLY (not via the settle path). snapUp always
-        // rounds UP, so the min is always ≥ the natural box — the box only grows to the grid line, so
-        // content ALWAYS fits (never scrollable) and there's never a hard width/height. Setting the min
-        // straight from this one measurement avoids re-measuring the natural box — a second
-        // measurement can drift (scrollbar/reflow) and wrongly pick the hard-shrink branch, which is what
-        // left a reset source node hard-sized and scrollable. Pre-snapping here also stops a later event
-        // (e.g. unfocusing an input) from grid-snapping + jumping the node. Each callback touches only its
-        // own axis, keeping the other's user size; Shift-click (handled in addResizeGrips) fires both.
-        onResetW: () => resetNodeAxis(div, id, "w", widthOnly),
-        // widthOnly nodes (item/window) have an aspect-driven height that's never stamped inline —
-        // there's nothing to reset, so they get no height dot.
-        onResetH: widthOnly ? null : () => resetNodeAxis(div, id, "h", false),
+        // Resetting a size is no longer a grip concern — the corner carets are gone. The seltoolbar's
+        // "reset size" button drives resetSelectionSize() below instead.
     };
 }
 
-// Reset ONE axis of a node back to its content-fitting, grid-snapped soft min (see onResetW/onResetH).
+// Reset ONE axis of a node back to its content-fitting, grid-snapped soft min (see resetSelectionSize).
 // Clears only that axis's inline sizing so the other axis keeps the user's size, then merges the new
 // dim into the recorded nodeSizes so a later render()/reload restores it deterministically.
-export function resetNodeAxis(div, id, axis, widthOnly) {
+function resetNodeAxis(div, id, axis, widthOnly) {
     // A register's body is a square-slot memory bank — resetting it means "make the grid as square
     // as possible", not "fit the content column". Both dots (and the shift-both) resize BOTH axes to
     // the square box; the per-axis branch below never runs for it.
@@ -216,7 +212,6 @@ export function resetNodeAxis(div, id, axis, widthOnly) {
         s.h = h; s.softH = true; s.custH = false;   // soft min (grow to grid) -> restore re-applies as min, never hard
     }
     nodeSizes.set(id, s);
-    markNodeSized(div, id);
     drawEdges(); groups.renderGroups(); persist.layout();
 }
 
@@ -226,7 +221,7 @@ export function resetNodeAxis(div, id, axis, widthOnly) {
 // The membank's layout() then reflows to exactly `cols` columns for this box. Cell size = the slots'
 // current rendered size, so a reset re-tiles them without rescaling. Sets BOTH axes hard so it
 // persists across render/reload (register width is otherwise CSS-fixed at 220px).
-export function resetRegisterSquare(div, id) {
+function resetRegisterSquare(div, id) {
     const host = div.querySelector(".data-host");
     const grid = host?.querySelector(".membank");
     const N = grid ? grid.children.length : 0;
@@ -242,21 +237,36 @@ export function resetRegisterSquare(div, id) {
     div.style.minWidth = ""; div.style.minHeight = "";
     div.style.width = `${w}px`; div.style.height = `${h}px`;
     nodeSizes.set(id, { w, h, softW: false, softH: false, custW: true, custH: true });
-    markNodeSized(div, id);
     drawEdges(); groups.renderGroups(); persist.layout();
 }
 
-// Reveal each axis's reset control only when that axis carries a user-set size a reset would undo,
-// driven by the nodeSizes entry's custW/custH (set true by a grip/keyboard resize of that axis,
-// cleared by resetNodeAxis). Legacy/loaded entries may lack the flags (undefined) -> treated as set
-// so nothing regresses until the user next touches the node. Also owns the whole-node has-size gate,
-// so every has-size toggle site funnels through this one helper (rule 7).
-export function markNodeSized(el, id) {
-    const s = nodeSizes.get(id);
-    const sized = !!s && !collapsed.has(id);
-    el.classList.toggle("has-size", sized);
-    el.classList.toggle("rz-has-w", sized && s.custW !== false);
-    el.classList.toggle("rz-has-h", sized && s.custH !== false);
+// Which of `ids` actually carry a user-set size a reset would undo. The ONE rule behind both the
+// seltoolbar's reset-size button (whether to show it) and what a reset then acts on — so the button
+// can never appear with nothing to do, and never hide while something is resettable.
+// The custW/custH test is what the old per-axis reset carets gated on (.rz-has-w / .rz-has-h): a
+// nodeSizes ENTRY is not the same as a custom SIZE — resetNodeAxis leaves the entry behind with its
+// flags cleared, and a merely-present entry would otherwise show a button that resets nothing and
+// never goes away. Legacy entries predate the flags (undefined) -> treated as set, as they were then.
+export function resettableSizeIds(ids) {
+    return ids.filter((id) => {
+        if (!nodeEls.has(id) || collapsed.has(id)) return false;
+        const s = nodeSizes.get(id);
+        return !!s && (s.custW !== false || s.custH !== false);
+    });
+}
+// Reset every sized node in `ids` back to its content-fitting, grid-snapped box. The ONE
+// implementation behind the seltoolbar button AND the keyboard shortcut (rule 7) — they used to
+// carry their own copy of this loop. widthOnly nodes (item/window) have an aspect-driven height
+// that is never stamped inline, so only their width resets. Returns the ids it actually touched.
+export function resetSelectionSize(ids) {
+    const hit = resettableSizeIds(ids);
+    for (const id of hit) {
+        const div = nodeEls.get(id);
+        const widthOnly = WIDTH_ONLY_NODES.has(nodeTypeOf(id));
+        resetNodeAxis(div, id, "w", widthOnly);
+        if (!widthOnly) resetNodeAxis(div, id, "h", false);
+    }
+    return hit;
 }
 
 // Make a node user-resizable: restore its saved size, then attach the grips (NODE itself, its
@@ -291,7 +301,6 @@ export function reapplyNodeSizes() {
             if (WIDTH_ONLY_NODES.has(nodeTypeOf(id))) { if (s.w && s.custW !== false) el.style.width = `${s.w}px`; }
             else { applySavedSize(el, s); applySatelliteHeightFloor(el, id, s); }
         }
-        markNodeSized(el, id);
     }
 }
 

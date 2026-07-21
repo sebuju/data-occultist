@@ -34,13 +34,14 @@ import { initTitlebar } from "../titlebar.js";
 initTitlebar();   // custom window chrome — no-op outside the desktop window
 
 import {
-    $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes, openImages,
-    imageCanvases, itemCanvases, busy, overlays,
+    $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes,
+    itemCanvases, busy, overlays,
     prevPresent, prevLastTs, dsTab, clearGrid, nw, nh, boot,
 } from "./state.js";
-import { drawEdges, nodeRect, freezeRouting, requestEdges } from "./routing.js";
+import { drawEdges, nodeRect, freezeRouting } from "./routing.js";
+import { refreshGuides } from "./guides.js";
 import {
-    panTo, panZoomTo, panZoomToRect, zoomToNode, viewportCenterWorld,
+    panTo, panZoomTo, panZoomToRect, zoomToNode,
     applyView, resizeCanvas, dragOnlyZoom,
 } from "./camera.js";
 import { movePos, renameNode } from "./node_lifecycle.js";
@@ -69,7 +70,7 @@ import {
 } from "./imaging.js";
 import * as nodeTxn from "./node_txn.js";
 import {
-    WIDTH_ONLY_NODES, markNodeSized, makeNodeResizable, nodeResizeOpts,
+    WIDTH_ONLY_NODES, makeNodeResizable, nodeResizeOpts,
     reapplyNodeSizes, startGroupResize,
 } from "./node_resize.js";
 import { syncKillGpu, wireSettingsButton } from "./settings_modal.js";
@@ -548,14 +549,13 @@ function rebuildNode(id, { fit = true } = {}) {
 // (a chip added/removed changes the node's size) but never re-reads the node's rect; drawEdges then
 // anchors via nodeRect -> nw/nh (state.js), which fall back to a 220x80 default box when the size
 // isn't re-read yet — so a just-grown node's edge starts at the default-box edge, INSIDE the real
-// node ("center"), until a nudge re-measures it. Force the re-measure here: markNodeSized re-stamps
-// the size classes and `void offsetWidth` flushes layout so the following drawEdges reads the true
-// border-box. Plain (content-height) nodes settle synchronously; pass `raf:true` for a node whose
+// node ("center"), until a nudge re-measures it. Force the re-measure here: `void offsetWidth`
+// flushes layout so the following drawEdges reads the true border-box. Plain (content-height) nodes settle synchronously; pass `raf:true` for a node whose
 // body sizes a frame later (a register's async membank ResizeObserver).
 export function rebuildNodeEdges(id, { raf = false } = {}) {
     rebuildNode(id);
     const el = nodeEls.get(id);
-    if (el) { markNodeSized(el, id); void el.offsetWidth; }   // sync layout flush -> true size on next read
+    if (el) void el.offsetWidth;   // sync layout flush -> true size on next read
     if (raf) requestAnimationFrame(drawEdges); else drawEdges();
 }
 
@@ -587,7 +587,6 @@ function toggleCollapse(id) {
             const s = nodeSizes.get(id);            // (survives reload; el._size would not)
             if (s) { if (s.w) el.style.width = `${s.w}px`; if (s.h) el.style.height = `${s.h}px`; }
         }
-        markNodeSized(el, id);   // reset dots hidden while collapsed; per-axis when expanded
     }
     drawEdges();   // node size changed -> reroute its lines
     groups.renderGroups();
@@ -1217,7 +1216,11 @@ function focusNode(id) {
 // ---- dragging -------------------------------------------------------------
 // GRID, snap, addResizeGrips, beginDrag and makeDraggable are imported from dragresize.js
 // — the same primitives the floating panels use; the drag loop itself lives in node_layout.js.
-export function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); if (el && p) { el.style.left = `${p.x}px`; el.style.top = `${p.y}px`; markNodeSized(el, id); } }
+// The ONE writer of a node's on-canvas position. refreshGuides() rides it so any visible alignment
+// guides re-derive at the new geometry — drag, clone-drag, keyboard nudge, undo, group absorb and a
+// full render all move nodes through here, and each used to be able to leave stale lines behind.
+// It's a no-op when no guides are showing, and coalesces to one redraw per frame (guides.js).
+export function positionNode(id) { const el = nodeEls.get(id); const p = pos.get(id); if (el && p) { el.style.left = `${p.x}px`; el.style.top = `${p.y}px`; refreshGuides(); } }
 
 // Drag a wire out of a node's `.port.out`. Drop on a dataset node to wire to it, or on
 // empty canvas to mint a fresh dataset there and wire to that. ``srcId`` is the source

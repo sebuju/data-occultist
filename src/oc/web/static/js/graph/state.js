@@ -98,5 +98,26 @@ export function clearGrid(winId) { gridPreviews.delete(winId); gridReads.delete(
 
 // Node rect geometry from the live DOM (border-box). Foundational helpers shared by
 // routing, placement, marquee and the node map — all read straight off `nodeEls`.
-export const nw = (id) => nodeEls.get(id)?.offsetWidth || 220;   // node width (right edge)
-export const nh = (id) => nodeEls.get(id)?.offsetHeight || 80;   // node height
+//
+// SIZE FREEZE (drag perf). A drag rewrites the moving nodes' left/top every frame, and the guide
+// pass then measures EVERY node — a read-after-write that forces a full layout, scaling with node
+// count, on each move. But a *moved* node's size doesn't change (only its position), and the only
+// element whose size really changes mid-drag is the one being *resized*. So snapshot every size
+// once when a drag starts and serve `nw`/`nh` from that Map; the dragged/resized ids are left OUT
+// of the snapshot and keep reading live, which is correct for resize and cheap for move (a handful
+// of nodes, not N). Frozen/thawed in lock-step with the routing drag flag (setDraggingNodes).
+let sizeFreeze = null;                       // id -> {w,h}, or null when not dragging
+export const sizesFrozen = () => sizeFreeze !== null;
+export function freezeNodeSizes(exclude = null) {
+    if (sizeFreeze) return;   // MUST be idempotent: the resize loop re-arms the drag flag every
+                              // move, and re-measuring N nodes per move would be worse than no cache
+    const m = new Map();
+    for (const [id, el] of nodeEls) {
+        if (exclude?.has(id)) continue;
+        m.set(id, { w: el.offsetWidth, h: el.offsetHeight });
+    }
+    sizeFreeze = m;
+}
+export function thawNodeSizes() { sizeFreeze = null; }
+export const nw = (id) => sizeFreeze?.get(id)?.w ?? (nodeEls.get(id)?.offsetWidth || 220);   // node width (right edge)
+export const nh = (id) => sizeFreeze?.get(id)?.h ?? (nodeEls.get(id)?.offsetHeight || 80);   // node height

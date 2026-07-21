@@ -26,6 +26,7 @@
 // Geometry recomputes from live member rects every render, so a box always hugs its members.
 
 import { beginDrag, GRID, snap } from "./dragresize.js";   // shared drag-loop primitive
+import { sizesFrozen } from "./state.js";   // drag in progress -> reuse measured title extents, don't re-measure
 import { h, svg, TRASH, trashBtn } from "../dom.js";
 import { onOutside } from "../inputbus.js";
 import { setGroups } from "./edgecanvas.js";
@@ -720,7 +721,12 @@ export function groupBorderCss(zoom) {
 function groupBeforeSize(rec, el) {
     let tel = el.querySelector(".ggroup-title");
     if (!tel) { tel = buildTitleEl(rec); el.appendChild(tel); }
-    tel.querySelector(".ggt-label").textContent = rec.title;
+    const lbl = tel.querySelector(".ggt-label");
+    if (lbl.textContent !== rec.title) lbl.textContent = rec.title;   // don't re-dirty text that didn't change
+    // A drag re-renders every group EVERY frame, and this measurement is a layout flush. The band's
+    // height can't change while a drag is up (its text and font are fixed), so reuse the last one —
+    // same reasoning as the node size freeze this flag comes from (state.js).
+    if (sizesFrozen() && rec._titleH) return rec._titleH;
     return (rec._titleH = tel.offsetHeight || TITLE_H);
 }
 // The box FILL + BORDER colour expressions per tier — the identity hue ("themed" = any scheme
@@ -765,7 +771,9 @@ function groupAfterSize(rec, el) {
         // shrink-to-fit (inline-flex), so the router only needs to dodge this much of it. Read here,
         // after placeTitle, because alignment decides where it sits — and alongside the existing
         // _titleH read in groupBeforeSize this stays one layout pass per group render, not a new one.
-        rec._titleX = tel.offsetLeft; rec._titleW = tel.offsetWidth;
+        // Skipped while a drag holds sizes frozen: alignment and text are fixed for its duration, so
+        // the cached extent is still valid and re-reading it would flush layout every frame.
+        if (!(sizesFrozen() && rec._titleW > 0)) { rec._titleX = tel.offsetLeft; rec._titleW = tel.offsetWidth; }
     }
     // Canvas renderer draws the box fill + border (solid accent when ctrl-selected, else dashed)
     // itself (under-canvas); blank the DOM box so it doesn't double-render. Title band stays DOM.
@@ -779,8 +787,10 @@ function subBeforeSize(rec, el) {
     let tel = el.querySelector(".subgroup-title");
     if (STYLE_SUBSUPER && rec.title) {
         if (!tel) { tel = buildSubTitleEl(rec); el.insertBefore(tel, el.firstChild); }
-        tel.querySelector(".ggt-label").textContent = rec.title;
+        const lbl = tel.querySelector(".ggt-label");
+        if (lbl.textContent !== rec.title) lbl.textContent = rec.title;
     } else if (tel) { tel.remove(); tel = null; }
+    if (tel && sizesFrozen() && rec._titleH) return rec._titleH;   // frozen mid-drag — see groupBeforeSize
     return (rec._titleH = tel ? (tel.offsetHeight || 0) : 0);
 }
 function subAfterSize(rec, el) {
@@ -945,7 +955,13 @@ export function superGroupBoxes() {
         if (!box) return null;
         let labelRect = null;
         const lab = layer && layer.querySelector(`.sgroup[data-sgid="${sg.id}"] .sgroup-label`);
-        if (lab && lab.offsetWidth) labelRect = { x: box.x + lab.offsetLeft, y: box.y + lab.offsetTop, w: lab.offsetWidth, h: lab.offsetHeight };
+        // Measured relative to the box and cached, so a drag (which re-runs this every frame via
+        // renderGroups -> pushCanvasGroups) reuses it instead of flushing layout — the label's own
+        // extent can't change while the drag is up, only the box it hangs off moves.
+        if (lab && !(sizesFrozen() && sg._labelRel !== undefined))
+            sg._labelRel = lab.offsetWidth ? { x: lab.offsetLeft, y: lab.offsetTop, w: lab.offsetWidth, h: lab.offsetHeight } : null;
+        const rel = lab ? sg._labelRel : null;
+        if (rel) labelRect = { x: box.x + rel.x, y: box.y + rel.y, w: rel.w, h: rel.h };
         return { id: sg.id, title: sg.title, outline: { ...sg.outline }, bg: sg.bg, bandH: SUPER_LABEL_BAND, box, labelRect };
     }).filter(Boolean);
 }
