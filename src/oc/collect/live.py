@@ -142,6 +142,12 @@ class LiveSession:
         # consumed + cleared by the next _on_tick). Surfaced in the debug log only in
         # capture-recognised mode so the OCR log names the image each grab was written to.
         self._last_saved_frame: str | None = None
+        # "feed saved images" mode: replay the game's saved live/ images through the collector
+        # instead of grabbing fresh window frames (paced by their timestamps — see collect.replay).
+        # Read into _loop on start(); _replay is the live ReplayCapture (for the current/total
+        # progress readout), set under the lock while the feed loop runs.
+        self._feed_images = False
+        self._replay = None
 
     # ---- profile -----------------------------------------------------------
 
@@ -153,13 +159,23 @@ class LiveSession:
                 return
             self._profile = profile
 
+    def feed_skip(self) -> bool:
+        """Skip the feed-images playback clock to the next image immediately. Returns False when
+        no replay is active. Thread-safe: the replay's clock write is a single attribute set."""
+        r = self._replay
+        if r is None:
+            return False
+        r.skip()
+        return True
+
     # ---- control -----------------------------------------------------------
 
     def is_running(self) -> bool:
         t = self._thread
         return bool(t is not None and t.is_alive())
 
-    def start(self, interval: float | None = None, save_recognized: bool = False) -> None:
+    def start(self, interval: float | None = None, save_recognized: bool = False,
+              feed_images: bool = False) -> None:
         if self.is_running():
             return
         if interval is None:
@@ -168,6 +184,8 @@ class LiveSession:
         with self._lock:
             self._interval = max(0.0, float(interval))
             self._save_recognized = bool(save_recognized)
+            self._feed_images = bool(feed_images)
+            self._replay = None
             self._recog = {}
             self._written = 0
             self._frames = 0
@@ -210,6 +228,9 @@ class LiveSession:
     def _loop(self) -> None:
         restore = enter_device(self._engine, self.batch_device)
         try:
+            if self._feed_images:
+                self._feed_loop()
+                return
             collector = Collector(self._engine, self._profile)
             collector.on_frame = self._save_frame   # persist a frame only when a record was written
             collector.save_recognized_frames = self._save_recognized   # ...or on every recognised grab (panel toggle)
@@ -222,6 +243,43 @@ class LiveSession:
                 self._error = str(exc)
         finally:
             exit_device(self._engine, restore)
+
+    def _feed_loop(self) -> None:
+        """Replay the game's saved live/ images through the SAME collector, paced by their
+        timestamps (see collect.replay). Backends are swapped behind the ABCs so the pipeline is
+        unchanged; nothing is saved (feeding must not write new images). The loop ends when the
+        replay clock passes the last image (exhausted) — the session then reads not-running and the
+        UI drops the toggle."""
+        import dataclasses
+
+        from .replay import ReplayCapture, ReplayProcess, ReplayWindow, build_image_list
+
+        images = build_image_list(self._engine.settings.captures_dir, self._profile.name)
+        if not images:
+            with self._lock:
+                self._error = "no saved live images to feed"
+            return
+        replay = ReplayCapture(images)
+        h0, w0 = None, None
+        import cv2
+        first = cv2.imread(str(images[0][1]))
+        if first is not None:
+            h0, w0 = first.shape[:2]
+        dims = (w0 or 1920, h0 or 1080)
+        eng = dataclasses.replace(
+            self._engine,
+            capture=replay,
+            window=ReplayWindow(dims),
+            process=ReplayProcess(self._profile.process_names),
+        )
+        with self._lock:
+            self._replay = replay
+        collector = Collector(eng, self._profile)   # no on_frame / save_recognized -> feeding saves nothing
+        # interval 0 -> every wake is OCR-due; the replay clock (not the throttle) decides which
+        # image is current, and the collector's unchanged-frame caches keep repeat reads cheap.
+        collector.run(0.0, on_tick=self._on_tick,
+                      should_stop=lambda: self._stop.is_set() or replay.exhausted,
+                      triggers=self._trigger_runner())
 
     def _save_frame(self, frame) -> None:
         """Save one frame into the game's live/ image bucket — the same bucket the read-only
@@ -1077,6 +1135,12 @@ class LiveSession:
                 "state": self._cur[1],
                 "phase": self._phase and running,   # currently reading a data window (a worthy screen)
                 "phase_status": self._last_status,  # raw TickStatus — WHY we're not reading (throttled / unrecognised / …)
+                # "feed saved images" replay progress: feeding flag + current/total position (the
+                # panel shows a "feed" stat row). None when this run isn't a replay.
+                "feeding": self._feed_images and running,
+                "feed": ({"index": self._replay.index, "total": self._replay.total,
+                          "wait": self._replay.seconds_to_next()}
+                         if self._replay is not None else None),
                 "scroll": list(self._scroll) if self._scroll else None,   # [vlo,vhi] row-index span, or null
                 "scroll_meta": self._scroll_meta,   # {total,viewport,gain,confident,pinned} or null
                 "readouts": dict(self._readouts),   # {readout_id: value} GATED live values (never stored)

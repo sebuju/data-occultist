@@ -319,7 +319,8 @@
 .live-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .live-row > label { margin: 0; color: var(--text); font-weight: 600; }
 .live-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: none; }
-.live-wins { margin-top: 12px; margin-bottom: 4px; }       /* gap between the toggles and the window list */
+/* a switch greyed out when it can't act (feed with no images; saving while feeding) */
+.act-enable.sw-disabled { opacity: 0.4; cursor: default; pointer-events: none; }
 /* a stat sits at the right of its row, truncating with an ellipsis rather than wrapping */
 .live-statval, .live-imgstat { flex: 1; min-width: 0; text-align: right; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -331,10 +332,21 @@
 .live-clear:hover { filter: brightness(1.12); }
 .live-clear[data-armed="1"] { background: var(--warn); color: var(--on-accent); }
 .live-clear:disabled { opacity: 0.4; cursor: default; }
-.live-wins { display: flex; flex-direction: column; gap: 4px; }
-.live-win .act-title { font-weight: 500; }
-/* detection count, pushed to the right of the row (.act-title flex:1 fills the gap) */
-.live-wcount { flex: none; margin-left: auto; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+/* the per-window detection list — now inside the stats box, one stat-style line per window */
+.live-wins { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+/* left side of a window row: the dot folded into the id label, ellipsised so the count keeps its
+   place at the right edge (like the stat rows above it) */
+.live-wlabel { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
+    color: var(--text); font-weight: 500; }
+.live-wname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-win { margin-bottom: 0; }   /* .live-wins owns the row gap; drop .live-row's bottom margin */
+/* feed row: "skip to next image" button at the right edge (after the progress/countdown value) */
+.live-feed-skip { flex: none; margin-left: 6px; font-size: var(--fs-xs); padding: 1px 8px;
+    border: 1px solid var(--float-line); background: var(--line); color: var(--text); border-radius: 4px; cursor: pointer; }
+.live-feed-skip:hover { background: var(--accent); color: var(--on-accent); }
+.live-feed-skip[hidden] { display: none; }
+/* detection count at the right edge (reuses .live-statval; flex:none so the label takes the slack) */
+.live-wcount { flex: none; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 /* detection dot: grey = not detected, green (glow) = currently on screen */
 .live-wdot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--line); transition: background .15s; }
 .live-wdot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }

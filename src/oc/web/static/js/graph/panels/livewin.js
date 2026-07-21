@@ -46,6 +46,12 @@ let liveSave = true;
 // the live/ image bucket, not only the frames that wrote a record. Rides the collector, so a mid-
 // run toggle restarts it (like the frame limiter / save arm). Read-only tuning mode is unaffected.
 let liveSaveRecog = false;
+// "feed saved images" arm (default OFF): replay the game's saved live/ images through the SERVER
+// collector instead of live capture, paced server-side by their timestamps. Always runs the armed
+// collector (it writes records); saves no images while feeding. Auto-stops when all images are fed
+// (the session reads not-running -> reflectExternalStop drops the toggle). Disabled when the live/
+// bucket is empty (nothing to feed).
+let liveFeed = false;
 // Frame limiter (min SECONDS between collector reads) now lives in the SETTINGS modal and is
 // persisted server-side; the collector reads it on start. applyLiveInterval() (exported) restarts
 // a running collector when the modal changes it, so the new limit takes effect immediately.
@@ -95,7 +101,7 @@ function buildLiveWindow() {
         const running = !!(s && s.live);
         if (!running) liveStopping = false;   // server confirmed stopped -> future external starts may adopt again
         if (running && !liveOn && !liveStopping) adoptServerCollect(s);
-        else if (!running && liveOn && liveSave && liveSawServer) reflectExternalStop();
+        else if (!running && liveOn && (liveSave || liveFeed) && liveSawServer) reflectExternalStop();
         if (active) renderLiveWindow();    // reflect the pacing readout (reconciles in place, rule 1)
     });
 }
@@ -127,7 +133,11 @@ function mountLive(adapter) {
                     h("button", { class: "act-enable live-saverecog", role: "switch", "aria-checked": "false", title: "save one image per OCR-due grab whose frame matched a window (any recognised window/state), not just frames that wrote a record — debug aid, off by default" },
                         switchSvg()),
                     h("span", { class: "live-saverecog-lbl" }, "capture recognised windows"))),
-            h("div", { class: "live-wins" }));
+            h("div", { class: "live-row" },
+                h("label", { class: "live-toggle" },
+                    h("button", { class: "act-enable live-feed", role: "switch", "aria-checked": "false", title: "replay the saved live images through the pipeline instead of capturing new frames — paced by their timestamps, writes records, stops when all are fed. Saving is disabled while feeding." },
+                        switchSvg()),
+                    h("span", { class: "live-feed-lbl" }, "feed saved images"))));
         // Stats collapsible (open by default): live-run readouts as fixed rows with placeholders so
         // the height is stable whether live is on or off. Boxed body, styled like the OCR log below.
         const stats = collapsible({ title: "stats", open: statsOpen, bodyClass: "live-statbox", headTitle: "live run stats (phase / saved / rate / rows)" });
@@ -144,7 +154,15 @@ function mountLive(adapter) {
                 h("span", { class: "live-statval live-stat-rate muted" }, "–")),
             h("div", { class: "live-row" },
                 h("span", { class: "live-int-lbl", title: "visible row-index span (mirror datasets only)" }, "rows"),
-                h("span", { class: "live-statval live-stat-rows muted" }, "–")));
+                h("span", { class: "live-statval live-stat-rows muted" }, "–")),
+            h("div", { class: "live-row live-feed-row" },
+                h("span", { class: "live-int-lbl", title: "replay progress: images fed / total, and the wait to the next image" }, "feed"),
+                h("span", { class: "live-statval live-stat-feed muted" }, "–"),
+                h("button", { class: "live-feed-skip", hidden: true, title: "skip to the next image now" }, "skip")),
+            // faint separator, then the per-window detection list — one line each (dot folded into
+            // the id label, detection count right-aligned like the stat values above).
+            h("div", { class: "bdivider" }),
+            h("div", { class: "live-wins" }));
         // OCR-log collapsible -- collapsed by default; when open it polls the server's read ring and
         // shows, per OCR-heavy tick, every field's raw text -> resolved value (marking corrections)
         // plus what was written to which dataset.
@@ -171,6 +189,13 @@ function mountLive(adapter) {
         liveRoot.querySelector(".live-switch").addEventListener("click", () => setLiveMode(!liveOn));
         liveRoot.querySelector(".live-save").addEventListener("click", () => setLiveSave(!liveSave));
         liveRoot.querySelector(".live-saverecog").addEventListener("click", () => setLiveSaveRecog(!liveSaveRecog));
+        liveRoot.querySelector(".live-feed").addEventListener("click", () => setLiveFeed(!liveFeed));
+        // skip the replay to the next image now (feed mode) — kick the heartbeat so the readout
+        // reflects the jump without waiting for the next beat.
+        liveRoot.querySelector(".live-feed-skip").addEventListener("click", () => {
+            const game = model.profile.name;
+            if (game) api.live.feedSkip(game).then(() => hub.kick()).catch((e) => log(`feed skip failed: ${e.message || e}`, "err"));
+        });
         // clear saved live images -- armed two-click (no blocking confirm)
         const clr = liveRoot.querySelector(".live-clear");
         clr.addEventListener("click", () => {
@@ -254,7 +279,13 @@ function pollDebug() {
     const game = model.profile.name;
     if (!dbgOpen || !active || !liveOn || !game) return;
     api.live.debug(game, dbgSeq).then((r) => {
-        if (r && r.entries && r.entries.length) renderDebugEntries(r.entries);
+        if (!r) return;
+        // The server restarts its debug seq at 0 on every new live/feed session. Our cursor only
+        // grows, so after a clear (which pushes it to the high-water) + a fresh run, `seq > cursor`
+        // filters out every new entry and the log stays blank forever. Detect the ring rewind
+        // (server high-water < our cursor) and reset the cursor + view so the new run's reads show.
+        if (typeof r.seq === "number" && r.seq < dbgSeq) { dbgSeq = 0; clearDebugView(); }
+        if (r.entries && r.entries.length) renderDebugEntries(r.entries);
     }).catch(() => {}).finally(() => {
         // keep polling while open + live — on bgtimer so a backgrounded tab still ticks (like liveTick)
         if (dbgOpen && active && liveOn) dbgTimer = bgSetTimeout(pollDebug, 700);
@@ -355,9 +386,21 @@ function renderLiveWindow() {
     syncSwitch(liveRoot.querySelector(".live-switch"), liveOn);
     syncSwitch(liveRoot.querySelector(".live-save"), liveSave);
     syncSwitch(liveRoot.querySelector(".live-saverecog"), liveSaveRecog);
+    syncSwitch(liveRoot.querySelector(".live-feed"), liveFeed);
+    // feed needs images to replay -> disable the switch when the bucket is empty (re-checked every
+    // heartbeat + on live exit via refreshLiveImgStat). While feeding, image saving is off:
+    // grey the "capture recognised windows" switch (it saves images) so it reads as unavailable.
+    // disable a switch (prop + greyed class), touching the DOM only on a real change (rule 1)
+    const setDisabled = (el, off) => {
+        if (!el) return;
+        if (el.disabled !== off) el.disabled = off;
+        if (el.classList.contains("sw-disabled") !== off) el.classList.toggle("sw-disabled", off);
+    };
+    setDisabled(liveRoot.querySelector(".live-feed"), !liveImg.count && !liveFeed);   // needs images; keep on mid-feed
+    setDisabled(liveRoot.querySelector(".live-saverecog"), liveFeed);                 // no image saving while feeding
     // Stats render as fixed rows below the window list; "–" placeholder when off so height holds.
     // collecting (armed): show what the server collector saved; tuning (disarmed): client img rate.
-    const collecting = liveOn && liveSave;
+    const collecting = liveOn && (liveSave || liveFeed);   // feed runs the server collector too
     if (collecting && liveColStatus) liveStatsLast = liveColStatus;   // remember the last live snapshot
     // Stat source: the live collector while running, else the frozen final snapshot so the numbers
     // stay put after exiting live mode (rather than blanking). `frozen` = stopped but we have one.
@@ -391,6 +434,25 @@ function renderLiveWindow() {
     setStat(".live-stat-rows", sc
         ? `${Math.round(sc[0])}–${Math.round(sc[1])}${scm && scm.total ? ` / ${Math.round(scm.total)}` : ""}`
         : "–");
+    // feed replay progress: images fed / total (+ wait to the next image), from the collector
+    // status (feeding mode only). wait == null => the current image is the last one.
+    const feed = (collecting || frozen) ? statSrc?.feed : null;
+    const feeding = (collecting || frozen) ? statSrc?.feeding : false;
+    let feedTxt = "–";
+    if (feed) {
+        feedTxt = `${feed.index} / ${feed.total}`;
+        if (feeding && collecting && feed.wait != null) feedTxt += ` · ${feed.wait.toFixed(1)}s`;
+    }
+    setStat(".live-stat-feed", feedTxt);
+    const feedStatEl = liveRoot.querySelector(".live-stat-feed");
+    const feedStatCls = "live-statval live-stat-feed " + (feeding && collecting ? "conf-ok" : "muted");
+    if (feedStatEl && feedStatEl.className !== feedStatCls) feedStatEl.className = feedStatCls;
+    // skip button: only while actively feeding AND a next image exists (wait != null)
+    const skipBtn = liveRoot.querySelector(".live-feed-skip");
+    if (skipBtn) {
+        const canSkip = !!(feeding && collecting && feed && feed.wait != null);
+        if (skipBtn.hidden !== !canSkip) skipBtn.hidden = !canSkip;
+    }
     // saved-live-image stat (touch DOM only on change)
     const ist = liveRoot.querySelector(".live-imgstat");
     const itxt = liveImg.count ? `${liveImg.count} imgs · ${fmtBytes(liveImg.bytes)}` : "";
@@ -398,7 +460,8 @@ function renderLiveWindow() {
     const clrBtn = liveRoot.querySelector(".live-clear");
     if (clrBtn) clrBtn.hidden = !liveImg.count;   // nothing saved -> hide clear
     const clr = liveRoot.querySelector(".live-clear");
-    if (clr) clr.disabled = !liveImg.count;
+    // no flush mid-feed: deleting the source images out from under an active replay would break it
+    if (clr) clr.disabled = !liveImg.count || (liveFeed && liveOn);
     renderLiveWinList();
     renderReadoutValues();
     fitLivePanelHeight();
@@ -462,12 +525,16 @@ function renderLiveWinList() {
     for (const w of wins) {
         let r = liveRows.get(w.id);
         if (!r) {
-            const row = document.createElement("div"); row.className = "act-row live-win";
+            // one stat-style line: [dot + id] on the left (dot folded into the label), detection
+            // count hard against the right edge like the stat values above it.
+            const row = document.createElement("div"); row.className = "live-row live-win";
             row.dataset.node = `win:${w.id}`; row.title = "go to this window's node";
+            const label = document.createElement("span"); label.className = "live-wlabel";
             const dot = document.createElement("span"); dot.className = "live-wdot";
-            const name = document.createElement("div"); name.className = "act-title";
-            const cnt = document.createElement("span"); cnt.className = "live-wcount";   // detections, right-justified
-            row.append(dot, name, cnt);
+            const name = document.createElement("span"); name.className = "live-wname";
+            label.append(dot, name);
+            const cnt = document.createElement("span"); cnt.className = "live-statval live-wcount";   // detections, right-justified
+            row.append(label, cnt);
             r = { row, dot, name, cnt }; liveRows.set(w.id, r);
         }
         const at = list.children[i];
@@ -556,7 +623,7 @@ async function liveTick() {
 function subscribeCollector() {
     if (liveColUnsub) return;
     liveColUnsub = hub.subscribe((s) => {
-        if (!liveOn || !liveSave) return;
+        if (!liveOn || !(liveSave || liveFeed)) return;
         liveColStatus = s.live || null;
         if (liveColStatus) liveSawServer = true;   // confirmed running -> external-stop reflect may now fire
         liveRecog.clear(); liveDetCount.clear();
@@ -583,7 +650,9 @@ function startServerCollect() {
     // has actually started: the immediate kick races the worker and usually reads live=false, which
     // would schedule the hub at IDLE cadence (~3s) — so activity:live-gated elements lagged badly.
     // Requesting a beat on resolution flips them as soon as the worker is up.
-    api.live.start(game, null, liveSaveRecog).then(() => hub.kick()).catch((e) => setStatus(String(e.message || e)));   // null => server uses the persisted frame limiter; liveSaveRecog => save every recognised grab
+    // null => server uses the persisted frame limiter; liveSaveRecog => save every recognised grab
+    // (forced off while feeding — a replay saves nothing); liveFeed => replay the saved images.
+    api.live.start(game, null, liveFeed ? false : liveSaveRecog, liveFeed).then(() => hub.kick()).catch((e) => setStatus(String(e.message || e)));
     subscribeCollector();
     hub.kick();   // beat now so collection status shows immediately
 }
@@ -600,6 +669,7 @@ async function syncLiveFromServer() {
     try { st = await api.live.status(game); } catch { return; }
     if (!st?.running || liveOn) return;   // re-check liveOn: the await may have raced a user toggle
     liveOn = true; liveSave = true; liveSawServer = true;
+    liveFeed = !!st.feeding;   // reflect a feed-saved-images run adopted on reload
     liveColStatus = st;
     registerWorker("live", "live collection", () => setLiveMode(false));
     showLiveStats(true);
@@ -615,6 +685,7 @@ function adoptServerCollect(s) {
     if (liveOn) return;
     const lv = s && s.live;
     liveOn = true; liveSave = true; liveSawServer = true;
+    liveFeed = !!(lv && lv.feeding);   // reflect a feed-saved-images run adopted off the heartbeat
     liveColStatus = lv || null;
     registerWorker("live", "live collection", () => setLiveMode(false));
     showLiveStats(true);
@@ -627,7 +698,7 @@ function adoptServerCollect(s) {
 // Reflect an EXTERNAL stop (the server collector we were tracking is no longer running) — drop the
 // toggle + worker locally without issuing another stop (the server is already stopped).
 function reflectExternalStop() {
-    liveOn = false; liveSawServer = false;
+    liveOn = false; liveSawServer = false; liveFeed = false;   // a finished feed drops the toggle
     if (timer) { bgClearTimeout(timer); timer = null; }
     liveRecog.clear(); liveDetCount.clear();
     if (liveColUnsub) { liveColUnsub(); liveColUnsub = null; }
@@ -679,9 +750,12 @@ function setLiveMode(on) {
     if (!on) { liveRecog.clear(); liveDetCount.clear(); }   // drop stale dots + counts
     showLiveStats(on);
     if (on) {
-        log(liveSave ? "live collection started" : "live mode started (read-only)", "run");
-        registerWorker("live", liveSave ? "live collection" : "live view", () => setLiveMode(false));
-        if (liveSave) startServerCollect(); else liveTick();   // armed → server collector; else client tuning loop
+        // feed replays saved images through the server collector, so it counts as "armed" (writes
+        // records) even if the save-to-datasets switch is off.
+        const armed = liveSave || liveFeed;
+        log(liveFeed ? "live feed started (saved images)" : liveSave ? "live collection started" : "live mode started (read-only)", "run");
+        registerWorker("live", liveFeed ? "live feed" : liveSave ? "live collection" : "live view", () => setLiveMode(false));
+        if (armed) startServerCollect(); else liveTick();   // armed → server collector; else client tuning loop
     } else {
         log("live mode stopped");
         unregisterWorker("live");
@@ -698,11 +772,30 @@ function setLiveSave(on) {
     liveSave = on;
     if (liveOn) {
         if (timer) { bgClearTimeout(timer); timer = null; }   // stop the client loop either way
-        if (on) { stopServerCollect().then(startServerCollect); }   // await teardown, then (re)start
-        else { stopServerCollect(); liveTick(); }                  // back to read-only tuning
-        registerWorker("live", on ? "live collection" : "live view", () => setLiveMode(false));
+        const armed = on || liveFeed;   // feed keeps the collector running even with save off
+        if (armed) { stopServerCollect().then(startServerCollect); }   // await teardown, then (re)start
+        else { stopServerCollect(); liveTick(); }                      // back to read-only tuning
+        registerWorker("live", liveFeed ? "live feed" : on ? "live collection" : "live view", () => setLiveMode(false));
         log(on ? "live saving armed" : "live saving disarmed", on ? "run" : undefined);
     }
+    renderLiveWindow();
+}
+
+// Arm/disarm feeding saved images. Feed always runs the server collector (it writes records), so
+// turning it on/off while live is running restarts the collector in the new mode; turning it off
+// with save also off drops back to the read-only tuning loop. Disabled with no images to feed.
+function setLiveFeed(on) {
+    if (on === liveFeed) return;
+    if (on && !liveImg.count) { setStatus("no saved live images to feed"); renderLiveWindow(); return; }
+    liveFeed = on;
+    if (liveOn) {
+        if (timer) { bgClearTimeout(timer); timer = null; }   // leaving any client tuning loop
+        const armed = liveSave || liveFeed;
+        if (armed) { stopServerCollect().then(startServerCollect); }   // restart in the new mode
+        else { stopServerCollect(); liveTick(); }                      // feed off + save off -> tuning
+        registerWorker("live", liveFeed ? "live feed" : liveSave ? "live collection" : "live view", () => setLiveMode(false));
+    }
+    log(on ? "feeding saved images" : "feed stopped");
     renderLiveWindow();
 }
 

@@ -104,7 +104,8 @@ def set_interval(seconds: float):
 
 
 @router.post("/{game}/start")
-def start(game: str, interval: float | None = None, save_recognized: bool = False):
+def start(game: str, interval: float | None = None, save_recognized: bool = False,
+          feed_images: bool = False):
     s = _session(game, create=True)
     _refresh_profile(game, s)   # pick up profile edits made since the last run
     # auto-mode runs the live loop on GPU (then frees it on stop); cpu/gpu leave the device
@@ -112,7 +113,9 @@ def start(game: str, interval: float | None = None, save_recognized: bool = Fals
     s.batch_device = "gpu" if read_mode() == "auto" else None
     if interval is None:
         interval = _read_interval()   # persisted frame limiter (settings modal owns it)
-    s.start(interval=interval, save_recognized=save_recognized)   # save every recognised grab, not just writes
+    # feed_images replays the saved live/ images through the pipeline instead of live capture
+    # (paced by their timestamps); it saves nothing, so save_recognized is ignored in that mode.
+    s.start(interval=interval, save_recognized=save_recognized, feed_images=feed_images)
     _fire_on_capture(game)
     _fire_lifecycle(game, "fire_live_start")   # a live start is also its own distinct event
     return s.status()
@@ -131,6 +134,13 @@ def _fire_lifecycle(game: str, fn_name: str) -> None:
         getattr(source_sched, fn_name)(game, get_settings())
     except Exception:   # noqa: BLE001
         pass
+
+
+@router.post("/{game}/feed/skip")
+def feed_skip(game: str):
+    """Skip the feed-saved-images replay to the next image now. No-op when no feed is running."""
+    s = _sessions.get(game)
+    return {"ok": bool(s is not None and s.feed_skip())}
 
 
 @router.post("/{game}/stop")

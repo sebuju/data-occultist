@@ -502,15 +502,20 @@ export const live = {
     // overrides it (the live panel's frame limiter — min seconds between collector reads).
     // saveRecognized => the collector saves every OCR-due grab whose frame matched a window to
     // the live/ bucket, not only writes.
-    start: (game, interval, saveRecognized, signal) => {
+    // feedImages => replay the saved live/ images through the pipeline instead of live capture,
+    // paced server-side by their timestamps (see collect/replay.py). Saves nothing while feeding.
+    start: (game, interval, saveRecognized, feedImages, signal) => {
         let url = `/api/live/${encodeURIComponent(game)}/start`;
         const q = [];
         if (interval != null && Number.isFinite(interval)) q.push(`interval=${encodeURIComponent(interval)}`);
         if (saveRecognized) q.push("save_recognized=1");
+        if (feedImages) q.push("feed_images=1");
         if (q.length) url += `?${q.join("&")}`;
         return tfetch(url, { method: "POST", signal }).then((r) => r.json());
     },
     stop: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/stop`, { method: "POST", signal }).then((r) => ok(r, "live stop")).then((r) => r.json()),
+    // Skip the feed-saved-images replay to the next image now (feed_images mode only).
+    feedSkip: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/feed/skip`, { method: "POST", signal }).then((r) => r.json()),
     status: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
     // Debug log: incremental poll (entries newer than `after`). { running, seq, entries:[...] }.
     debug: (game, after = 0, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/debug?after=${encodeURIComponent(after)}`, { signal }).then((r) => r.json()),
