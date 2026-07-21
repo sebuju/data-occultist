@@ -16,7 +16,8 @@ import { slotRow } from "./reg_slots.js";
 
 // dataset ops this node can perform. "" = no-op. clone/move copy into `dest` (batches = keep batch
 // grouping; resolved = collapse to one). move also clears the source.
-const ACTIONS = [["", "no action"], ["clear", "clear targets"],
+// `compact` applies each target dataset's own keep_batches window (a no-op without one).
+const ACTIONS = [["", "no action"], ["clear", "clear targets"], ["compact", "compact to batch limit"],
     ["clone_batches", "clone data (batches)"], ["clone_resolved", "clone data (resolved)"],
     ["move_batches", "move data (batches)"], ["move_resolved", "move data (resolved)"]];
 

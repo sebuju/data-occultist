@@ -23,8 +23,10 @@ def _game_dir(data_dir: Path | str, game: str) -> Path:
 
 
 def _reader(data_dir: Path | str, game: str, dataset: str,
-            key: KeyMap | KeySpec = KeySpec(), aggregate: str = "latest") -> DatasetStore:
-    return store_for(data_dir, game, dataset, key=key, aggregate=aggregate)
+            key: KeyMap | KeySpec = KeySpec(), aggregate: str = "latest",
+            keep_batches: int = 0) -> DatasetStore:
+    return store_for(data_dir, game, dataset, key=key, aggregate=aggregate,
+                     keep_batches=keep_batches)
 
 
 def list_datasets(data_dir: Path | str, game: str) -> list[str]:
@@ -55,7 +57,13 @@ def batches(data_dir: Path | str, game: str, dataset: str, n: int = 50) -> list[
 
 
 def summarize(data_dir: Path | str, game: str, dataset: str,
-              key: KeyMap | KeySpec = KeySpec(), aggregate: str = "latest") -> dict:
+              key: KeyMap | KeySpec = KeySpec(), aggregate: str = "latest",
+              keep_batches: int = 0) -> dict:
     """Dashboard digest for one dataset (counts + column preview + last change), read
-    straight from the DB."""
-    return _reader(data_dir, game, dataset, key, aggregate).summary()
+    straight from the DB.
+
+    ``keep_batches`` is passed in for the same reason ``key``/``aggregate`` are — this module
+    stays profile-free, so the caller resolves it. It must be threaded: the digest only reports
+    a batch count for a dataset that HAS a retention limit, so dropping it here silently reports
+    ``batches: None`` and the UI can never tell that a dataset is over its window."""
+    return _reader(data_dir, game, dataset, key, aggregate, keep_batches).summary()

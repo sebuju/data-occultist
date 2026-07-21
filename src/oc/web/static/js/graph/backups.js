@@ -9,8 +9,8 @@ import { h } from "../dom.js";
 import { renderMiniMap } from "./minimap.js";
 import { fmtDateTime, since } from "../datefmt.js";
 import { liveAgo } from "../ago.js";
+import { fmtBytes as fmtSize } from "../bytefmt.js";
 
-const fmtSize = (n) => (n >= 1024 ? `${(n / 1024).toFixed(1)} kB` : `${n || 0} B`);
 
 // Render the backups browser INTO a host element. `signal` (e.g. a modal's
 // AbortController signal) drops stale async work when the host goes away; `close`

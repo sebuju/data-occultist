@@ -55,12 +55,13 @@ import { singleFlight } from "../singleflight.js";
 import { nmSyncSelection, renderNodeViews } from "./panels/nodemap.js";
 import {
     refreshDataNode, refreshDatasetNode, collapseVtablesExcept,
-    batchesState, batEls, loadBatchesNode,
+    batchesState, batEls, loadBatchesNode, refreshAllBatchesNodes,
 } from "./panels/datanodes.js";
+import { armedButton } from "./armbtn.js";
 import { workers, unregisterWorker } from "./workers.js";
 import {
-    closeImage, openImage, openAtlasImage, refreshDetect, nodeIdOf,
-    closeItemImage, openItemImage,
+    openImage, openAtlasImage, refreshDetect, nodeIdOf,
+    openItemImage,
     scheduleWindowRead, flushWindowRead,
     refreshImageBoxes, selectRegionNode, refreshRuleTrace,
     RECT_TYPES, toggleRectEditor, openDetectColorPick,
@@ -993,6 +994,14 @@ function wireNode(div, n) {
             model.setDatasetSyncMode(n.ref, e.target.value);
             autosave(null);
         });
+        div.querySelector(".dskeep")?.addEventListener("change", (e) => {
+            // SAVE ONLY — never fold here. Typing "1" on the way to "10" would otherwise compact
+            // through the autosave debounce and destroy batches the user never meant to touch.
+            // Folding happens on the armed button below, a fired action, or the next run's batch.
+            model.setDatasetKeepBatches(n.ref, e.target.value);
+            autosave(null);
+            syncCompactBtn(n.ref);   // the limit moved -> the button may now apply, or stop applying
+        });
         const clearBtn = div.querySelector(".dsclear");
         clearBtn?.addEventListener("click", async () => {
             if (clearBtn.dataset.armed !== "1") {   // inline confirm (no blocking dialogs)
@@ -1317,6 +1326,42 @@ function scheduleRefreshLive() {
     _liveDebounce = setTimeout(refreshLive, 200);
 }
 
+// The compact button exists ONLY while folding would actually destroy something. Under the limit
+// (or with no limit) the row is just the number input — no disabled button, no "nothing to fold"
+// note: a limit above the current batch count is a harmless setting and must read as one.
+//
+// Called from the live poll, so it MUST be a no-op in steady state (rule 1): the desired label is
+// compared against what's already rendered and the DOM is touched only on a real change. The
+// rendered label is stamped on the HOST (not held in a side Map, which a node rebuild would leave
+// stale, and not read back off the button, whose text changes while armed).
+function syncCompactBtn(ds) {
+    const host = document.getElementById(`node-ds:${ds}`)?.querySelector(".ds-keep-act");
+    if (!host) return;
+    const keep = model.datasetKeepBatches(ds);
+    const have = live[ds]?.batches;   // only served for a dataset that HAS a limit (summary())
+    // over the limit == there is at least one batch beyond the newest `keep`. Unknown count (no
+    // limit set, or the poll hasn't answered yet) means we can't claim damage -> stay silent.
+    const over = keep > 0 && model.datasetCanCompact(ds) && typeof have === "number" && have > keep;
+    const want = over ? `fold ${have} → ${keep}` : "";
+    if ((host.dataset.lbl || "") === want) return;      // steady state: zero DOM mutations
+    host.dataset.lbl = want;
+    if (!want) { host.replaceChildren(); return; }
+    host.replaceChildren(armedButton({
+        label: want, arm: `destroy ${have - keep} batches?`, cls: "ds-compact db-danger", busy: "…",
+        title: "fold every batch past the limit into one base value per row. The rows and their sums/means survive; the per-read detail of those batches does not, and any revert inside them becomes permanent.",
+        onFire: async () => {
+            try {
+                const r = await withBusy([`ds:${ds}`], () => api.compactDataset(model.profile.name, ds));
+                const subs = (model.profile.subsets || []).filter((s) => model.subsetReaches(s.id, ds)).map((s) => s.id);
+                queueNodeRefresh({ datasets: [ds], subsets: subs });
+                refreshAllBatchesNodes();
+                scheduleRefreshLive();
+                setStatus(r.folded ? `compacted ${ds} — ${r.folded} batches folded` : `${ds} already within its limit`);
+            } catch (e) { setStatus(String(e.message || e)); }
+        },
+    }));
+}
+
 function updateDatasetNodes() {
     for (const ds of model.datasets()) {
         const el = document.getElementById(`node-ds:${ds}`);
@@ -1326,6 +1371,7 @@ function updateDatasetNodes() {
         if (header && prevPresent[ds] !== undefined && prevPresent[ds] !== d.present) {
             header.classList.remove("pulse"); void header.offsetWidth; header.classList.add("pulse");
         }
+        syncCompactBtn(ds);   // reconciles in place; no-op unless the over-limit state changed
     }
 }
 

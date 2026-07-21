@@ -75,6 +75,14 @@ function setTabCount(ds, sel, n) {
     if (el) el.textContent = n != null ? `${n}` : "";
 }
 
+// How many batches the ledger actually holds. The server ships `batch_total` (a real
+// COUNT(DISTINCT batch)) alongside a list capped at the newest BATCH_PREVIEW, so the list length
+// is NOT the count — it saturates at the cap. Falls back to the list only for a payload that
+// predates the field. Counts every batch, reverted included, so this agrees with the db panel,
+// the compact button, and the retention window's own cutoff.
+const batchTotal = (payload, batches) =>
+    (typeof payload?.batch_total === "number" ? payload.batch_total : batches.length);
+
 // Single-flight key shared by refreshDataNode + refreshDatasetNode: they hit the same endpoint
 // and write the same node host, so they must not race; a call arriving mid-fetch re-runs once
 // after (the LATEST request wins) — never dropped, so the final write of a live sweep lands.
@@ -123,7 +131,7 @@ async function _refreshDataNode(ds, pre, { superseded } = {}) {
         const vt = await _paintDataTable(ds, host, pre, superseded);
         // the boot window carries the ledger; use it for the search-bar batch tally (live refreshes
         // update it through loadBatchesNode instead — the records path no longer ships batches).
-        if (pre && pre.batches) vt.setBatchCount(pre.batches.filter((b) => !b.reverted).length);
+        if (pre && pre.batches) vt.setBatchCount(batchTotal(pre, pre.batches));
     } catch (e) {
         if (superseded?.()) return;
         vtables.delete(`ds:${ds}`); host.replaceChildren(mutedP(String(e), true));
@@ -234,9 +242,13 @@ async function loadBatchesNode(ds, pre = null) {
     try {
         // pre (boot window) carries the ledger; live loads hit the lightweight batches endpoint
         // (no record dump — records now stream through /page).
-        const batches = (pre ? pre.batches : (await api.datasetBatches(model.profile.name, ds)).batches) || [];
+        const src = pre || await api.datasetBatches(model.profile.name, ds);
+        const batches = src.batches || [];
         renderBatchesList(ds, batches);
-        setTabCount(ds, ".bat-n", batches.filter((b) => !b.reverted).length);   // applied batch count (reverted/unapplied excluded)
+        // Count from batch_total (a real COUNT(DISTINCT batch)), NOT from this list — the list is
+        // capped at the newest BATCH_PREVIEW, so its length silently saturates (a 198-batch dataset
+        // read 80 here while the db panel read 198).
+        setTabCount(ds, ".bat-n", batchTotal(src, batches));
     } catch (e) { els.list.replaceChildren(h("li", { class: "muted" }, String(e))); }
     finally { setNodeBusy(`vt:ds:${ds}`, false); }
 }
@@ -412,9 +424,10 @@ async function _refreshDatasetNode(ds, { superseded } = {}) {
         if (superseded?.()) return;
         if (host) await _paintDataTable(ds, host, null, superseded);   // records via /page (live -> refetch window)
         if (els || host) {
-            const batches = (await api.datasetBatches(model.profile.name, ds)).batches || [];
+            const src = await api.datasetBatches(model.profile.name, ds);
+            const batches = src.batches || [];
             if (superseded?.()) return;
-            const batchN = batches.filter((b) => !b.reverted).length;   // applied batches
+            const batchN = batchTotal(src, batches);   // true ledger count, not the capped list length
             if (els) { renderBatchesList(ds, batches); setTabCount(ds, ".bat-n", batchN); }
             if (host) vtableFor(`ds:${ds}`, host).setBatchCount(batchN);   // keep the records table's tally live too
         }

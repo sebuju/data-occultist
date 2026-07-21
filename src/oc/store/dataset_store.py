@@ -71,6 +71,15 @@ CREATE TABLE IF NOT EXISTS events (
   values_json  TEXT NOT NULL,
   changed_json TEXT,
   reverted     INTEGER NOT NULL DEFAULT 0,
+  -- How many raw observations this event stands for. 1 for every ordinary event; a BASE event
+  -- minted by compaction (see _fold_batches) carries the count it folded, so counts and means
+  -- weight by it instead of counting rows. A real column, not a JSON field, so `SUM(weight)`
+  -- aggregates in plain SQL with no JSON1 dependency.
+  weight       INTEGER NOT NULL DEFAULT 1,
+  -- NULL on an ordinary event. On a base event: {"first_ts":…, "last_ts":…} — the span the fold
+  -- covered, which the single `ts` column can't carry (a fold would otherwise shrink a key's
+  -- visible lifetime to a point).
+  fold_json    TEXT,
   PRIMARY KEY (dataset, id)
 );
 CREATE INDEX IF NOT EXISTS ix_events_ds_key   ON events(dataset, key, id);
@@ -119,6 +128,26 @@ def _fmt_pos(slot: tuple[float | None, float] | None) -> str | None:
     return f"({int(round(v))}, {int(round(x))})" if x is not None else f"({int(round(v))},)"
 
 
+def _fold_of(row) -> dict | None:
+    """The compaction view of one ``events`` row — ``{"n", "first_ts", "last_ts"}`` — assembled
+    from its ``weight`` column and ``fold_json`` span, or ``None`` for an ordinary event. Keeps
+    the split storage (a real ``weight`` column so SQL can ``SUM`` it, JSON for the span) behind
+    one shape, so :func:`replay` and callers never handle the two halves separately."""
+    weight = row["weight"] if "weight" in row.keys() else 1
+    span = row["fold_json"] if "fold_json" in row.keys() else None
+    if (weight or 1) <= 1 and not span:
+        return None
+    return {"n": weight or 1, **(json.loads(span) if span else {})}
+
+
+def obs_weight(record: dict) -> int:
+    """How many raw observations one record stands for. 1 for an ordinary observation; a
+    compaction BASE record carries ``n`` (see ``events.fold_json``) because it replaced that
+    many. Every count/mean must go through this rather than counting records, else a folded
+    dataset under-reports ``_count`` and skews ``mean`` toward its most recent batches."""
+    return max(1, int(record.get("n") or 1))
+
+
 def aggregate_records(records: list[dict], policy: str = "latest") -> dict:
     """Collapse a key's observation list (each ``{"values":{...}, "ts":...}``, oldest→
     newest) to one row of values per the dataset's ``policy``.
@@ -126,6 +155,14 @@ def aggregate_records(records: list[dict], policy: str = "latest") -> dict:
     ``latest``/``first`` take that observation's values wholesale. ``sum``/``mean``/
     ``max``/``min`` apply per field over the NUMERIC observations; a field with no numeric
     values (e.g. ``name``) falls back to its latest value, so key fields are preserved.
+
+    A record may carry ``n`` — a compaction base standing for ``n`` folded observations (see
+    :func:`obs_weight`). A base's stored value is ALREADY this same fold applied to those
+    observations, so for the associative policies (``sum``/``max``/``min``) it composes directly
+    and the weight must NOT be applied again — multiplying a folded subtotal by ``n`` would
+    double-count it. Only ``mean`` is non-associative: it weights each value by ``n`` and divides
+    by the total weight, which keeps ``mean`` over a compacted ledger identical to ``mean`` over
+    the raw one.
     """
     if not records:
         return {}
@@ -139,15 +176,25 @@ def aggregate_records(records: list[dict], policy: str = "latest") -> dict:
         for k in r.get("values", {}):
             if k not in fields:
                 fields.append(k)
-    fns = {"sum": sum, "mean": lambda ns: sum(ns) / len(ns), "max": max, "min": min}
     out: dict = {}
     for k in fields:
-        nums = [n for n in (_num(r.get("values", {}).get(k)) for r in records) if n is not None]
-        if nums:
-            v = fns[policy](nums)
-            out[k] = int(v) if float(v).is_integer() else round(v, 2)
-        else:
+        # (value, weight) per observation that HAS a numeric value for this field. The weight
+        # only matters to `mean`; a base's value is already a fold under this same policy, so
+        # sum/max/min compose it as-is (see the docstring).
+        pairs = [(n, obs_weight(r)) for r, n in
+                 ((r, _num(r.get("values", {}).get(k))) for r in records) if n is not None]
+        if not pairs:
             out[k] = latest.get(k)
+            continue
+        if policy == "max":
+            v = max(n for n, _ in pairs)
+        elif policy == "min":
+            v = min(n for n, _ in pairs)
+        elif policy == "sum":
+            v = sum(n for n, _ in pairs)     # a folded base already holds its subtotal
+        else:   # mean — weighted, so a folded base counts for the n observations it replaced
+            v = sum(n * w for n, w in pairs) / sum(w for _, w in pairs)
+        out[k] = int(v) if float(v).is_integer() else round(v, 2)
     return out
 
 
@@ -177,6 +224,11 @@ def replay(events: list[ChangeEvent], reverted: set[int],
     key is recomputed from each event's raw ``values`` with the CURRENT key spec, so a key
     change re-keys the dataset on the next replay; a remove flips ``present`` off. Events
     unkeyable under the current spec (a key part missing/empty) are skipped.
+
+    A compaction base event (``ev.fold``) replays as ONE observation carrying the weight ``n``
+    of the observations it replaced, and widens ``first_seen``/``last_seen`` to the span it
+    folded — a base has a single ``ts``, so without this a fold would visibly shrink a key's
+    lifetime to a point.
     """
     no_dedup = getattr(key, "dedup", True) is False
     state: dict[str, dict] = {}
@@ -200,13 +252,19 @@ def replay(events: list[ChangeEvent], reverted: set[int],
                 entry["removed_at"] = ev.ts
             continue
         obs = {"values": dict(ev.values), "ts": ev.ts, "batch": ev.batch}
+        first_ts, last_ts = ev.ts, ev.ts
+        if ev.fold:
+            obs["n"] = obs_weight(ev.fold)
+            first_ts = ev.fold.get("first_ts") or ev.ts
+            last_ts = ev.fold.get("last_ts") or ev.ts
         if entry is None:
             # _seq = the add event's id: a monotonic rolling id capturing arrival order,
             # stable across replays (same ledger -> same ids). Sort by it for "order they came".
-            state[k] = {"records": [obs], "first_seen": ev.ts, "last_seen": ev.ts, "present": True, "_seq": ev.id}
+            state[k] = {"records": [obs], "first_seen": first_ts, "last_seen": last_ts,
+                        "present": True, "_seq": ev.id}
         else:
             entry["records"].append(obs)
-            entry["last_seen"] = ev.ts
+            entry["last_seen"] = last_ts
             entry["present"] = True
             entry.pop("removed_at", None)
     for entry in state.values():
@@ -232,6 +290,21 @@ def _migrate_ds_key_index(conn: sqlite3.Connection) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS ix_events_ds_key ON events(dataset, key, id)")
 
 
+def _migrate_events_fold_cols(conn: sqlite3.Connection) -> None:
+    """Add the ``events.weight`` / ``events.fold_json`` columns to a DB created before compaction
+    existed. ``CREATE TABLE IF NOT EXISTS`` never adds a column to an existing table, so an older
+    store keeps the 9-column shape and every read of these raises. A fresh or already-migrated DB
+    sees them and this is one cheap ``PRAGMA``. The defaults are exactly right for pre-existing
+    rows: they are ordinary, unfolded events of weight 1 with no folded span."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(events)")}
+    if not cols:
+        return
+    if "weight" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN weight INTEGER NOT NULL DEFAULT 1")
+    if "fold_json" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN fold_json TEXT")
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Open (creating) the per-game DB in WAL mode. ``isolation_level=None`` = autocommit;
     multi-statement writes wrap themselves in explicit ``BEGIN IMMEDIATE``/``COMMIT``."""
@@ -250,6 +323,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.executescript(_SCHEMA)
             _migrate_ds_key_index(conn)
+            _migrate_events_fold_cols(conn)
             return conn
         except sqlite3.OperationalError as e:
             if not delay or "locked" not in str(e).lower():
@@ -332,6 +406,48 @@ def clear_table(data_dir: Path | str, game: str, table: str) -> int:
         conn.close()
 
 
+def _vacuum(conn: sqlite3.Connection) -> bool:
+    """Rewrite the DB file, handing freed pages back to the OS. True when it ran.
+
+    SQLite never shrinks a file on its own: deleted pages go on a freelist and are reused by
+    later writes, so a store that has been cleared/re-collected/compacted keeps its high-water
+    size forever (measured here: 84% of a 194 MB file was freelist). VACUUM is the only way back.
+
+    Non-destructive — it rebuilds the same content — but it needs an exclusive lock and cannot run
+    inside a transaction, so it returns False rather than raising when another connection is
+    mid-write. The caller retries later; nothing is lost either way.
+
+    The checkpoint is NOT optional. Under WAL — which this store always runs in — ``VACUUM`` writes
+    the rebuilt database into the ``-wal`` file and leaves the main file at its old size, so vacuum
+    alone reclaims exactly nothing on disk (measured: 460 kB before and after; only the checkpoint
+    took it to 48 kB). ``TRUNCATE`` folds the WAL back and shrinks the file, and it works even with
+    other connections open, which is the normal state of a running server."""
+    try:
+        conn.execute("VACUUM")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+def vacuum_database(data_dir: Path | str, game: str) -> dict:
+    """Compact the game store, returning ``{ok, before, after, freed}`` in bytes.
+
+    ``ok`` False means the file was busy (a collection sweep mid-write) — the store is untouched
+    and a retry is safe."""
+    db = _db_path(data_dir, game)
+    if not db.exists():
+        return {"ok": False, "before": 0, "after": 0, "freed": 0}
+    before = db.stat().st_size
+    conn = _connect(db)
+    try:
+        ok = _vacuum(conn)
+    finally:
+        conn.close()
+    after = db.stat().st_size
+    return {"ok": ok, "before": before, "after": after, "freed": max(0, before - after)}
+
+
 def drop_database(data_dir: Path | str, game: str) -> list[str]:
     """Drop the whole game store and leave a fresh, empty one in its place — every dataset
     gone, but the (re-created) schema present so the store is fresh, not absent. Returns the
@@ -355,10 +471,7 @@ def drop_database(data_dir: Path | str, game: str) -> list[str]:
         except Exception:
             conn.execute("ROLLBACK")
             raise
-        try:
-            conn.execute("VACUUM")   # reclaim the file size so "fresh" shows as a small DB
-        except sqlite3.OperationalError:
-            pass
+        _vacuum(conn)   # reclaim the file size so "fresh" shows as a small DB
         return names
     finally:
         conn.close()
@@ -373,12 +486,14 @@ class DatasetStore:
         key: KeyMap | KeySpec = KeySpec(),
         clock: Callable[[], str] = _utcnow_iso,
         aggregate: str = "latest",
+        keep_batches: int = 0,
     ) -> None:
         base = Path(data_dir) / game
         self._game = game
         self._dataset = dataset
         self._key = key
         self._agg = aggregate or "latest"
+        self._keep = max(0, int(keep_batches or 0))   # 0 = unlimited; see _fold_batches
         self._clock = clock
         self._no_dedup = getattr(key, "dedup", True) is False
         self._base = base
@@ -497,10 +612,193 @@ class DatasetStore:
 
     def begin_batch(self) -> int:
         """Start a new batch; subsequent ``record_seen``/``reconcile`` events belong to it.
-        One run (a precapture save, a collection pass) = one revertable batch."""
+        One run (a precapture save, a collection pass) = one revertable batch.
+
+        Also the enforcement point for ``keep_batches``: without folding here the retention
+        window would hold only until the next collection pass refilled the dataset. Cheap when
+        under the cap (one indexed ``LIMIT 1`` probe) and a no-op when no limit is set.
+
+        Folds to ``keep - 1``, not ``keep``: this runs BEFORE the batch it is starting has written
+        any events, so that batch is invisible to the fold's own ``COUNT(DISTINCT batch)``. Budget
+        the full ``keep`` here and the imminent write pushes the ledger to ``keep + 1`` — the live
+        path would settle one over the limit the user set, even though the on-demand fold lands
+        exactly on it. Reserving the slot keeps both paths agreeing on ``keep``."""
         self._batch += 1
         self._conn.execute("UPDATE datasets SET batch=? WHERE dataset=?", (self._batch, self._dataset))
+        if self._keep > 0:
+            # floor of 1: keep=1 has no room to reserve, so it settles at the base + this batch.
+            self.fold_batches(max(1, self._keep - 1))
         return self._batch
+
+    # ---- compaction --------------------------------------------------------
+
+    def _can_fold(self) -> bool:
+        """Whether compaction is meaningful for this dataset. With the 1->many collapse off
+        (``dedup: false``) or under ``aggregate: "all"``, EVERY observation is its own row —
+        there is no per-key 'many' side to collapse, so folding would delete rows outright
+        instead of compacting them. Refuse rather than destroy: the UI hides the knob for these
+        modes, and this makes the server agree even if something calls in anyway."""
+        return not self._no_dedup and self._agg != "all"
+
+    def _fold_cutoff(self, keep: int) -> int | None:
+        """The oldest batch to KEEP IN FULL DETAIL, or ``None`` when a fold would achieve nothing.
+
+        ``keep`` is the ledger's TOTAL batch budget, and the base counts against it: the newest
+        ``keep - 1`` batches stay in full detail and everything older collapses into the one base
+        batch below them, so the ledger settles at exactly ``keep``. (Budgeting only the detailed
+        batches would settle at ``keep + 1`` — "keep 30" leaving 31 — because the base is an extra
+        batch of its own.)
+
+        Returns ``None`` when the single batch below the cutoff is ALREADY that base: re-folding
+        it just rewrites it to itself, so the count can't drop and there is nothing to discard.
+        Without that check the base — always the oldest batch, hence always below the cutoff —
+        makes the dataset look permanently foldable, so the UI nags forever and every
+        ``begin_batch`` burns a pointless transaction and change-bus announce.
+
+        Derived from the batches actually present rather than ``self._batch - keep``, so gaps left
+        by ``remove_batch``, a ``batch_mode`` change, or an earlier fold can't shift the window.
+        Index-only against ``ix_events_ds_batch`` and bounded by ``keep`` rows, so this doubles as
+        the cheap "is this dataset over its limit" probe behind :meth:`would_fold`."""
+        if keep <= 0:
+            return None
+        detail = keep - 1                    # full-detail slots; the base takes the last one
+        if detail > 0:
+            row = self._conn.execute(
+                "SELECT DISTINCT batch FROM events WHERE dataset=? ORDER BY batch DESC LIMIT 1 OFFSET ?",
+                (self._dataset, detail - 1)).fetchone()
+            if row is None:
+                return None                  # fewer than `detail` batches — nothing old enough
+            cutoff = row["batch"]
+        else:
+            # keep=1: no detailed slot at all, everything collapses into a single base.
+            top = self._conn.execute(
+                "SELECT MAX(batch) m FROM events WHERE dataset=?", (self._dataset,)).fetchone()["m"]
+            if top is None:
+                return None
+            cutoff = top + 1
+        below = [r["batch"] for r in self._conn.execute(
+            "SELECT DISTINCT batch FROM events WHERE dataset=? AND batch<? ORDER BY batch DESC LIMIT 2",
+            (self._dataset, cutoff))]
+        if not below:
+            return None                      # already inside the window
+        if len(below) == 1 and self._is_base_batch(below[0]):
+            return None                      # converged: the only thing below is the base itself
+        return cutoff
+
+    def _is_base_batch(self, batch: int) -> bool:
+        """Whether ``batch`` is already a compaction base (holds at least one folded event)."""
+        return self._conn.execute(
+            "SELECT 1 FROM events WHERE dataset=? AND batch=? AND fold_json IS NOT NULL LIMIT 1",
+            (self._dataset, batch)).fetchone() is not None
+
+    def batch_count(self) -> int:
+        """How many distinct batches the ledger holds (folded base events included)."""
+        return self._conn.execute(
+            "SELECT COUNT(DISTINCT batch) n FROM events WHERE dataset=?", (self._dataset,)).fetchone()["n"]
+
+    def would_fold(self) -> bool:
+        """Whether a fold right now would actually destroy something — the ONE predicate behind
+        both the on-demand action and the UI's warning. Everything hangs off this being exact:
+        the button must appear only when folding really would discard detail, so a limit set
+        above the current batch count stays a silent, harmless setting."""
+        return self._can_fold() and self._fold_cutoff(self._keep) is not None
+
+    def fold_batches(self, keep: int | None = None) -> int:
+        """Collapse every batch older than the newest ``keep`` into a per-key BASE event, and
+        return how many batches were folded away (0 = nothing to do).
+
+        This is a rolling window that RETAINS rather than deletes: each key's old observations
+        are folded — under the dataset's own ``aggregate`` — into one event carrying the count
+        it replaced (``weight``) and the span it covered (``fold_json``), and the surviving
+        recent batches replay on top of that backbone exactly as before. So a key seen only long
+        ago still exists, and ``sum``/``mean``/``_count`` still answer over its whole history;
+        only the per-observation detail of the folded batches is gone.
+
+        The base reuses the key's OLDEST event id, so ``_seq`` (arrival order) stays stable and
+        ``next_id`` never moves. Reverted old events are dropped by the fold, which makes those
+        reverts permanent — the one genuinely lossy part beyond the per-observation detail.
+        """
+        keep = self._keep if keep is None else max(0, int(keep or 0))
+        if keep <= 0 or not self._can_fold():
+            return 0
+        cutoff = self._fold_cutoff(keep)
+        if cutoff is None:
+            return 0
+        c = self._conn
+        rows = c.execute(
+            "SELECT id, ts, batch, op, key, values_json, weight, fold_json FROM events "
+            "WHERE dataset=? AND batch<? AND reverted=0 AND key IS NOT NULL ORDER BY id",
+            (self._dataset, cutoff)).fetchall()
+        folded_batches = {r["batch"] for r in c.execute(
+            "SELECT DISTINCT batch FROM events WHERE dataset=? AND batch<?", (self._dataset, cutoff))}
+        per_key: dict[str, list] = {}
+        for r in rows:
+            per_key.setdefault(r["key"], []).append(r)
+
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            for key, evs in per_key.items():
+                keep_id = evs[0]["id"]                    # oldest -> preserves _seq
+                obs = [r for r in evs if r["op"] != ChangeOp.remove.value]
+                if not obs:
+                    # the key only ever got removes down here; collapse them to one remove base
+                    # so it stays removed without carrying every removal event forward.
+                    c.execute("DELETE FROM events WHERE dataset=? AND batch<? AND key=? AND id!=?",
+                              (self._dataset, cutoff, key, keep_id))
+                    continue
+                recs, weight = [], 0
+                for r in obs:
+                    fold = _fold_of(r)
+                    rec = {"values": json.loads(r["values_json"]), "ts": r["ts"], "batch": r["batch"]}
+                    if fold:
+                        rec["n"] = obs_weight(fold)
+                    recs.append(rec)
+                    weight += obs_weight(rec)
+                # re-fold INCLUDING any existing base, so compacting again is idempotent
+                values = aggregate_records(recs, self._agg)
+                first_span, last_span = _fold_of(obs[0]) or {}, _fold_of(obs[-1]) or {}
+                span = {"first_ts": first_span.get("first_ts") or obs[0]["ts"],
+                        "last_ts": last_span.get("last_ts") or obs[-1]["ts"]}
+                # The base DISPLAYS the aggregate, but dedup must still compare an incoming read
+                # against the last RAW observation. Under sum/mean/max/min the aggregate is a
+                # synthetic value that was never observed, so comparing against it silently ate a
+                # genuine later read that happened to equal it (mean(9,7)=8 swallowing a real 8).
+                # Carried only when it actually differs — under latest/first they're the same value.
+                raw_last = last_span.get("last") or recs[-1]["values"]
+                if raw_last != values:
+                    span["last"] = raw_last
+                c.execute(
+                    "UPDATE events SET ts=?, op=?, values_json=?, changed_json=NULL, batch=?, "
+                    "weight=?, fold_json=? WHERE dataset=? AND id=?",
+                    (span["last_ts"], ChangeOp.add.value, json.dumps(values, default=str), cutoff - 1,
+                     weight, json.dumps(span), self._dataset, keep_id))
+                # A key soft-removed down here must STAY removed — but the base itself can't be
+                # the remove: replay only flips `present` off on an EXISTING entry, so a lone
+                # remove base would make the row vanish instead of showing present=0. Keep the
+                # trailing remove as its own event after the value base.
+                spare = evs[-1]["id"] if evs[-1]["op"] == ChangeOp.remove.value else None
+                if spare is not None and spare != keep_id:
+                    c.execute("UPDATE events SET batch=? WHERE dataset=? AND id=?",
+                              (cutoff - 1, self._dataset, spare))
+                c.execute("DELETE FROM events WHERE dataset=? AND batch<? AND key=? AND id NOT IN (?,?)",
+                          (self._dataset, cutoff, key, keep_id, spare if spare is not None else keep_id))
+            # unkeyable / reverted leftovers below the cutoff have no base to fold into
+            c.execute("DELETE FROM events WHERE dataset=? AND batch<? AND (reverted!=0 OR key IS NULL)",
+                      (self._dataset, cutoff))
+            # keys that no longer exist anywhere in the ledger must not keep a learned slot,
+            # else `positions` grows without bound under a forever-folded dataset.
+            c.execute("DELETE FROM positions WHERE dataset=? AND key NOT IN "
+                      "(SELECT DISTINCT key FROM events WHERE dataset=? AND key IS NOT NULL)",
+                      (self._dataset, self._dataset))
+            c.execute("UPDATE datasets SET rev=rev+1, cur_rev=-1 WHERE dataset=?", (self._dataset,))
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+        # the base batch (cutoff-1) replaces every batch below the cutoff
+        dropped = max(0, len(folded_batches) - 1)
+        self._announce([])   # rows may have merged/vanished -> refresh readers; [] fires no on_change
+        return dropped
 
     def _announce(self, records: list, *, data_changed: bool = True) -> None:
         """Tell the change bus this dataset's data changed (UI push + on_change triggers).
@@ -556,12 +854,16 @@ class DatasetStore:
             (self._dataset, key)).fetchone()
         present = bool(last) and last["op"] != ChangeOp.remove.value
         obs = c.execute(
-            "SELECT values_json FROM events WHERE dataset=? AND key=? AND reverted=0 AND op!='remove' "
-            "ORDER BY id DESC LIMIT 1", (self._dataset, key)).fetchone()
+            "SELECT values_json, fold_json FROM events WHERE dataset=? AND key=? AND reverted=0 "
+            "AND op!='remove' ORDER BY id DESC LIMIT 1", (self._dataset, key)).fetchone()
         if obs is None:
             v = dict(values)
             return (ChangeOp.add, key, v, None, False, v)
-        latest = json.loads(obs["values_json"])
+        # A compaction base stores the AGGREGATE in values_json; `fold.last` carries the last raw
+        # observation it folded. Dedup/merge must use the raw one — under sum/mean the aggregate
+        # is a value that was never actually read, so comparing against it drops real observations.
+        fold = json.loads(obs["fold_json"]) if obs["fold_json"] else None
+        latest = (fold or {}).get("last") or json.loads(obs["values_json"])
         merged = {**latest, **values}
         changed = {f: [latest.get(f), merged.get(f)] for f in merged if latest.get(f) != merged.get(f)}
         was_absent = not present
@@ -798,7 +1100,7 @@ class DatasetStore:
 
     def _load_all_events(self) -> tuple[list[ChangeEvent], set[int]]:
         rows = self._conn.execute(
-            "SELECT id,batch,ts,op,key,values_json,changed_json,reverted "
+            "SELECT id,batch,ts,op,key,values_json,changed_json,reverted,weight,fold_json "
             "FROM events WHERE dataset=? ORDER BY id", (self._dataset,)).fetchall()
         events: list[ChangeEvent] = []
         reverted: set[int] = set()
@@ -807,7 +1109,7 @@ class DatasetStore:
                 r["ts"], ChangeOp(r["op"]), r["key"] or "",
                 json.loads(r["values_json"]),
                 json.loads(r["changed_json"]) if r["changed_json"] else {},
-                id=r["id"], batch=r["batch"]))
+                id=r["id"], batch=r["batch"], fold=_fold_of(r)))
             if r["reverted"]:
                 reverted.add(r["id"])
         return events, reverted
@@ -841,29 +1143,40 @@ class DatasetStore:
             return self._compute_boundary(self._agg)
         out = []
         for k, e in self._state().items():
+            recs = e.get("records", [])
             out.append({"key": k, "present": e.get("present", True),
                         "first_seen": e.get("first_seen"), "last_seen": e.get("last_seen"),
-                        "cnt": len(e.get("records", [])), "seq": e.get("_seq"),
-                        "maxbatch": max((o.get("batch", 0) for o in e.get("records", [])), default=0),
+                        # summed WEIGHTS, not len(): a folded base is one record standing for many
+                        "cnt": sum(obs_weight(o) for o in recs), "seq": e.get("_seq"),
+                        "maxbatch": max((o.get("batch", 0) for o in recs), default=0),
                         "values": e.get("values", {})})
         return out
 
     def _compute_boundary(self, agg: str) -> list[dict]:
         ds = self._dataset
         c = self._conn
+        # SUM(weight), not COUNT(*): a compaction base is one row standing for the observations
+        # it folded, so counting rows would under-report `_count` on a compacted dataset.
         stats = {r["key"]: r for r in c.execute(
-            "SELECT key, COUNT(*) cnt, MIN(id) seq, MAX(batch) maxbatch "
+            "SELECT key, SUM(weight) cnt, MIN(id) seq, MAX(batch) maxbatch "
             "FROM events WHERE dataset=? AND reverted=0 AND op!='remove' AND key IS NOT NULL "
             "GROUP BY key", (ds,)).fetchall()}
         if not stats:
             return []
 
         def boundary(which: str) -> dict:
-            q = (f"SELECT e.key key, e.values_json vj, e.ts ts FROM events e "
+            q = (f"SELECT e.key key, e.values_json vj, e.ts ts, e.fold_json fj FROM events e "
                  f"JOIN (SELECT key, {which}(id) m FROM events "
                  f"      WHERE dataset=? AND reverted=0 AND op!='remove' AND key IS NOT NULL GROUP BY key) g "
                  f"ON e.key=g.key AND e.id=g.m WHERE e.dataset=?")
-            return {r["key"]: (r["vj"], r["ts"]) for r in c.execute(q, (ds, ds)).fetchall()}
+            # a base event's own ts is a point; its fold span carries the real first/last it
+            # replaced, so the boundary timestamps survive compaction.
+            out = {}
+            for r in c.execute(q, (ds, ds)).fetchall():
+                span = json.loads(r["fj"]) if r["fj"] else {}
+                ts = span.get("first_ts" if which == "MIN" else "last_ts") or r["ts"]
+                out[r["key"]] = (r["vj"], ts)
+            return out
 
         firstb = boundary("MIN")
         lastb = boundary("MAX")
@@ -950,20 +1263,31 @@ class DatasetStore:
         c = self._conn
         ds = self._dataset
         rows = c.execute(
-            "SELECT id, ts, batch, values_json, op FROM events "
+            "SELECT id, ts, batch, values_json, op, weight, fold_json FROM events "
             "WHERE dataset=? AND key=? AND reverted=0 ORDER BY id", (ds, key)).fetchall()
         obs = [r for r in rows if r["op"] != ChangeOp.remove.value]
         if not obs:
             c.execute("DELETE FROM current WHERE dataset=? AND key=?", (ds, key))
             return
-        recs = [{"values": json.loads(r["values_json"]), "ts": r["ts"], "batch": r["batch"]} for r in obs]
+        # carry each event's fold weight into the records so the aggregate (mean) and the count
+        # below both see the observations a compaction base stands for, not just the one row.
+        recs = []
+        for r in obs:
+            fold = _fold_of(r)
+            rec = {"values": json.loads(r["values_json"]), "ts": r["ts"], "batch": r["batch"]}
+            if fold:
+                rec["n"] = obs_weight(fold)
+            recs.append(rec)
         values = aggregate_records(recs, self._agg)
         present = rows[-1]["op"] != ChangeOp.remove.value
+        first_span, last_span = _fold_of(obs[0]) or {}, _fold_of(obs[-1]) or {}
         c.execute(
             "INSERT OR REPLACE INTO current(dataset,key,present,first_seen,last_seen,values_json,cnt,seq,maxbatch) "
             "VALUES(?,?,?,?,?,?,?,?,?)",
-            (ds, key, 1 if present else 0, obs[0]["ts"], obs[-1]["ts"], json.dumps(values, default=str),
-             len(obs), obs[0]["id"], max(o["batch"] for o in obs)))
+            (ds, key, 1 if present else 0,
+             first_span.get("first_ts") or obs[0]["ts"], last_span.get("last_ts") or obs[-1]["ts"],
+             json.dumps(values, default=str),
+             sum(obs_weight(r) for r in recs), obs[0]["id"], max(o["batch"] for o in obs)))
 
     def _current_records(self) -> list[dict]:
         self._ensure_current()
@@ -1055,8 +1379,15 @@ class DatasetStore:
                 if k not in _PLUMBING and k not in cols:
                     cols.append(k)
         last = self.last_change
+        # Batch count rides the flow poll ONLY for a dataset that has a retention limit — that's
+        # the one place the UI needs it (to decide whether folding would destroy anything). It
+        # costs an index scan, and this digest is deliberately cheap for the flow-list endpoint
+        # that summarises every dataset, so an unlimited dataset (the majority, and the huge
+        # ones) pays nothing and reports None.
         return {"dataset": self._dataset, "present": present, "total": total,
                 "removed": total - present, "columns": cols,
+                "batches": self.batch_count() if self._keep > 0 else None,
+                "keep_batches": self._keep,
                 "last_ts": last["ts"] if last else None,
                 "last_op": last["op"] if last else None}
 

@@ -2241,6 +2241,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: prices_live
   aggregate: latest
   key_field: ''
@@ -2249,6 +2250,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 30
 - id: relics_offered
   aggregate: latest
   key_field: ''
@@ -2257,6 +2259,7 @@ datasets:
   batch_mode: detection
   reopen_grace: 6
   sync_mode: accumulate
+  keep_batches: 0
 - id: mods
   aggregate: latest
   key_field: ''
@@ -2265,6 +2268,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: relics_select
   aggregate: latest
   key_field: ''
@@ -2273,6 +2277,7 @@ datasets:
   batch_mode: detection
   reopen_grace: 0
   sync_mode: mirror
+  keep_batches: 0
 - id: ee_log
   aggregate: latest
   key_field: ''
@@ -2281,6 +2286,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: mirror
+  keep_batches: 0
 - id: relic_contents
   aggregate: latest
   key_field: ''
@@ -2289,6 +2295,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: relics_refinement
   aggregate: latest
   key_field: ''
@@ -2297,6 +2304,7 @@ datasets:
   batch_mode: detection
   reopen_grace: 0
   sync_mode: mirror
+  keep_batches: 0
 - id: relic_prices
   aggregate: latest
   key_field: ''
@@ -2305,6 +2313,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: mission_rewards
   aggregate: latest
   key_field: ''
@@ -2313,6 +2322,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: dataset
   aggregate: latest
   key_field: ''
@@ -2321,6 +2331,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: mod_catalog
   aggregate: latest
   key_field: ''
@@ -2329,6 +2340,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: loadout
   aggregate: latest
   key_field: ''
@@ -2337,6 +2349,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: overframe_frames
   aggregate: latest
   key_field: ''
@@ -2345,6 +2358,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: overframe_builds
   aggregate: latest
   key_field: ''
@@ -2353,6 +2367,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: overframe_build_detail
   aggregate: latest
   key_field: ''
@@ -2361,6 +2376,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: overframe_mods
   aggregate: latest
   key_field: ''
@@ -2369,6 +2385,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: overframe_frame_index
   aggregate: latest
   key_field: ''
@@ -2377,6 +2394,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 - id: overframe_build_mods
   aggregate: latest
   key_field: ''
@@ -2385,6 +2403,7 @@ datasets:
   batch_mode: run
   reopen_grace: 0
   sync_mode: accumulate
+  keep_batches: 0
 subsets:
 - id: overframe_mods_joined
   sources:

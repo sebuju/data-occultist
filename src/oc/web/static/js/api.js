@@ -564,6 +564,14 @@ export async function clearDataset(game, dataset) {
     return r.json();
 }
 
+// Apply a dataset's keep_batches window now: batches past it fold into a per-key base event.
+// Rows and their aggregates survive; the old per-observation detail does not. -> {…, folded}.
+export async function compactDataset(game, dataset) {
+    const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/dataset/${encodeURIComponent(dataset)}/compact`, { method: "POST" });
+    if (!r.ok) throw new Error(`compact: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+
 // Permanently delete a dataset's stored files, so removing its node doesn't leave the
 // dataset re-spawning from disk on the next live refresh.
 export async function deleteDataset(game, dataset) {
@@ -581,6 +589,14 @@ export async function dropDatabase(game) {
 }
 
 // Empty ONE physical SQLite table (low-level). Returns refreshed dbschema.
+// Compact the store file (VACUUM) — hands SQLite's freed pages back to the OS. Not destructive;
+// rewrites the same content. -> {ok, before, after, freed, schema}. ok:false = store was busy.
+export async function vacuumDatabase(game) {
+    const r = await tfetch(`/api/dbschema/${encodeURIComponent(game)}/vacuum`, { method: "POST" }, 120_000);
+    if (!r.ok) throw new Error(`compact: ${r.status} ${await r.text()}`);
+    return r.json();
+}
+
 export async function clearDbTable(game, table) {
     const r = await tfetch(`/api/dbschema/${encodeURIComponent(game)}/table/${encodeURIComponent(table)}/clear`, { method: "POST" });
     if (!r.ok) throw new Error(`clear table: ${r.status} ${await r.text()}`);

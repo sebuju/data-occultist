@@ -1140,6 +1140,15 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .reg-agg-btn { width: 100%; justify-content: flex-start; text-align: left;
     font-size: inherit; line-height: inherit; min-height: 0; }   /* drop button base's 26px min-height + lh:1 so its row height matches sibling inputs */
 
+/* dataset "keep batches": the number input, plus a slot for the compact button that only fills
+   once the dataset is actually OVER its limit (see syncCompactBtn). The slot collapses to nothing
+   when empty — `gap` would otherwise leave a visible indent next to a harmless setting. */
+.ds-keep-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ds-keep-wrap .dskeep { flex: 1 1 auto; min-width: 0; }
+.ds-keep-act:empty { display: none; }
+.ds-keep-act .ds-compact { flex: none; padding: 0 6px; font-size: var(--fs-xs); line-height: 1.5;
+    min-height: 0; white-space: nowrap; }
+
 /* register "memory bank": a fluid grid of square value-slots (one per held key). Column count
    follows the node width via auto-fill + a rem floor — no fixed px, so it reflows as the node is
    resized (narrow = 2 across, wide = 4-5). Confidence rides --cc (tile tint + a bottom bar whose

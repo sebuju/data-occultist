@@ -27,7 +27,8 @@ from .dataset_store import _PLUMBING
 from .db_backup import snapshot_db
 from .flow_events import publish_flow
 
-_ACTIONS = frozenset({"clear", "clone_batches", "clone_resolved", "move_batches", "move_resolved"})
+_ACTIONS = frozenset({"clear", "compact", "clone_batches", "clone_resolved",
+                      "move_batches", "move_resolved"})
 
 # min seconds between dataset-op snapshots per game, so a fast interval trigger can't snapshot the
 # whole store on every fire (the consistent copy is synchronous — see snapshot_db).
@@ -92,6 +93,17 @@ def run_dataset_action(data_dir, game: str, profile, *, source: str, action: str
         _snapshot(data_dir, game, f"pre-clear:{source}")
         store_for(data_dir, game, source, profile=profile).clear_data()
         return {"action": action, "source": source, "dest": "", "rows": 0}
+
+    if action == "compact":
+        # Apply the dataset's own keep_batches window now (it otherwise only bites at the next
+        # begin_batch). Snapshot FIRST — folding discards the per-observation detail of the old
+        # batches and makes any revert down there permanent. `rows` = batches folded away; 0 means
+        # under the cap or no limit set, which is a no-op, not an action worth reporting.
+        store = store_for(data_dir, game, source, profile=profile)
+        if not store.would_fold():
+            return {}
+        _snapshot(data_dir, game, f"pre-compact:{source}")
+        return {"action": action, "source": source, "dest": "", "rows": store.fold_batches()}
 
     # clone_* / move_*
     if not dest or dest == source:

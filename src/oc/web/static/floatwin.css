@@ -297,6 +297,8 @@
 .db-events b  { color: var(--text); }
 .db-present b { color: var(--ok); }
 .db-batches b { color: var(--accent); }
+/* content size — muted, it's a measurement rather than a count you act on */
+.db-size b { color: var(--muted); }
 /* shared armed two-click button (armbtn.js) */
 .armbtn { flex: none; font-size: var(--fs-xs); padding: 1px 8px; border: 1px solid var(--line);
     border-radius: 5px; background: var(--bg); color: var(--muted); cursor: pointer; }

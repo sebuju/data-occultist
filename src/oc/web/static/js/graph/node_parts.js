@@ -1154,6 +1154,15 @@ export function nodeParts(n) {
                 value: model.datasetReopenGrace(ds),
                 title: "OCR read-opportunities the window may drop out for before a re-read starts a NEW batch. 0 = use the global confirm_frames. Widen it so a brief OCR dropout on a still-visible screen (an animation/glow) isn't misread as the screen closing and reopening." })) : null,
             kv("sync", h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
+            // Rolling batch window. Hidden where every read is already its own row (dedup off /
+            // aggregate "all") — there is no 'many' side to fold, so the option could only delete.
+            // The apply button is NOT here: it only appears once the dataset is actually over its
+            // limit (see updateDatasetNodes), so a harmless setting stays silent.
+            model.datasetCanCompact(ds) ? kv("keep batches", h("span", { class: "ds-keep-wrap" },
+                h("input", { class: "dskeep", type: "number", min: "0",
+                    value: model.datasetKeepBatches(ds),
+                    title: "keep only the newest N batches, 0 = keep everything. Older batches are COMPACTED, not deleted: each key's old reads fold into one base value under this dataset's many→one rule, so old rows and their sums/means survive — what's lost is the per-read detail of those batches, and any revert inside them becomes permanent." }),
+                h("span", { class: "ds-keep-act" }))) : null,
             concatEditor && gspan(concatEditor)),
         foot: h("button", { class: "dsclear danger" }, "clear data"),
         ports: frag(

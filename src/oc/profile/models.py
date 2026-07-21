@@ -782,6 +782,15 @@ class DatasetDef(BaseModel):
     #              (over confirm_frames clean frames) is removed (soft). A partial/occluded
     #              frame contributes no evidence, so it can never cause a false removal.
     sync_mode: str = "accumulate"
+    # Rolling batch-retention window: keep only the newest N batches, 0 (default) = unlimited.
+    # Over the limit, the older batches are COMPACTED, not deleted: each key's old observations
+    # fold into one base event under this dataset's own `aggregate`, and the surviving batches
+    # replay on top of it. A key seen only long ago still exists and sum/mean/count still answer
+    # over its whole history — only the per-observation detail of the folded batches is lost
+    # (along with any revert down there, which folding makes permanent). Ignored when every
+    # observation is already its own row (`dedup: false` / `aggregate: "all"`), where there is
+    # no per-key 'many' side to collapse and folding could only delete.
+    keep_batches: int = Field(default=0, ge=0)
     # Optional testing-inspector row template: {column: how to synthesise that cell}. Only the
     # columns the user configured appear; the rest fall back to the panel's defaults. None (not {})
     # by default so `exclude_none` keeps it out of a profile that was never test-fed.
@@ -1973,6 +1982,13 @@ class GameProfile(BaseModel):
         for a ``batch_mode: detection`` dataset (see :meth:`batch_per_detection`)."""
         d = self.dataset_def(dataset_id)
         return int(d.reopen_grace) if d and d.reopen_grace else 0
+
+    def keep_batches_for(self, dataset_id: str) -> int:
+        """Per-dataset rolling batch-retention window (``DatasetDef.keep_batches``), 0 = keep
+        everything. Batches past the window are compacted into a per-key base event rather than
+        deleted — see :meth:`DatasetStore.fold_batches`."""
+        d = self.dataset_def(dataset_id)
+        return int(d.keep_batches) if d and d.keep_batches else 0
 
     @staticmethod
     def _item_default_spec(it: ItemDef, w: WindowDef | None) -> KeySpec:

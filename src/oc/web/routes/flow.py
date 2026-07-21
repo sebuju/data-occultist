@@ -38,6 +38,12 @@ _DS_ROWS_LOCK = threading.Lock()
 # first windowed `/page` fetch. The node then streams further windows on scroll/search/sort.
 BOOT_WINDOW = 80
 
+# Batches shipped per payload. The batches tab is a PREVIEW of the newest runs, not the whole
+# ledger, so the list is capped — but the accompanying `batch_total` is the TRUE count. Deriving
+# a count from this capped list is what made a 198-batch dataset report 80 in the node badge
+# while the db panel (a real COUNT(DISTINCT batch)) reported 198.
+BATCH_PREVIEW = 80
+
 
 def _dataset_rows(game: str, dataset: str) -> tuple[list, list]:
     """A dataset's full records (present + removed, the same set ``_detail`` shows so the client's
@@ -91,7 +97,7 @@ def flow(game: str):
     # must never surface as a ghost "empty dataset" node.
     names = sorted(n for n in (used_datasets | set(inspect.list_datasets(settings.data_dir, game))) if n)
     datasets = [inspect.summarize(settings.data_dir, game, n, profile.key_map_for(n),
-                                  profile.aggregate_for(n))
+                                  profile.aggregate_for(n), profile.keep_batches_for(n))
                 for n in names]
     return {"game": game, "windows": windows, "datasets": datasets}
 
@@ -110,7 +116,8 @@ def _detail(store: DatasetStore, dataset: str, limit: int = 0) -> dict:
     store.ensure_loaded()
     # `history` (per-event) kept for the legacy dashboard page; the graph uses `batches`
     return {"dataset": dataset, "records": store.records(limit),
-            "batches": store.batches(80), "history": store.history(50)}
+            "batches": store.batches(BATCH_PREVIEW), "batch_total": store.batch_count(),
+            "history": store.history(50)}
 
 
 @router.get("/{game}/dataset/{dataset}")
@@ -141,7 +148,8 @@ def dataset_batches(game: str, dataset: str):
     through ``/page``)."""
     store = _store(game, dataset)
     store.ensure_loaded()
-    return {"dataset": dataset, "batches": store.batches(80), "history": store.history(50)}
+    return {"dataset": dataset, "batches": store.batches(BATCH_PREVIEW),
+            "batch_total": store.batch_count(), "history": store.history(50)}
 
 
 @router.get("/{game}/dataset/{dataset}/distinct")
@@ -188,6 +196,23 @@ def clear_dataset(game: str, dataset: str):
     return _detail(store, dataset)
 
 
+@router.post("/{game}/dataset/{dataset}/compact")
+def compact_dataset(game: str, dataset: str):
+    """Apply the dataset's ``keep_batches`` window NOW: batches past it fold into a per-key base
+    event, so the rows and their aggregates survive but the old per-observation detail (and any
+    revert down there) does not. Returns the detail payload plus ``folded`` = batches collapsed;
+    0 means it was already inside its window and nothing was touched."""
+    from ...store.db_backup import snapshot_db
+    store = _store(game, dataset)
+    if not store.would_fold():
+        return {**_detail(store, dataset), "folded": 0}
+    # Same shape as the clear above: consistent snapshot taken synchronously, gzipped off-thread.
+    # Folding is destructive, so this is the undo of last resort.
+    snapshot_db(get_settings().data_dir, game, reason=f"pre-compact:{dataset}", background=True)
+    folded = store.fold_batches()
+    return {**_detail(store, dataset), "folded": folded}
+
+
 @router.post("/{game}/dataset/{dataset}/delete")
 def delete_dataset_route(game: str, dataset: str):
     """Permanently delete a dataset's stored files (ledger + state). The profile def is
@@ -223,7 +248,7 @@ def revert_batch(game: str, dataset: str, batch: int, on: bool = True):
 def _batch_detail(store: DatasetStore, dataset: str, batch: int) -> dict:
     return {"dataset": dataset, "batch": int(batch),
             "events": store.batch_events(batch), "preview": store.preview_batch(batch),
-            "batches": store.batches(80)}
+            "batches": store.batches(BATCH_PREVIEW), "batch_total": store.batch_count()}
 
 
 @router.get("/{game}/dataset/{dataset}/batch/{batch}")
@@ -412,7 +437,8 @@ def flow_details(game: str, req: _DetailsReq):
             w = row_window(present, columns, offset=0, limit=BOOT_WINDOW)
             datasets[ds] = {"dataset": ds, "columns": columns, "total": w["total"], "rows": w["rows"],
                             "has_removed": any(r.get("present") is False for r in allrows),
-                            "batches": st.batches(80), "history": st.history(50)}
+                            "batches": st.batches(BATCH_PREVIEW), "batch_total": st.batch_count(),
+                            "history": st.history(50)}
         except Exception:
             continue   # a bad / disk-only id must not sink the rest of the batch
 

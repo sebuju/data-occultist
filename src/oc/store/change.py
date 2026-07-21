@@ -22,12 +22,17 @@ class ChangeEvent:
     changed: dict = field(default_factory=dict)  # field -> [old, new] for updates
     id: int = 0                   # stable per-dataset event id
     batch: int = 0                # which collection/save run produced this event (revert target)
+    # Set only on a compaction BASE event: {"n", "first_ts", "last_ts"} — the observations this
+    # one event was folded from, and the span they covered. None on every ordinary event.
+    fold: dict | None = None
 
     def to_dict(self) -> dict:
         payload = {"id": self.id, "batch": self.batch, "ts": self.ts,
                    "op": self.op.value, "key": self.key, "values": self.values}
         if self.changed:
             payload["changed"] = self.changed
+        if self.fold:
+            payload["fold"] = self.fold
         return payload
 
     def to_json(self) -> str:
@@ -43,4 +48,5 @@ class ChangeEvent:
             changed=d.get("changed", {}),
             id=int(d.get("id", 0)),
             batch=int(d.get("batch", 0)),
+            fold=d.get("fold"),
         )

@@ -10,10 +10,8 @@ import { h } from "../dom.js";
 import { fmtDateTime, since } from "../datefmt.js";
 import { liveAgo } from "../ago.js";
 import { armedButton } from "./armbtn.js";
+import { fmtBytes as fmtSize } from "../bytefmt.js";
 
-const fmtSize = (n) =>
-    (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB`
-        : n >= 1024 ? `${(n / 1024).toFixed(1)} kB` : `${n || 0} B`);
 
 // Render the DB-backups browser into `host`. `signal` drops stale async work when the host
 // goes away; `onRestored` fires after a successful restore (e.g. to refresh the DB panel).
