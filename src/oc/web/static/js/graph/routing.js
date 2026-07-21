@@ -164,7 +164,7 @@ function buildLinks() {
     const add = (key, aId, bId, top, kind, ra, rb) => {
         if (!ra || !rb) return;
         const port = fromPortOut(aId, kind);
-        const flow = port && kind !== "watch";   // watch keeps its own dotted/diamond look, not the data flow arrow
+        const flow = port && kind !== "watch";   // watch keeps its own solid/diamond look, not the data flow arrow
         const tgt = bId.startsWith("sub:") ? " toview" : "";
         const own = kind === "own" && bId.startsWith("win:") ? " ownwin"          // game→window owns the window's accent tint
             : kind === "own" && bId.startsWith("dict:") ? " owndict" : "";         // game→dictionary owns the dict's purple tint
@@ -532,7 +532,7 @@ function applyEdgeStyle(rec, l, dis, anySel, selCol) {
     rec.stroke = gray ? grayscale(color) : color;
     rec.alpha = stale ? 0.3 : sel ? 1 : (anySel && !sel) ? 0.1 : dis ? 0.4 : 1;
     rec.width = 1.8;
-    rec.dash = cs.has("img") ? [2, 4] : isWatch ? [1, 5] : isWire ? [4, 4] : isGate ? [6, 4] : [];
+    rec.dash = cs.has("img") ? [2, 4] : isWire ? [4, 4] : isGate ? [6, 4] : [];
     rec.lineCap = isWatch ? "round" : "butt";
     rec.selColor = selCol;
     let capEnd = "squarecap";
