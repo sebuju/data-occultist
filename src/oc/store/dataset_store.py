@@ -966,16 +966,22 @@ class DatasetStore:
             self._announce([])
         return events
 
-    def remove_after(self, pos_cutoff: float) -> list[ChangeEvent]:
-        """Soft-remove every present key whose learned scroll row index is past ``pos_cutoff``.
+    def remove_after(self, pos_cutoff: float, col_cutoff: float = 0.0) -> list[ChangeEvent]:
+        """Soft-remove every present key parked AT OR AFTER ``(pos_cutoff, col_cutoff)`` in the
+        grid's reading order (row-major, left-to-right): a row index PAST ``pos_cutoff``, OR the
+        SAME row at ``col_cutoff`` or a later column.
 
-        A terminator/sentinel item marks the end of the real list — nothing valid can sit after
-        it — so a record still parked at a later row index is stale (an old misread that scrolled
-        out of view and was never replaced). Keys with no learned position are left untouched.
-        Reuses :meth:`remove_keys` (which also drops the removed keys' ``positions`` rows)."""
+        A terminator/sentinel item marks the end of the real list — nothing valid can sit at or
+        after it — so a record still parked there is stale (an old misread that scrolled out of
+        view and was never replaced, or a real cell sharing the terminator's row but sitting at a
+        later column — a row-only cutoff would wrongly keep that one). Keys with no learned
+        position are left untouched. ``col_cutoff`` defaults to 0 (the row's first column), so a
+        caller that only cares about the row (the terminator sits at the row's start, or the grid
+        has one column) gets the old row-only behaviour for free. Reuses :meth:`remove_keys`
+        (which also drops the removed keys' ``positions`` rows)."""
         rows = self._conn.execute(
-            "SELECT key FROM positions WHERE dataset=? AND pos > ?",
-            (self._dataset, float(pos_cutoff))).fetchall()
+            "SELECT key FROM positions WHERE dataset=? AND (pos > ? OR (pos = ? AND xpos >= ?))",
+            (self._dataset, float(pos_cutoff), float(pos_cutoff), float(col_cutoff))).fetchall()
         keys = {r["key"] for r in rows} & self.present_keys()
         return self.remove_keys(keys)
 

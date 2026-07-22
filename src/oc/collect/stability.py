@@ -61,3 +61,36 @@ class Confirmer:
     def count(self) -> int:
         """Total distinct records confirmed so far (acts as the saved-row count)."""
         return len(self._confirmed_keys)
+
+
+class PruneGate:
+    """Temporal confirmation for a ``RuleThen.prune`` signal — the counterpart to
+    :class:`Confirmer` for ACTIVE removal instead of addition.
+
+    ``Confirmer`` is one-shot: once a key confirms, it's remembered forever and never
+    re-fires. A prune signal must do the opposite — RE-ARM after firing — because the same
+    key can be owned, depleted (pruned), re-owned, and depleted again (e.g. a relic bought
+    then used up more than once); each depletion must prune again. ``confirm_frames``
+    consecutive ticks of the same key signalling prune fires it once and resets its counter;
+    a key that stops signalling (still present, or gone from view) has its counter cleared,
+    so it starts clean the next time it appears."""
+
+    def __init__(self, confirm_frames: int) -> None:
+        self._need = max(1, int(confirm_frames))
+        self._counts: dict[str, int] = {}
+
+    def observe(self, keys: set[str]) -> set[str]:
+        """Feed this tick's pruning-candidate keys; return those that just reached
+        ``confirm_frames`` consecutive ticks (and are now reset, ready to re-arm)."""
+        for k in list(self._counts):
+            if k not in keys:
+                del self._counts[k]           # signal stopped -> re-arm from 0
+        fired: set[str] = set()
+        for k in keys:
+            n = self._counts.get(k, 0) + 1
+            if n >= self._need:
+                fired.add(k)
+                self._counts.pop(k, None)
+            else:
+                self._counts[k] = n
+        return fired

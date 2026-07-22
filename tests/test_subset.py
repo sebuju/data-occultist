@@ -8,10 +8,12 @@ from oc.enrich.subset import compute_subset, compute_view, compute_view_rows
 from oc.store.textnorm import norm_text
 
 
-def _src(dataset, join_field="name", required=False, aggregate="latest", join_norm=None):
+def _src(dataset, join_field="name", required=False, aggregate="latest", join_norm=None,
+         prefer_newest=False):
     """One JoinSource with terse defaults — the per-source join config a view input carries."""
     return JoinSource(dataset=dataset, join_field=join_field, required=required,
-                      aggregate=aggregate, join_norm=join_norm or JoinNorm())
+                      aggregate=aggregate, join_norm=join_norm or JoinNorm(),
+                      prefer_newest=prefer_newest)
 
 
 def _records():
@@ -311,6 +313,51 @@ def test_required_narrows_to_inner_optional_keeps_outer():
     inner_rows = {r["name"] for r in compute_view([("a", a), ("b", b)], inner)["rows"]}
     assert outer_rows == {"X", "Y"}                                  # Y kept, price gap-filled
     assert inner_rows == {"X"}                                       # Y dropped (absent in b)
+
+
+# ---- prefer_newest: whole-row recency negotiation between sources ----------
+
+def test_prefer_newest_whole_row_wins_over_authored_order():
+    # relic_select and relic_refinement both show the same relic through different windows;
+    # whichever was read more recently should win the WHOLE row, even though it's authored
+    # SECOND (today's plain order-wins rule would otherwise let the first source's stale count
+    # leak through via the empty-cell fill).
+    older = [{"name": "Axi A15", "count": 0, "extra": "stale", "present": True, "last_seen": "2026-07-22T10:00:00"}]
+    newer = [{"name": "Axi A15", "count": 3, "extra": "fresh", "present": True, "last_seen": "2026-07-22T10:05:00"}]
+    sub = SubsetDef(id="v", sources=[
+        _src("select", prefer_newest=True), _src("refine", prefer_newest=True),
+    ])
+    out = compute_view([("select", older), ("refine", newer)], sub)
+    row = out["rows"][0]
+    assert row["count"] == 3 and row["extra"] == "fresh"    # newer source wins EVERY column
+
+
+def test_prefer_newest_requires_two_flagged_sources():
+    # only ONE source flagged -> nothing to compare against -> today's exact order-wins behaviour
+    older = [{"name": "Axi A15", "count": 0, "present": True, "last_seen": "2026-07-22T10:00:00"}]
+    newer = [{"name": "Axi A15", "count": 3, "present": True, "last_seen": "2026-07-22T10:05:00"}]
+    sub = SubsetDef(id="v", sources=[_src("select", prefer_newest=True), _src("refine")])
+    out = compute_view([("select", older), ("refine", newer)], sub)
+    assert out["rows"][0]["count"] == 0                     # first (authored-earlier) source still wins
+
+
+def test_prefer_newest_off_keeps_authored_order():
+    older = [{"name": "Axi A15", "count": 0, "present": True, "last_seen": "2026-07-22T10:00:00"}]
+    newer = [{"name": "Axi A15", "count": 3, "present": True, "last_seen": "2026-07-22T10:05:00"}]
+    sub = SubsetDef(id="v", sources=[_src("select"), _src("refine")])
+    out = compute_view([("select", older), ("refine", newer)], sub)
+    assert out["rows"][0]["count"] == 0                     # neither flagged -> earlier source wins
+
+
+def test_prefer_newest_only_compares_actually_matched_rows():
+    # a flagged source with no row at all for this key doesn't count towards "two flagged" —
+    # a lone flagged source that DID match still just keeps its normal-order position.
+    only_one = [{"name": "Axi A15", "count": 3, "present": True, "last_seen": "2026-07-22T10:05:00"}]
+    sub = SubsetDef(id="v", sources=[
+        _src("select", prefer_newest=True), _src("refine", prefer_newest=True, required=False),
+    ])
+    out = compute_view([("select", only_one), ("refine", [])], sub)
+    assert out["rows"][0]["count"] == 3                     # unaffected — no second flagged row to compare
 
 
 def test_join_norm_round_trips_through_profile(tmp_path):

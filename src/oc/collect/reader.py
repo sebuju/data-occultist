@@ -149,6 +149,7 @@ class _FieldRead:
     substituted: object          # a ``set`` rule's ``when`` label, else None (None => a genuine read)
     dropped: bool                # a ``drop`` rule (range/dictionary/authored) fired -> drop the cell
     box: PixelBox                # where the field was read (image pixels)
+    prune: bool = False          # a ``prune`` rule fired -> caller actively removes the record's key
     pip_unit: str | None = None  # "pips"/"filled" for visual-count fields, else None
     verified: str | None = None  # how the value was confirmed: dict/split/fuzzy/glyph, else None
 
@@ -163,11 +164,28 @@ class _CellRead:
     confidence: float = 0.0      # worst genuine-read field conf (0 if nothing seen)
     saw: bool = False            # any field produced text
     failed: bool = False         # a field tripped its min_confidence or plausibility range
+    prune: bool = False          # a field fired a ``prune`` rule -> caller removes this record's key
     confs: dict[str, float] = dc_field(default_factory=dict)        # field_id -> conf (seen text only)
     fields: dict[str, _FieldRead] = dc_field(default_factory=dict)  # field_id -> read detail
 
     def is_empty(self) -> bool:
         return all(v in (None, "") for v in self.values.values())
+
+
+def _terminator_sentinel(kept: list[int], ics: list, records: list[Record]) -> tuple[float, int] | None:
+    """The ``(ypos, col)`` of the top-most/left-most KEPT terminator cell, in the grid's reading
+    order (row-major, left-to-right) — the collector cuts every stored key at or after this
+    position (:meth:`DatasetStore.remove_after`), so a terminator sitting mid-row (e.g. an
+    unowned-relic placeholder next to still-owned ones on the same row) only cuts columns from
+    its own position onward, not the whole row. A terminator is usually a fieldless guard
+    (stores nothing) but need not be. ``None`` when no terminator is kept this frame."""
+    sentinel: tuple[float, int] | None = None
+    for ci in kept:
+        it = ics[ci].item
+        if it.terminator and records[ci].ypos is not None:
+            cand = (records[ci].ypos, records[ci].col if records[ci].col is not None else 0)
+            sentinel = cand if sentinel is None else min(sentinel, cand)
+    return sentinel
 
 
 def _union(boxes: list[PixelBox]) -> PixelBox:
@@ -810,18 +828,19 @@ class RegionReader:
                 refined = new != text
                 text = new
             substituted = verified = None
-            dropped = False
+            dropped = prune = False
             if self._resolver and fdef:
                 resolved = self._resolver.resolve(fdef, text, conf)
                 value = resolved.value
                 substituted = resolved.substituted
                 verified = resolved.verified
                 dropped = resolved.dropped
+                prune = resolved.prune
                 if resolved.corrected:
                     c.corrected.append(field_id)
             elif fdef:
                 res = run_rules(fdef, text)
-                value, substituted, dropped = res.value, res.substituted, res.dropped
+                value, substituted, dropped, prune = res.value, res.substituted, res.dropped, res.prune
             else:
                 value = text or None
             # a pixel-level glyph_check that actually changed the read is the salient tell for
@@ -831,13 +850,15 @@ class RegionReader:
             c.values[field_id] = value
             c.fields[field_id] = _FieldRead(raw=raw_ocr, conf=conf, value=value,
                                             substituted=substituted, dropped=dropped, box=box,
-                                            verified=verified)
+                                            verified=verified, prune=prune)
             if dropped:   # a drop rule (range/dictionary/authored) drops the whole cell
                 c.failed = True
+            if prune:     # a prune rule -> the cell stays identified, but marked for removal
+                c.prune = True
             if text:
                 c.saw = True
                 c.confs[field_id] = conf   # so a field-tell's tell_conf can gate
-                if substituted is None and not dropped:
+                if substituted is None and not dropped and not prune:
                     # garbage OCR that triggered a fallback must not sink the whole record
                     worst[ci] = min(worst[ci], conf)
                     mc = getattr(fdef, "min_confidence", 0.0) or 0.0
@@ -848,7 +869,7 @@ class RegionReader:
         return cells, lines, ics, cr
 
     def read(self, frame: Frame, window: WindowDef,
-             fields: dict[str, FieldDef]) -> tuple[list[Record], float | None]:
+             fields: dict[str, FieldDef]) -> tuple[list[Record], tuple[float, int] | None, list[Record]]:
         cells, lines, ics, cr = self._read_cells(frame, window, fields)
         records: list[Record] = []
         for ci, c in enumerate(cr):
@@ -868,7 +889,7 @@ class RegionReader:
                     rec.xpos = self._data_xfrac(window, sum(b.x + b.w / 2 for b in bs) / len(bs))
             records.append(rec)
         if ics is None:
-            return ([r for ci, r in enumerate(records) if not r.is_empty() and not cr[ci].failed], None)
+            return ([r for ci, r in enumerate(records) if not r.is_empty() and not cr[ci].failed], None, [])
         # Item templates: keep a cell only if all its tells pass (drops popups/empties);
         # resolve template overlaps; and (when >1 template) tag which one matched.
         # A GUARD item (no fields, but has tells — e.g. a "no relic selected" placeholder)
@@ -887,20 +908,24 @@ class RegionReader:
         kept = resolve_overlaps(ics, valid)
         tag = len(window.items) > 1
         out = []
-        # A terminator template marks the end of the real list: report the top-most kept
-        # terminator's viewport position so the collector can cut everything below it. A
-        # terminator is usually a fieldless guard (stores nothing) but need not be.
-        sentinel_ypos: float | None = None
+        # A field's ``prune`` rule (e.g. a depleted relic's count hitting 0) keeps the cell
+        # identified — its other fields still read/tell normally — but marks it for ACTIVE
+        # removal instead of a commit: surfaced separately so the collector can retire its
+        # stored key from a mirror dataset (a plain ``drop`` can't do this — a dropped cell is
+        # invisible to mirror-sync, so a stale row it should retire is left untouched forever).
+        pruned: list[Record] = []
+        sentinel = _terminator_sentinel(kept, ics, records)
         for ci in kept:
             it = ics[ci].item
-            if it.terminator and records[ci].ypos is not None:
-                sentinel_ypos = records[ci].ypos if sentinel_ypos is None else min(sentinel_ypos, records[ci].ypos)
             if not it.fields:   # guard item -> suppressed the tile, stores nothing
+                continue
+            if cr[ci].prune:
+                pruned.append(records[ci])
                 continue
             if tag:
                 records[ci].values["_item"] = it.id
             out.append(records[ci])
-        return out, sentinel_ypos
+        return out, sentinel, pruned
 
     def _confirm_gate(self, key, present: bool, need: int) -> bool:
         """Presence-confirm hysteresis (C, per-readout ``FieldDef.confirm``): an empty->present

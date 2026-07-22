@@ -30,6 +30,7 @@ class ResolvedField:
     corrected: bool = False   # one or more words snapped to the vocabulary
     score: float = 1.0        # worst word-correction similarity (1.0 when not corrected)
     dropped: bool = False      # a ``drop`` action (or a drop-mode dictionary) fired -> drop the cell
+    prune: bool = False        # a ``prune`` action fired -> caller actively removes the record's key
     # which rule authored the value (a ``set`` rule's ``when`` label), None for a value
     # derived from the genuine read — substituted values are config, not OCR confidence
     substituted: str | None = None
@@ -165,7 +166,8 @@ class FieldResolver:
     def resolve(self, field: FieldDef, raw_text: str, confidence: float = 1.0) -> ResolvedField:
         res = run_rules(field, raw_text, dict_hook=self.apply_dictionary, confidence=confidence)
         return ResolvedField(value=res.value, corrected=res.corrected, score=res.score,
-                             dropped=res.dropped, substituted=res.substituted, verified=res.verified)
+                             dropped=res.dropped, prune=res.prune, substituted=res.substituted,
+                             verified=res.verified)
 
     def rule_trace(self, field: FieldDef, raw_text: str, confidence: float = 1.0) -> list:
         """The per-rule in/out trace for the node debug panel (see ``run_rules(trace=True)``)."""

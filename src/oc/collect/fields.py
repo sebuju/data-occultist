@@ -104,6 +104,7 @@ class RuleResult:
     record on its confidence); None for a value derived from the genuine read."""
     value: object = None
     dropped: bool = False           # a ``drop`` action (or a drop-mode dictionary) fired
+    prune: bool = False             # a ``prune`` action fired -> caller actively removes the key
     substituted: str | None = None
     corrected: bool = False
     score: float = 1.0
@@ -122,8 +123,9 @@ _WHEN_TYPES = {
     "equal": "any", "not_equal": "any", "contains": "t",
 }
 _THEN_TYPES = {
-    "set": "any", "drop": "any", "blank": "any", "lowercase": "t", "uppercase": "t", "fold": "t",
-    "round": "n", "floor": "n", "ceil": "n", "decimal": "n", "extract": "tn", "dictionary": "t",
+    "set": "any", "drop": "any", "blank": "any", "prune": "any", "lowercase": "t", "uppercase": "t",
+    "fold": "t", "round": "n", "floor": "n", "ceil": "n", "decimal": "n", "extract": "tn",
+    "dictionary": "t",
 }
 
 
@@ -250,12 +252,15 @@ def run_rule_pipeline(rules: list, ftype: str, raw: str, *, dict_hook=None,
         fired = _matches(rule.when, value, rule.arg)
         dropped = False
         blanked = False
+        pruned = False
         if fired:
             then = rule.then
             if then is RuleThen.drop:
                 dropped = True
             elif then is RuleThen.blank:
                 blanked = True    # emit None and forward it (a gap), NOT a dropped record
+            elif then is RuleThen.prune:
+                pruned = True     # emit None; caller actively removes this record's key
             elif then is RuleThen.set:
                 result.substituted = rule.when.value   # authored value, not a genuine read
                 value = rule.value
@@ -284,12 +289,16 @@ def run_rule_pipeline(rules: list, ftype: str, raw: str, *, dict_hook=None,
                         result.verified = out.verified
         if steps is not None:
             steps.append({"i": i, "when": rule.when.value, "then": rule.then.value,
-                          "in": vin, "out": (None if dropped or blanked else value), "fired": fired})
+                          "in": vin, "out": (None if dropped or blanked or pruned else value),
+                          "fired": fired})
         if dropped:
             result.value, result.dropped, result.trace = None, True, steps
             return result
         if blanked:
             result.value, result.dropped, result.trace = None, False, steps   # null forwarded, not dropped
+            return result
+        if pruned:
+            result.value, result.prune, result.trace = None, True, steps
             return result
 
     result.value = _finalize(ftype, value)

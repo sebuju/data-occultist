@@ -42,7 +42,7 @@ def _session(tmp_path, reads, classify=("equip", None)):
     s._engine.classifier.classify = lambda frame, profile: classify
     s._reader = SimpleNamespace(
         region_signature=lambda frame, window: None,           # never cache by data area
-        read=lambda frame, window, fields: (reads, None),
+        read=lambda frame, window, fields: (reads, None, []),
     )
     return s
 
@@ -278,7 +278,7 @@ def test_partial_ocr_checkpoint_resumes_not_restarts(tmp_path):
     s2 = _session(tmp_path, recs2)
     st = s2.status()
     assert st["phase"] == Phase.recorded.value and st["processed"] == 1
-    s2._reader.read = lambda frame, window, fields: (seen.append(1), (recs2, None))[1]
+    s2._reader.read = lambda frame, window, fields: (seen.append(1), (recs2, None, []))[1]
     s2.start_processing()
     s2._thread.join(timeout=10)
     st = s2.status()

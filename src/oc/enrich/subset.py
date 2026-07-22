@@ -233,6 +233,23 @@ def _merge_rows(combo) -> dict:
     return out
 
 
+def _reorder_by_recency(combo, recency: list[bool]) -> list[dict]:
+    """``combo`` is one ``(row, last_seen)`` pair per join source, in authored order (an
+    optional source missing this key contributes an empty ``({}, "")`` placeholder). When two or
+    more ``prefer_newest``-flagged sources actually matched this key (a non-empty row), the one
+    with the more recent ``last_seen`` (ISO timestamps sort chronologically as plain strings) is
+    moved to the FRONT — so it wins the WHOLE row in ``_merge_rows`` (every column, not just
+    ones the others left blank), ahead of every other source regardless of authored order.
+    With fewer than two matching flagged sources this is a no-op: the authored order (today's
+    exact behaviour) is returned unchanged."""
+    real_flagged = [i for i, ((row, _ts), fl) in enumerate(zip(combo, recency)) if fl and row]
+    if len(real_flagged) < 2:
+        return [row for row, _ts in combo]
+    winner = max(real_flagged, key=lambda i: combo[i][1])
+    order = [winner] + [i for i in range(len(combo)) if i != winner]
+    return [combo[i][0] for i in order]
+
+
 def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
     """Join the sources, unioning columns. Each source canonicalises ITS OWN ``join_field``
     value through ITS OWN :class:`JoinNorm` to the shared join key — so sources keying
@@ -264,7 +281,12 @@ def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
       matches an empty slot's") without risking a duplicate per match.
     - ``broadcast`` merges this source's row(s) into EVERY output row, unkeyed — several rows
       collapse into one merged dict first (first-wins), then fill only each output row's
-      missing/empty cells (real join columns always win)."""
+      missing/empty cells (real join columns always win).
+
+    ``prefer_newest`` (:class:`JoinSource`) is a per-key WHOLE-ROW override on top of all the
+    above: when two or more plain-``join`` sources set it and both match a key, whichever's row
+    has the more recent ``last_seen`` is moved to the front of that key's merge order — so it
+    wins every column, not just the ones the others left empty (see ``_reorder_by_recency``)."""
     from itertools import product
 
     strip = lambda rec: {k: v for k, v in rec.items() if k not in _HIDDEN}   # noqa: E731
@@ -308,25 +330,29 @@ def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
     if not join_pairs:                       # every source was exclude/mark/broadcast
         return []
 
-    per_source: list[dict[str, list[dict]]] = []   # source idx -> {key -> [rows]}
+    # Each row carries its ``last_seen`` alongside the stripped columns (as a (row, ts) pair) so
+    # a ``prefer_newest`` source can be compared for recency at merge time — `strip()` above
+    # already dropped it from the columns themselves, this is purely for the comparison.
+    per_source: list[dict[str, list[tuple[dict, str]]]] = []   # source idx -> {key -> [(row, ts)]}
     standalones: list[dict] = []                    # rows with no join value (outer only)
     key_order: list[str] = []
     seen: set[str] = set()
     for src, recs in join_pairs:
-        groups: dict[str, list[dict]] = {}
+        groups: dict[str, list[tuple[dict, str]]] = {}
         for rec in recs:
             row = strip(rec)
             k = kof(row, src)
             if not k:
                 standalones.append(row)             # unjoinable -> its own row
                 continue
-            groups.setdefault(k, []).append(row)
+            groups.setdefault(k, []).append((row, rec.get("last_seen") or ""))
             if k not in seen:
                 seen.add(k)
                 key_order.append(k)
         per_source.append(groups)
 
     required = [bool(src.required) for src, _ in join_pairs]
+    recency = [bool(src.prefer_newest) for src, _ in join_pairs]
     strict = any(required)
     out: list[dict] = []
     for k in key_order:
@@ -337,10 +363,10 @@ def _join(pairs: list[tuple[JoinSource, list[dict]]]) -> list[dict]:
             continue
         # each source contributes its matching rows; an optional source missing the key pairs in
         # one empty placeholder so the present sources' rows still appear.
-        lists = [gs.get(k) or [{}] for gs in per_source]
+        lists = [gs.get(k) or [({}, "")] for gs in per_source]
         mark = mark_map.get(k)
         for combo in product(*lists):
-            row = _merge_rows(combo)
+            row = _merge_rows(_reorder_by_recency(combo, recency))
             if mark:
                 row = _merge_rows([row, mark])          # annotate only, never multiplies
             out.append(row)

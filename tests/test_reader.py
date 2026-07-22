@@ -4,10 +4,12 @@ import cv2
 import numpy as np
 
 from oc.collect.atlas_match import AtlasMatcher
-from oc.collect.reader import RegionReader
+from oc.collect.grid import Cell
+from oc.collect.items import ItemCell
+from oc.collect.reader import RegionReader, Record, _terminator_sentinel
 from oc.interfaces import OcrEngine
 from oc.profile.models import (
-    Box, FieldDef, FieldRule, FieldType, Preprocess, PreprocessMode, ReadoutDef, RegionDef,
+    Box, FieldDef, FieldRule, FieldType, ItemDef, Preprocess, PreprocessMode, ReadoutDef, RegionDef,
     RuleThen, RuleWhen, WindowDef,
 )
 from oc.types import Frame, OcrLine, PixelBox
@@ -52,11 +54,57 @@ def test_substituted_read_does_not_sink_confidence():
     ])
     window = _window()
     fields = {f.id: f for f in window.fields}
-    records, _sentinel = RegionReader(ocr).read(_frame(), window, fields)
+    records, _sentinel, _pruned = RegionReader(ocr).read(_frame(), window, fields)
     assert len(records) == 1
     rec = records[0]
     assert rec.values == {"name": "Soma Prime", "count": 1}
     assert rec.confidence >= 0.9     # the name's confidence, not the junk's
+
+
+# ---- _terminator_sentinel: (ypos, col) of the top-most/left-most kept terminator -----------
+
+def _ic(item, col=0):
+    return ItemCell(cell=Cell(row=0, col=col, boxes={}), ox=0.0, oy=0.0, iw=0.1, ih=0.1, item=item)
+
+
+def _rec(ypos, col):
+    return Record(values={}, ypos=ypos, col=col)
+
+
+def test_sentinel_none_when_no_terminator_kept():
+    plain = ItemDef(id="relic_item", box=Box(x=0, y=0, w=0.1, h=0.1))
+    ics = [_ic(plain, col=0)]
+    recs = [_rec(0.2, 0)]
+    assert _terminator_sentinel([0], ics, recs) is None
+
+
+def test_sentinel_reports_terminators_own_row_and_column():
+    # a not_owned guard mid-row (col 2 of row 0): the sentinel carries ITS OWN column, not
+    # just the row -- so a same-row cell at an earlier column isn't wrongly cut.
+    guard = ItemDef(id="not_owned", box=Box(x=0, y=0, w=0.1, h=0.1), terminator=True)
+    ics = [_ic(guard, col=2)]
+    recs = [_rec(0.4, 2)]
+    assert _terminator_sentinel([0], ics, recs) == (0.4, 2)
+
+
+def test_sentinel_picks_topmost_leftmost_across_multiple_terminators():
+    # two terminator candidates kept this frame (e.g. a scroll-boundary artefact): the
+    # earliest in reading order (smaller ypos; column tie-breaks within the same row) wins,
+    # since everything from THAT point on is what gets cut.
+    guard = ItemDef(id="not_owned", box=Box(x=0, y=0, w=0.1, h=0.1), terminator=True)
+    ics = [_ic(guard, col=3), _ic(guard, col=1)]
+    recs = [_rec(0.4, 3), _rec(0.4, 1)]              # same row, different columns
+    assert _terminator_sentinel([0, 1], ics, recs) == (0.4, 1)   # leftmost column on the row wins
+    ics2 = [_ic(guard, col=0), _ic(guard, col=0)]
+    recs2 = [_rec(0.6, 0), _rec(0.2, 0)]             # different rows
+    assert _terminator_sentinel([0, 1], ics2, recs2) == (0.2, 0)  # earlier row wins
+
+
+def test_sentinel_ignores_unkept_terminator_candidates():
+    guard = ItemDef(id="not_owned", box=Box(x=0, y=0, w=0.1, h=0.1), terminator=True)
+    ics = [_ic(guard, col=0)]
+    recs = [_rec(0.4, 0)]
+    assert _terminator_sentinel([], ics, recs) is None   # not in `kept` -> not a candidate
 
 
 def test_readout_multiword_read_stays_in_reading_order():
@@ -299,7 +347,7 @@ def test_real_low_confidence_read_still_sinks_record():
     ])
     window = _window()
     fields = {f.id: f for f in window.fields}
-    records, _sentinel = RegionReader(ocr).read(_frame(), window, fields)
+    records, _sentinel, _pruned = RegionReader(ocr).read(_frame(), window, fields)
     assert len(records) == 1
     assert records[0].values["count"] == 3
     assert records[0].confidence == 0.30
@@ -529,7 +577,7 @@ def test_symbol_key_field_unmatched_drops_the_record():
         regions=[RegionDef(id="school", box=Box(x=0.10, y=0.10, w=0.40, h=0.40), field="school")],
     )
     fields = {f.id: f for f in window.fields}
-    records, _sentinel = RegionReader(StubOcr([]), atlas=atlas).read(frame, window, fields)
+    records, _sentinel, _pruned = RegionReader(StubOcr([]), atlas=atlas).read(frame, window, fields)
     assert records == []
 
 

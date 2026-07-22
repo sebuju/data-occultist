@@ -144,6 +144,29 @@ def test_remove_after_cuts_stale_far_rows(tmp_path):
     assert s.remove_after(100) == []           # nothing past the cutoff -> no-op
 
 
+def test_remove_after_cuts_same_row_at_or_after_terminator_column(tmp_path):
+    # a not_owned guard mid-row: columns BEFORE it on that row are still legitimately owned;
+    # columns AT OR AFTER it, same row, are not -- a row-only cutoff would wrongly keep those.
+    s = _store(tmp_path)
+    for nm in ["Axi A1", "Axi A2", "Axi A3", "Axi B1", "Axi B2"]:
+        s.record_seen({"name": nm})
+    # row 0: cols 0,1 owned, col 2 is the not_owned guard's slot -> row 0 col>=2 unowned
+    # row 1 (entirely past the guard's row): unowned regardless of column
+    s.set_positions({"axi_a1": (0.0, 0.0), "axi_a2": (1.0, 0.0), "axi_a3": (2.0, 0.0),
+                     "axi_b1": (0.0, 1.0), "axi_b2": (3.0, 1.0)})
+    s.remove_after(0, 2)                       # terminator at row 0, col 2
+    assert s.present_keys() == {"axi_a1", "axi_a2"}
+
+
+def test_remove_after_col_cutoff_defaults_to_row_start(tmp_path):
+    # no col_cutoff given -> the whole cutoff row goes (old row-only behaviour), unchanged
+    s = _store(tmp_path)
+    s.record_seen({"name": "Axi A1"})
+    s.set_positions({"axi_a1": (3.0, 5.0)})    # row 5, col 3
+    s.remove_after(5)                          # cutoff row 5, no column given
+    assert s.present_keys() == set()
+
+
 def test_positions_follow_rename_and_delete(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Lith G1"})

@@ -116,13 +116,19 @@ class RuleWhen(str, Enum):
 
 class RuleThen(str, Enum):
     """What a matched :class:`FieldRule` does. ``drop`` early-returns (the whole record is
-    dropped for that cell); ``blank`` early-returns with ``None`` — the value is FORWARDED
-    downstream as an explicit null gap (a process emits ``key -> None``; a register's
-    ``ignore_empty`` decides whether to record it), NOT a dropped record. Every other action
-    rewrites the running value and the pipeline CONTINUES to the next rule."""
+    dropped for that cell, as if unread this frame — no positive evidence either way); ``blank``
+    early-returns with ``None`` — the value is FORWARDED downstream as an explicit null gap (a
+    process emits ``key -> None``; a register's ``ignore_empty`` decides whether to record it),
+    NOT a dropped record. ``prune`` early-returns like ``drop`` but the record STAYS identified
+    (its other fields still read/tell normally) and its underlying key is ACTIVELY removed from
+    the dataset — for a value crossing a taught threshold that means "this record is gone" (e.g.
+    a depleted relic's count hitting 0), which a mere ``drop`` can't express (a dropped cell is
+    invisible to mirror-sync, so a stale row it should retire is left untouched forever). Every
+    other action rewrites the running value and the pipeline CONTINUES to the next rule."""
 
     drop = "drop"              # early-return: drop the record for this cell
     blank = "blank"            # early-return with value=None: forward a null gap (NOT a failure)
+    prune = "prune"            # early-return: actively remove this record's key from the dataset
     set = "set"                # substitute ``value`` (authored, not OCR), continue
     lowercase = "lowercase"    # value.lower()
     uppercase = "uppercase"    # value.upper()
@@ -1741,6 +1747,14 @@ class JoinSource(BaseModel):
     # When NO source is required the join is a full outer (every key kept, gaps filled); marking
     # sources required narrows to keys present in all of them (the old ``inner`` = all required).
     required: bool = False
+    # Recency negotiation: when TWO OR MORE sources of a subset set this and both match a key,
+    # the one whose row has the more recent ``last_seen`` wins the WHOLE row (every column),
+    # ahead of the authored source order — e.g. two windows showing the same underlying game
+    # entity (same relic via two different screens/grids) where whichever was read more
+    # recently is the trustworthy one. A source with this OFF (the default) keeps today's
+    # exact behaviour: earlier authored source wins a column collision. With fewer than two
+    # matching sources flagged, this is a no-op (nothing to compare against).
+    prefer_newest: bool = False
     # How this source combines into the join, beyond a plain key-matched merge:
     #   join      - the default: matches on ``join_field`` and merges its columns in (subject
     #               to ``required``).

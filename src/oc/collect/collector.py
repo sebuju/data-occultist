@@ -35,7 +35,7 @@ from .reader import Record, RegionReader
 from .scrollbar import scroll_detail
 from .sink import RecordSink
 from .slice_sync import SliceSync
-from .stability import Confirmer
+from .stability import Confirmer, PruneGate
 
 
 # Minimum scrollbar-detection confidence before a frame's slice counts for mirror removal —
@@ -168,6 +168,10 @@ class Collector:
         self._slice_sync: dict[str, SliceSync] = {}
         self._scroll_vis: dict[str, float] = {}   # mirror: rows-on-screen measured from row pitch
         self._pos_sent: dict[str, dict] = {}       # mirror: last slot map published (skip unchanged re-writes)
+        # Per-dataset gate for field-rule ``prune`` signals (e.g. a depleted relic's count
+        # hitting 0): re-arming, unlike ``Confirmer``, so the same key can prune again after
+        # being re-added (see tick()).
+        self._prune_gates: dict[str, PruneGate] = {}
         # Per-detection batching (``batch_mode: detection`` datasets, e.g. relic offerings):
         # a fresh window detection after a gap starts a NEW revertable batch. ``_tick_no``
         # counts only OCR-HEAVY ticks (``ocr_due``) — NOT the throttle/idle/moving ticks the
@@ -534,7 +538,7 @@ class Collector:
             # whole-canvas OCR (there for the teach preview's raw layer) that reads nothing
             # storable — ~230ms/tick wasted on a readouts-only HUD window.
             if not window.regions and not window.items:
-                records, sentinel_ypos, cache_hit = [], None, True
+                records, sentinel, pruned, cache_hit = [], None, [], True
             else:
                 # Skip OCR when the grid region is pixel-identical to the last tick.
                 _tg = time.perf_counter()
@@ -544,17 +548,17 @@ class Collector:
                 cached = self._frame_cache.get(window_id)
                 cache_hit = sig is not None and cached is not None and cached[0] == sig
                 if cache_hit:
-                    records, sentinel_ypos = cached[1], cached[2]
+                    records, sentinel, pruned = cached[1], cached[2], cached[3]
                 else:
                     fields = {f.id: f for f in self._profile.fields_for(window)}
                     # Time OCR read specifically (only the frames where it actually ran — a
                     # cache-hit frame does no OCR, so recording it would understate the real cost).
                     _oc = time.perf_counter()
-                    records, sentinel_ypos = self._reader.read(frame, window, fields)
+                    records, sentinel, pruned = self._reader.read(frame, window, fields)
                     oc_ms = (time.perf_counter() - _oc) * 1000.0
                     stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc", oc_ms, n=len(records))
                     if sig is not None:
-                        self._frame_cache[window_id] = (sig, records, sentinel_ypos)
+                        self._frame_cache[window_id] = (sig, records, sentinel, pruned)
 
         kept = self._above_floor(records)               # occlusion / garbage gate
         # Per-read debug detail for the live log — only on a REAL OCR frame (a cache hit
@@ -701,7 +705,17 @@ class Collector:
                     gone = syncer.observe(vlo, vhi, read_cells, store.present_keys(), fresh)
                     if gone:
                         store.remove_keys(gone)
-                    if fresh and read_cells and read_cells != self._pos_sent.get(dataset):
+                    # NOT gated on `fresh`: `fresh`/`clean` is a FRAME-WIDE flag (every cell in the
+                    # whole grid read validly), meant to guard destructive removal evidence (a
+                    # stray occluded cell elsewhere must not imply a real key is gone). Learning a
+                    # position carries no such risk — `read_cells` already only contains cells that
+                    # INDIVIDUALLY passed occlusion/tell checks (built from `kept`, not raw
+                    # `records`) — so one flaky cell elsewhere in a ~20-cell grid must not also
+                    # discard every OTHER cell's perfectly good position this tick. Gating this on
+                    # `fresh` starved most keys of a position ever (only relics on-screen during an
+                    # all-clean tick got one), which then starved the terminator cut too
+                    # (`remove_after` can't touch a key it has no position for).
+                    if read_cells and read_cells != self._pos_sent.get(dataset):
                         # _pos column + next run: the same (column, row-index) slots slice_sync
                         # just used — column persisted so a gone relic stays a removal candidate.
                         # Skip when the slot map is byte-identical to the last write: set_positions
@@ -712,11 +726,31 @@ class Collector:
                         self._pos_sent[dataset] = dict(read_cells)
                     # Terminator cut: a sentinel template (e.g. an unowned-relic placeholder) marks
                     # the end of the real list. On a clean frame it's visible, drop every stored key
-                    # parked past its row index — stale misreads that scrolled out of view and were
-                    # never replaced (which slice_sync alone can't reach). Runs AFTER set_positions
-                    # so a fresh far misread this frame has a position to be cut by.
-                    if fresh and sentinel_ypos is not None:
-                        store.remove_after(int(offset + sentinel_ypos * visible))
+                    # parked at or after its (row, col) in reading order — stale misreads that
+                    # scrolled out of view and were never replaced (which slice_sync alone can't
+                    # reach), AND any real cell sharing the terminator's row but at a later column
+                    # (a row-only cutoff would wrongly keep those). Runs AFTER set_positions so a
+                    # fresh far misread this frame has a position to be cut by.
+                    if fresh and sentinel is not None:
+                        s_ypos, s_col = sentinel
+                        store.remove_after(int(offset + s_ypos * visible), s_col)
+
+            # Field-rule prune signal (e.g. a depleted relic's count hitting 0): the record
+            # stays identified (its other fields still read/tell normally) but must actively
+            # retire its key, not merely skip a commit — a plain ``drop`` cell is invisible to
+            # mirror-sync, so a stale row it should retire is left untouched forever (see
+            # RuleThen.prune / PruneGate). confirm_frames-gated like any other temporal signal
+            # so one flaky misread can't yank a still-owned record; independent of scroll/
+            # sentinel — applies to any dataset, not just ``sync_mode: mirror``.
+            if pruned:
+                prune_keys = {store.key_of(r.values) for r in pruned} - {None}
+                if prune_keys:
+                    gate = self._prune_gates.get(dataset)
+                    if gate is None:
+                        gate = self._prune_gates[dataset] = PruneGate(self._tuning.confirm_frames)
+                    fired = gate.observe(prune_keys)
+                    if fired:
+                        store.remove_keys(fired)
 
         stats_store.record_timing(self._profile.name, f"win:{window_id}", "cm",
                                   (time.perf_counter() - _tcm) * 1000.0, n=new)

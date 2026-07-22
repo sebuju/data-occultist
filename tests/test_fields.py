@@ -158,6 +158,25 @@ def test_blank_early_returns_before_later_rules():
     assert res.value is None and res.dropped is False   # blank stopped the pipeline before `set`
 
 
+def test_prune_resolves_to_none_and_flags_prune_not_dropped():
+    # `prune` early-returns None like `drop`/`blank`, but flags `prune` (not `dropped`) — the
+    # caller keeps the cell identified and actively removes its key, rather than sinking the
+    # whole record as unread (which mirror-sync could never react to).
+    f = _f([rule(when=RuleWhen.equal, arg="0", then=RuleThen.prune)], FieldType.number)
+    res = run_rules(f, "0")
+    assert res.value is None and res.prune is True and res.dropped is False
+    assert coerce(f, "7") == 7          # a non-matching read is unaffected, prune stays False
+
+
+def test_prune_early_returns_before_later_rules():
+    f = _f([
+        rule(when=RuleWhen.equal, arg="0", then=RuleThen.prune),
+        rule(when=RuleWhen.always, then=RuleThen.set, value="LATE"),
+    ])
+    res = run_rules(f, "0")
+    assert res.value is None and res.prune is True   # prune stopped the pipeline before `set`
+
+
 # ---- below / above (min/max replacement) ------------------------------------
 
 def test_below_above_drop_out_of_range():
