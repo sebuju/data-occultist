@@ -15,6 +15,7 @@ polled through the activity heartbeat. The worker runs even when the game is bac
 from __future__ import annotations
 
 import collections
+import logging
 import statistics
 import threading
 import time
@@ -291,19 +292,25 @@ class LiveSession:
         declares an ``on_input`` trigger (no hook installed for every other profile) and a
         backend registered for this platform (``None`` on non-Windows — see ``oc.registry``).
         Best-effort: a failed hook must never stop live collection, exactly like a failed toast."""
+        log = logging.getLogger(__name__)
         if not any(t.enabled and t.kind == "on_input" for t in getattr(self._profile, "triggers", [])):
+            log.info("no enabled on_input trigger -- input hook not started")
             return
         runner = self._trigger_runner()
         if runner is None:
+            log.warning("on_input trigger(s) configured but no trigger runner for this session -- input hook not started")
             return
         try:
             from ..registry import build_input
             hook = build_input("win32")
             if hook is None:
+                log.warning("on_input trigger(s) configured but no input backend registered for this platform")
                 return
             hook.start(runner.on_input)
             self._input_hook = hook
-        except Exception:  # pragma: no cover - defensive
+            log.info("input hook started")
+        except Exception:
+            log.exception("failed to start the input hook -- on_input triggers won't fire")
             self._input_hook = None
 
     def _stop_input_hook(self) -> None:

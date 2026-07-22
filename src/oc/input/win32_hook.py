@@ -6,191 +6,216 @@ input pipeline itself, not on a window's message queue. This is passive observat
 synthesize input), so it's the same mechanism a benign overlay/streaming tool uses and doesn't trip
 anti-cheat.
 
-A low-level hook must be installed AND pumped from a thread with its own Win32 message loop (the OS
-delivers hook callbacks by posting to that thread's queue), so :class:`Win32InputHook` runs a
-dedicated daemon thread for its life. ``ctypes`` only (no new dependency) — imported lazily inside
-the class so this module loads fine on any platform; it simply never registers there (see
-``oc.registry._IMPL_MODULES``, mirroring the win32 window provider).
+The catch: an LL hook callback runs INSIDE the OS's global input dispatch — Windows blocks ALL
+system-wide keyboard/mouse input for every process until the callback returns, and ``WH_MOUSE_LL``
+fires it on EVERY mouse move (a high-polling-rate mouse = ~1000/sec). A Python callback must
+reacquire the GIL to run at all; while this process's OCR/capture loop holds the GIL, that reacquire
+is delayed on every move, so the callback returns late and the OS stalls global input — lag that
+scales with how much the mouse moves. Thread priority does NOT fix this (CPython's GIL handoff isn't
+OS-priority-aware).
+
+So the hook does not run in this process at all. :class:`Win32InputHook` spawns a dedicated child
+process (:mod:`oc.input._hook_child`) that owns the hooks + message pump and has an UNCONTENDED GIL,
+so its callback returns in microseconds no matter what this process is doing. The child streams
+button/key EDGES (mouse moves stay inside it, never crossing the wire) as one JSON line each on its
+stdout. A reader thread here drains that stdout onto a bounded drop-newest queue, and a consumer
+thread calls the subscriber (``TriggerRunner.on_input`` — gates, dataset joins, a toast render). A
+backlogged reader only buffers bytes in the OS pipe; it can never stall the child's hook proc, so it
+can never stall system input. This mirrors the out-of-process toast poster (:mod:`oc.notify`),
+which isolates a GIL-hazardous WinRT call the same way.
 
 Caveat: UIPI blocks a hook from seeing input delivered to a MORE privileged process — if the game
-runs elevated and this app doesn't, the hook installs but never sees its events. Warframe normally
-isn't elevated, so this is a corner case, not the default.
+runs elevated and this app doesn't, the hook installs but never sees its events (the child reports
+the install failure on its stderr, logged here). Warframe normally isn't elevated, so this is a
+corner case, not the default.
 """
 
 from __future__ import annotations
 
+import atexit
+import json
+import logging
+import queue
+import subprocess
+import sys
 import threading
-import time
 from collections.abc import Callable
+from pathlib import Path
 
 from ..interfaces import InputSource
 from ..registry import register_input
 
-# ---- Win32 constants (kept local -- this module is the only place that needs them) ----------
-_WH_KEYBOARD_LL = 13
-_WH_MOUSE_LL = 14
-_WM_KEYDOWN = 0x0100
-_WM_KEYUP = 0x0101
-_WM_SYSKEYDOWN = 0x0104
-_WM_SYSKEYUP = 0x0105
-_WM_MOUSEMOVE = 0x0200
-_WM_LBUTTONDOWN = 0x0201
-_WM_LBUTTONUP = 0x0202
-_WM_RBUTTONDOWN = 0x0204
-_WM_RBUTTONUP = 0x0205
-_WM_MBUTTONDOWN = 0x0207
-_WM_MBUTTONUP = 0x0208
-_WM_XBUTTONDOWN = 0x020B
-_WM_XBUTTONUP = 0x020C
-_WM_QUIT = 0x0012
-
-# VK -> stable button name for keys with no printable ASCII form. Letters (0x41-0x5A) and digits
-# (0x30-0x39) map straight to their lowercased ASCII char (VK codes happen to equal ASCII there),
-# so they're handled in code, not this table.
-_VK_NAMES = {
-    0x08: "backspace", 0x09: "tab", 0x0D: "enter", 0x1B: "esc", 0x20: "space",
-    0x21: "pageup", 0x22: "pagedown", 0x23: "end", 0x24: "home",
-    0x25: "left", 0x26: "up", 0x27: "right", 0x28: "down",
-    0x2D: "insert", 0x2E: "delete",
-    0x10: "shift", 0xA0: "shift", 0xA1: "shift",
-    0x11: "ctrl", 0xA2: "ctrl", 0xA3: "ctrl",
-    0x12: "alt", 0xA4: "alt", 0xA5: "alt",
-    0x5B: "win", 0x5C: "win",
-    0xBA: ";", 0xBB: "=", 0xBC: ",", 0xBD: "-", 0xBE: ".", 0xBF: "/",
-    0xC0: "`", 0xDB: "[", 0xDC: "\\", 0xDD: "]", 0xDE: "'",
-    0x60: "num0", 0x61: "num1", 0x62: "num2", 0x63: "num3", 0x64: "num4",
-    0x65: "num5", 0x66: "num6", 0x67: "num7", 0x68: "num8", 0x69: "num9",
-}
-_VK_NAMES.update({0x70 + i: f"f{i + 1}" for i in range(24)})   # F1..F24
-
-
-def _key_name(vk: int) -> str:
-    if 0x41 <= vk <= 0x5A or 0x30 <= vk <= 0x39:   # A-Z / 0-9 share ASCII codepoints with VK
-        return chr(vk).lower()
-    return _VK_NAMES.get(vk, f"vk{vk}")
+_QUIT = object()   # sentinel: tell the consumer thread to stop
+_CHILD = Path(__file__).with_name("_hook_child.py")
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)   # no console flash for the child
 
 
 @register_input("win32")
 class Win32InputHook(InputSource):
-    """Low-level global keyboard+mouse hook. See :class:`oc.interfaces.InputSource`."""
+    """Low-level global keyboard+mouse hook, isolated in a child process. See
+    :class:`oc.interfaces.InputSource` and the module docstring."""
 
     def __init__(self) -> None:
-        self._thread: threading.Thread | None = None
-        self._thread_id = 0
+        self._proc: subprocess.Popen | None = None
         self._callback: Callable[[dict], None] | None = None
-        self._pos = (0, 0)
-        self._ready = threading.Event()
+        self._queue: queue.Queue | None = None
+        self._reader: threading.Thread | None = None
+        self._errpump: threading.Thread | None = None
+        self._consumer: threading.Thread | None = None
+        self._stopping = False
+        self._job = None   # KillJob: OS backstop so a parent crash can't orphan the child
+        self._atexit_registered = False
 
     def start(self, callback: Callable[[dict], None]) -> None:
-        if self._thread is not None and self._thread.is_alive():
+        if self._proc is not None and self._proc.poll() is None:
             self.stop()
+        log = logging.getLogger(__name__)
         self._callback = callback
-        self._ready.clear()
-        self._thread = threading.Thread(target=self._run, name="oc-input-hook", daemon=True)
-        self._thread.start()
-        self._ready.wait(timeout=2.0)   # best-effort: don't block the live-session start forever
+        self._stopping = False
+        # bounded + drop-newest-on-full (see _reader): a stalled subscriber must never make the
+        # reader block or the queue grow unbounded, only lose the least useful (oldest) backlog.
+        self._queue = queue.Queue(maxsize=256)
+        self._consumer = threading.Thread(target=self._consume, name="oc-input-consumer", daemon=True)
+        self._consumer.start()
+
+        # OS backstop against orphans: assign the child to a kill-on-close Job Object, so if THIS
+        # process dies (crash, taskkill) the OS closes the job handle and terminates the child too.
+        # Best-effort — a failed job just means stop()'s own kill is the only cleanup path.
+        try:
+            from ..notify._killjob import KillJob
+            self._job = KillJob()
+        except Exception:  # noqa: BLE001 - job setup must never stop the hook
+            self._job = None
+
+        # stdin=PIPE, held open for this process's life and never written: it is the child's
+        # parent-death sensor. If THIS process dies any way that skips stop() (crash, taskkill,
+        # os._exit), the OS closes our end and the child's stdin hits EOF -> the child self-exits.
+        # Belt to the KillJob's suspenders, and it covers the case KillJob setup failed.
+        self._proc = subprocess.Popen(
+            [sys.executable, str(_CHILD)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", bufsize=1,
+            creationflags=_NO_WINDOW,
+        )
+        if self._job is not None:
+            self._job.assign(self._proc)
+        if not self._atexit_registered:
+            # Prompt cleanup on a graceful interpreter exit that never calls stop(). (KillJob's
+            # kill-on-close and the child's stdin watchdog also cover this at the OS level; this
+            # just kills it immediately instead of waiting on those.)
+            atexit.register(self._atexit_kill)
+            self._atexit_registered = True
+
+        self._reader = threading.Thread(target=self._read, name="oc-input-reader", daemon=True)
+        self._reader.start()
+        self._errpump = threading.Thread(target=self._drain_stderr, name="oc-input-stderr", daemon=True)
+        self._errpump.start()
+        log.info("input hook child started (pid=%s)", self._proc.pid)
 
     def stop(self) -> None:
-        t = self._thread
-        if t is None or not t.is_alive():
-            return
+        self._stopping = True
+        proc, job = self._proc, self._job
+        self._proc = None
+        self._job = None
+        if job is not None:
+            job.terminate()   # kill the child now (graceful path; kill-on-close covers a crash)
+        if proc is not None:
+            try:
+                proc.kill()   # closes the child's stdout -> the reader's line loop ends on EOF
+            except Exception:  # noqa: BLE001 - already-dead child
+                pass
+            try:
+                proc.wait(timeout=2.0)
+            except Exception:  # noqa: BLE001
+                pass
+        for t in (self._reader, self._errpump):
+            if t is not None and t.is_alive():
+                t.join(timeout=2.0)
+        self._reader = self._errpump = None
+        if self._queue is not None:
+            self._queue.put(_QUIT)
+        if self._consumer is not None and self._consumer.is_alive():
+            self._consumer.join(timeout=2.0)
+        self._consumer = None
+        self._queue = None
+
+    def _atexit_kill(self) -> None:
+        """Last-ditch child kill on interpreter shutdown. Minimal and swallow-everything -- runs in
+        the atexit context where the world is half torn down."""
+        job, proc = self._job, self._proc
         try:
-            import win32api
-
-            win32api.PostThreadMessage(self._thread_id, _WM_QUIT, 0, 0)
-        except Exception:  # noqa: BLE001 - a failed unhook must never crash the caller
+            if job is not None:
+                job.terminate()
+        except Exception:  # noqa: BLE001
             pass
-        t.join(timeout=2.0)
-        self._thread = None
+        try:
+            if proc is not None:
+                proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
 
-    # ---- the hook thread: install both hooks, pump messages, unhook on exit ----------------
+    # ---- reader thread: drain the child's stdout onto the queue (never calls the subscriber) ----
 
-    def _run(self) -> None:
-        import ctypes
-        from ctypes import wintypes
+    def _read(self) -> None:
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            return
+        # readline(), NOT ``for line in stdout`` -- file iteration read-aheads and would buffer
+        # events until a big chunk arrives; readline yields each edge the instant the child flushes.
+        while True:
+            line = proc.stdout.readline()   # blocks in the OS read (GIL released) until a line/EOF
+            if line == "":
+                break   # EOF: the child closed stdout (killed on stop, or died)
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue   # a malformed line is not worth killing the stream over
+            q = self._queue
+            if q is None:
+                break
+            try:
+                q.put_nowait(ev)   # drop-newest-on-full: a full queue means the consumer is behind
+            except queue.Full:
+                pass
+        if not self._stopping:
+            logging.getLogger(__name__).warning(
+                "input hook child exited unexpectedly -- on_input triggers won't fire")
 
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
+    def _drain_stderr(self) -> None:
+        proc = self._proc
+        if proc is None or proc.stderr is None:
+            return
+        while True:
+            line = proc.stderr.readline()
+            if line == "":
+                break
+            line = line.strip()
+            if line:
+                logging.getLogger(__name__).warning("input hook child: %s", line)
 
-        class KBDLLHOOKSTRUCT(ctypes.Structure):
-            _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD),
-                        ("flags", wintypes.DWORD), ("time", wintypes.DWORD),
-                        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG))]
+    # ---- consumer thread: the ONLY thread that ever calls the subscriber callback -----------
+    # Kept off the reader on purpose -- a slow subscriber only backs up this queue, never the
+    # reader (which would in turn back up the OS pipe and, at the child, the hook proc).
 
-        class POINT(ctypes.Structure):
-            _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
-
-        class MSLLHOOKSTRUCT(ctypes.Structure):
-            _fields_ = [("pt", POINT), ("mouseData", wintypes.DWORD), ("flags", wintypes.DWORD),
-                        ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG))]
-
-        HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
-
-        def emit(device: str, action: str, button: str, x: int, y: int) -> None:
+    def _consume(self) -> None:
+        emit_failed = False   # log a broken subscriber ONCE (this can run once per keystroke/click)
+        while True:
+            q = self._queue
+            if q is None:
+                return
+            ev = q.get()
+            if ev is _QUIT:
+                return
             cb = self._callback
             if cb is None:
-                return
+                continue
             try:
-                cb({"device": device, "action": action, "button": button, "x": x, "y": y,
-                    "ts": time.monotonic()})
-            except Exception:  # noqa: BLE001 - a bad subscriber must never break the hook thread
-                pass
-
-        def kb_proc(nCode, wParam, lParam):
-            if nCode == 0:
-                info = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-                name = _key_name(info.vkCode)
-                x, y = self._pos
-                if wParam in (_WM_KEYDOWN, _WM_SYSKEYDOWN):
-                    emit("key", "down", name, x, y)
-                elif wParam in (_WM_KEYUP, _WM_SYSKEYUP):
-                    emit("key", "up", name, x, y)
-            return user32.CallNextHookEx(None, nCode, wParam, lParam)
-
-        def ms_proc(nCode, wParam, lParam):
-            if nCode == 0:
-                info = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-                x, y = info.pt.x, info.pt.y
-                self._pos = (x, y)
-                if wParam == _WM_MOUSEMOVE:
-                    emit("mouse", "move", "", x, y)
-                elif wParam == _WM_LBUTTONDOWN:
-                    emit("mouse", "down", "left", x, y)
-                elif wParam == _WM_LBUTTONUP:
-                    emit("mouse", "up", "left", x, y)
-                elif wParam == _WM_RBUTTONDOWN:
-                    emit("mouse", "down", "right", x, y)
-                elif wParam == _WM_RBUTTONUP:
-                    emit("mouse", "up", "right", x, y)
-                elif wParam == _WM_MBUTTONDOWN:
-                    emit("mouse", "down", "middle", x, y)
-                elif wParam == _WM_MBUTTONUP:
-                    emit("mouse", "up", "middle", x, y)
-                elif wParam == _WM_XBUTTONDOWN:
-                    xbtn = "x2" if (info.mouseData >> 16) & 0xFFFF == 2 else "x1"
-                    emit("mouse", "down", xbtn, x, y)
-                elif wParam == _WM_XBUTTONUP:
-                    xbtn = "x2" if (info.mouseData >> 16) & 0xFFFF == 2 else "x1"
-                    emit("mouse", "up", xbtn, x, y)
-            return user32.CallNextHookEx(None, nCode, wParam, lParam)
-
-        kb_ref = HOOKPROC(kb_proc)   # keep alive for the thread's life -- ctypes doesn't hold a ref
-        ms_ref = HOOKPROC(ms_proc)
-        self._thread_id = kernel32.GetCurrentThreadId()
-        hmod = kernel32.GetModuleHandleW(None)
-        kb_hook = user32.SetWindowsHookExW(_WH_KEYBOARD_LL, kb_ref, hmod, 0)
-        ms_hook = user32.SetWindowsHookExW(_WH_MOUSE_LL, ms_ref, hmod, 0)
-        self._ready.set()
-        try:
-            msg = wintypes.MSG()
-            while True:
-                r = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
-                if r <= 0:   # 0 = WM_QUIT, -1 = error
-                    break
-                user32.TranslateMessage(ctypes.byref(msg))
-                user32.DispatchMessageW(ctypes.byref(msg))
-        finally:
-            if kb_hook:
-                user32.UnhookWindowsHookEx(kb_hook)
-            if ms_hook:
-                user32.UnhookWindowsHookEx(ms_hook)
+                cb(ev)
+            except Exception:
+                if not emit_failed:
+                    emit_failed = True
+                    logging.getLogger(__name__).exception(
+                        "on_input subscriber raised -- on_input triggers won't fire (further errors suppressed)")
