@@ -154,11 +154,21 @@ export function producerParts(pn, cols = [], free = []) {
     // that nested array column (e.g. `mod` inside each build row's `slots` list).
     const nf = pn.source_field || "name";
     const nfOpts = [...new Set([nf, ...cols])].map((c) => h("option", { selected: c === nf }, c === nf ? `<${c}>` : c));
+    // Output identity column (per-item, non-explode only): diverges from "name by" when the
+    // source view hides the dataset's own key under a different name (e.g. a distinct-by view
+    // exposes `item` while the priced dataset keys on `name`) — "" falls back to "name by".
+    const idf = pn.identity_field || "";
+    const idOpts = [h("option", { value: "", selected: idf === "" }, `<${nf}>`),
+        ...[...new Set([idf, ...cols].filter(Boolean))].map((c) => h("option", { value: c, selected: c === idf }, c))];
     const keyFld = hasSrc
         ? frag(labCell("name by", "which source column names the item (fed to the URL / catalogue) — or, with 'array field' set, a field WITHIN each element of that nested array"),
             h("select", { class: "enr-keyfld-sel" }, nfOpts),
             labCell("array field", "optional: a NESTED array column to read source items from instead — every element's 'name by' field, deduped across every row (e.g. a build's 'slots' -> the distinct mod ids used)"),
-            h("input", { class: "pr-srcarray", value: pn.source_array || "", placeholder: "blank = source_field is a top-level column" }))
+            h("input", { class: "pr-srcarray", value: pn.source_array || "", placeholder: "blank = source_field is a top-level column" }),
+            ...(!isExplode ? [
+                labCell("identity col", "output column the fetched item's identity is written under — must match the dataset's key / what consumers join on. Blank = same as 'name by'. Set this when the source names the item differently than the dataset's own key field."),
+                h("select", { class: "pr-identity" }, idOpts),
+            ] : []))
         : null;
     // per-item-only knobs (how {key} is built, which sources feed it) — irrelevant in list mode.
     const perItem = isList ? [] : [

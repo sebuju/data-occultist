@@ -32,6 +32,7 @@ export function nodeInputs(model) {
         add(`producer:${id}`, id, `producers[${id}].mode`, "mode", ENUM("statistics", "orders"));
         add(`producer:${id}`, id, `producers[${id}].throttle`, "throttle (s)", N(0, null, 0.05));
         add(`producer:${id}`, id, `producers[${id}].source_field`, "source field", STR);
+        add(`producer:${id}`, id, `producers[${id}].identity_field`, "identity field", STR);
     }
     for (const w of p.windows || []) {
         const wid = w.id;

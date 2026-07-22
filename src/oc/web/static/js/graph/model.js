@@ -1020,6 +1020,10 @@ export class GraphModel {
     // optional: a NESTED array column to source items from instead of a top-level scalar — every
     // element's `source_field` value, deduped across every row. Blank = source_field is a plain column.
     setProducerSourceArray(id, v) { const pn = this.producerNode(id); if (pn) pn.source_array = v || ""; }
+    // output column the fetched item's identity is written under (per-item, non-explode only).
+    // "" -> falls back to source_field; set when the source names the item differently than the
+    // dataset's own key field (e.g. a distinct-by view exposes `item` while the dataset keys `name`).
+    setProducerIdentityField(id, v) { const pn = this.producerNode(id); if (pn) pn.identity_field = v || ""; }
     // columns available across a producer's source datasets/subsets (for the name-field picker)
     producerSourceColumns(pn) {
         const out = [];

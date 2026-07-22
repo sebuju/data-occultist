@@ -147,6 +147,7 @@ function wireProducer(div, n) {
     // which source column names the item (next sweep uses it — no rebuild)
     div.querySelector(".enr-keyfld-sel")?.addEventListener("change", (e) => { model.setProducerSourceField(id, e.target.value); save(); });
     div.querySelector(".pr-srcarray")?.addEventListener("change", (e) => { model.setProducerSourceArray(id, e.target.value); save(); });
+    div.querySelector(".pr-identity")?.addEventListener("change", (e) => { model.setProducerIdentityField(id, e.target.value); save(); });
     // add an item source via the chip add-select (same input the subset uses)
     div.querySelector(".pr-addsrc")?.addEventListener("change", (e) => {
         if (e.target.value && model.addProducerSource(id, e.target.value)) rebuild();
