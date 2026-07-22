@@ -2381,7 +2381,8 @@ datasets:
 - id: prices_live
   aggregate: latest
   key_field: ''
-  key_fields: []
+  key_fields:
+  - name
   dedup: true
   batch_mode: run
   reopen_grace: 0
@@ -2440,15 +2441,6 @@ datasets:
   batch_mode: detection
   reopen_grace: 0
   sync_mode: mirror
-  keep_batches: 0
-- id: relic_prices
-  aggregate: latest
-  key_field: ''
-  key_fields: []
-  dedup: true
-  batch_mode: run
-  reopen_grace: 0
-  sync_mode: accumulate
   keep_batches: 0
 - id: mission_rewards
   aggregate: latest
@@ -2571,6 +2563,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: overframe_build_mods_titled
   sources:
@@ -2602,6 +2596,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: overframe_build_mods_named
   sources:
@@ -2639,6 +2635,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: current_frame
   sources:
@@ -2676,6 +2674,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: live_prices_joined
   sources:
@@ -2721,6 +2721,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: true
 - id: relic_rewards_limit
   sources:
@@ -2747,6 +2749,8 @@ subsets:
   sort_desc: false
   latest_batch: true
   limit: 4
+  distinct: false
+  distinct_by: []
   config_collapsed: true
 - id: relic_rewards_with_price
   sources:
@@ -2760,14 +2764,14 @@ subsets:
     aggregate: latest
     required: true
     mode: join
-  - dataset: relic_prices
+  - dataset: prices_live
     join_field: name
     join_norm:
       case_insensitive: true
       strip_punct: false
       collapse_ws: true
       strip_words: []
-    aggregate: latest
+    aggregate: ''
     required: false
     mode: join
   filters: []
@@ -2797,6 +2801,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: true
 - id: relics_with_content
   sources:
@@ -2834,6 +2840,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: relics_with_content_view
   sources:
@@ -2875,6 +2883,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: relics_refinement_with_contents
   sources:
@@ -2910,6 +2920,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: contents_with_price
   sources:
@@ -2952,6 +2964,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: master_prime_parts
   sources:
@@ -2989,6 +3003,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: installable_mods
   sources:
@@ -3036,6 +3052,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: loadout_equipped
   sources:
@@ -3063,6 +3081,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: true
 - id: unowned_mods
   sources:
@@ -3112,6 +3132,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: unowned_suggestions
   sources:
@@ -3154,6 +3176,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: unowned_suggestions_general
   sources:
@@ -3234,6 +3258,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: unowned_suggestions_aura
   sources:
@@ -3310,6 +3336,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: unowned_suggestions_ranked
   sources:
@@ -3371,6 +3399,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: mod_suggestions
   sources:
@@ -3423,6 +3453,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: loadout_wide
   sources:
@@ -3453,6 +3485,8 @@ subsets:
     - _school
     - _po
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: empty_slots
   sources:
@@ -3477,6 +3511,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: drain_remaining
   sources:
@@ -3505,6 +3541,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: empty_general_slots
   sources:
@@ -3534,6 +3572,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: empty_aura_slot
   sources:
@@ -3565,6 +3605,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: mod_suggestions_general
   sources:
@@ -3645,6 +3687,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: mod_suggestions_aura
   sources:
@@ -3721,6 +3765,8 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 - id: mod_suggestions_ranked
   sources:
@@ -3798,20 +3844,12 @@ subsets:
   sort_desc: false
   latest_batch: false
   limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
-- id: relic_rewards_with_price-copy
+- id: distinct_relic_items
   sources:
-  - dataset: relic_rewards_limit
-    join_field: name
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
-    aggregate: latest
-    required: true
-    mode: join
-  - dataset: prices_live
+  - dataset: relic_contents
     join_field: name
     join_norm:
       case_insensitive: true
@@ -3822,33 +3860,22 @@ subsets:
     required: false
     mode: join
   filters: []
-  derived:
-  - name: price
-    template: '{price_min|round:0}'
+  derived: []
   hidden_columns:
-  - total
-  - volume
-  - slug
-  - _seq
-  - count
-  - _item
-  - live_sellers
-  - live_median
-  - price_median
-  - live_ask
   - key
+  - _seq
   - _pos
-  - price_min
-  - updated
-  - combined
-  sort:
-  - field: price_min
-    desc: true
+  - name
+  - rarity
+  sort: []
   sort_by: ''
   sort_desc: false
   latest_batch: false
   limit: 0
-  config_collapsed: true
+  distinct: true
+  distinct_by:
+  - item
+  config_collapsed: false
 producers:
 - id: wf_market_live
   type: http
@@ -3858,9 +3885,10 @@ producers:
   enabled: true
   queue_mode: drop
   sources:
-  - relic_contents
+  - distinct_relic_items
   source_field: item
   source_array: ''
+  identity_field: name
   http:
     request:
       method: GET
@@ -3951,6 +3979,7 @@ producers:
   sources: []
   source_field: name
   source_array: ''
+  identity_field: ''
   http:
     request:
       method: GET
@@ -3990,97 +4019,6 @@ producers:
     - item
     sep: '|'
     case_sensitive: false
-- id: wf_market_relic
-  type: http
-  mode: orders
-  dataset: relic_prices
-  throttle: 0.4
-  enabled: true
-  queue_mode: latest
-  sources:
-  - relic_rewards_limit
-  source_field: name
-  source_array: ''
-  http:
-    request:
-      method: GET
-      url: https://api.warframe.market/v2/orders/item/{key}
-      headers:
-        platform: pc
-        User-Agent: oc/0.1
-        Accept: application/json
-      query: {}
-      timeout: 30.0
-      html_extract: ''
-    key_transform: catalogue
-    key_encode: true
-    catalogue:
-      url: https://api.warframe.market/v2/items
-      items_path: data
-      name_path: i18n.en.name
-      key_path: slug
-      fuzzy: 0.9
-      ttl_days: 7.0
-      suffix_hints:
-      - _set
-    root: data
-    explode: []
-    row_filter: []
-    fields:
-    - out_field: price_min
-      path: ''
-      template: ''
-      array:
-        filter:
-        - path: type
-          op: eq
-          value: sell
-        - path: user.status
-          op: in
-          value:
-          - online
-          - ingame
-        pluck: platinum
-        agg: min
-        depth: 5
-      type: number
-      required: false
-    - out_field: price_median
-      path: ''
-      template: ''
-      array:
-        filter:
-        - path: type
-          op: eq
-          value: sell
-        - path: user.status
-          op: in
-          value:
-          - online
-          - ingame
-        pluck: platinum
-        agg: median_low
-        depth: 5
-      type: number
-      required: false
-    - out_field: volume
-      path: ''
-      template: ''
-      array:
-        filter:
-        - path: type
-          op: eq
-          value: sell
-        - path: user.status
-          op: in
-          value:
-          - online
-          - ingame
-        pluck: platinum
-        agg: count
-        depth: 5
-      type: number
-      required: false
 - id: mod_catalog_producer
   type: http
   mode: ''
@@ -4091,6 +4029,7 @@ producers:
   sources: []
   source_field: name
   source_array: ''
+  identity_field: ''
   http:
     request:
       method: GET
@@ -4164,6 +4103,7 @@ producers:
   sources: []
   source_field: name
   source_array: ''
+  identity_field: ''
   http:
     request:
       method: GET
@@ -4205,6 +4145,7 @@ producers:
   - overframe_frames
   source_field: item_id
   source_array: ''
+  identity_field: ''
   http:
     request:
       method: GET
@@ -4248,6 +4189,7 @@ producers:
   - current_frame
   source_field: item_id
   source_array: ''
+  identity_field: ''
   http:
     request:
       method: GET
@@ -4326,6 +4268,7 @@ producers:
   - overframe_builds
   source_field: build_id
   source_array: ''
+  identity_field: ''
   http:
     request:
       method: GET
@@ -4438,6 +4381,7 @@ producers:
   - overframe_build_detail
   source_field: mod
   source_array: slots
+  identity_field: ''
   http:
     request:
       method: GET
@@ -4481,6 +4425,7 @@ producers:
   - overframe_builds
   source_field: build_id
   source_array: ''
+  identity_field: ''
   http:
     request:
       method: GET
@@ -4614,33 +4559,6 @@ triggers:
   - wf_market_live
   enabled: true
   ready_field: ''
-- id: trigger_on_new_relic
-  kind: on_new_batch
-  interval_s: 300.0
-  watch:
-  - relic_rewards_limit
-  readout_watch: []
-  register_watch: []
-  gates: []
-  targets:
-  - wf_market_relic
-  enabled: true
-  settle_ms: 1200.0
-  settle_max_ms: 3000.0
-  ready_field: ''
-- id: on_new_relic_fetched
-  kind: on_ready
-  interval_s: 300.0
-  watch:
-  - wf_market_relic
-  readout_watch: []
-  register_watch: []
-  gates: []
-  targets:
-  - relic_sound
-  - toast_2
-  enabled: true
-  ready_field: ''
 - id: trigger_ab_1
   kind: on_register
   interval_s: 300.0
@@ -4705,6 +4623,19 @@ triggers:
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
+- id: on_new_relics_offered
+  kind: on_new_batch
+  interval_s: 300.0
+  watch:
+  - relic_rewards_limit
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_2
+  - relic_sound
+  enabled: true
+  ready_field: ''
 gates:
 - id: gate_value_ab_1
   source: register:value_ab_register#value_ab_1
@@ -4745,6 +4676,8 @@ gates:
     arg: protea
   - when: contains
     arg: revenant
+  - when: contains
+    arg: baruuk
   logic: or
   negate: true
   enabled: true
@@ -5126,30 +5059,30 @@ sounds:
     wave: sine
     points:
     - t: 0.0
-      p: 0.5877525298136395
-    - t: 0.24476981453947147
-      p: 0.39078286349463043
+      p: 0.771
+    - t: 0.25
+      p: 0.82
     - t: 0.5
-      p: 0.394
+      p: 0.947
     - t: 0.75
-      p: 0.688
+      p: 0.279
     - t: 1.0
-      p: 0.452
-    length_ms: 205
-    attack: 4
-    decay: 55
-    release: 0
-    vibrato: 0
-    crush: 11
+      p: 0.922
+    length_ms: 278
+    attack: 18
+    decay: 42
+    release: 20
+    vibrato: 19
+    crush: 0
     cutoff: 100
     reso: 0
     noise: 0
-    sub: 0
-    glide: 100
+    sub: 39
+    glide: 11
     echo: 0
-    echo_ms: 90
-    transpose: 0
-    repeat: 1
+    echo_ms: 139
+    transpose: -10
+    repeat: 3
   volume: 0.7
   enabled: true
 - id: ab_sound_4
@@ -5183,52 +5116,64 @@ sounds:
   synth:
     wave: square
     points:
-    - t: 0.15
-      p: 0.5082461843712742
+    - t: 0.0
+      p: 0.356
+    - t: 0.25
+      p: 0.3
+    - t: 0.5
+      p: 0.576
+    - t: 0.75
+      p: 0.819
     - t: 1.0
-      p: 0.72
-    length_ms: 220
-    attack: 4
-    decay: 55
+      p: 0.534
+    length_ms: 301
+    attack: 11
+    decay: 40
     release: 0
-    vibrato: 0
-    crush: 18
+    vibrato: 28
+    crush: 0
     cutoff: 100
     reso: 0
     noise: 0
-    sub: 0
-    glide: 100
+    sub: 41
+    glide: 38
     echo: 0
-    echo_ms: 90
-    transpose: 0
+    echo_ms: 70
+    transpose: -4
     repeat: 1
-  volume: 1.0
+  volume: 0.7
   enabled: true
 - id: ab_sound_3
   file: ''
   synth:
-    wave: square
+    wave: sine
     points:
     - t: 0.0
-      p: 0.5
+      p: 0.892
+    - t: 0.25
+      p: 0.318
+    - t: 0.5
+      p: 0.729
+    - t: 0.75
+      p: 0.131
     - t: 1.0
-      p: 0.72
-    length_ms: 220
+      p: 0.818
+    length_ms: 178
     attack: 4
-    decay: 55
+    decay: 68
     release: 0
-    vibrato: 0
-    crush: 18
+    vibrato: 50
+    crush: 0
     cutoff: 100
     reso: 0
     noise: 0
     sub: 0
-    glide: 100
+    glide: 24
     echo: 0
-    echo_ms: 90
+    echo_ms: 104
     transpose: 0
-    repeat: 1
-  volume: 1.0
+    repeat: 3
+  volume: 0.7
   enabled: true
 actions: []
 registers:
@@ -5505,7 +5450,7 @@ layout:
       softH: true
     ds:prices_live:
       x: -480.0
-      y: -1500.0
+      y: -1620.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -5514,7 +5459,7 @@ layout:
       softH: true
     sub:live_prices_joined:
       x: -60.0
-      y: -2200.0
+      y: -2920.0
       w: 360.0
       h: 920.0
       collapsed: false
@@ -5525,14 +5470,14 @@ layout:
       x: -480.0
       y: -2920.0
       w: 360.0
-      h: 1340.0
+      h: 1260.0
       collapsed: false
       custW: false
-      custH: false
+      custH: true
       softH: true
     sub:relic_rewards_limit:
-      x: 1140.0
-      y: -7060.0
+      x: 1160.0
+      y: -5460.0
       w: 360.0
       h: 260.0
       collapsed: false
@@ -5962,7 +5907,7 @@ layout:
       collapsed: false
     sub:master_prime_parts:
       x: 360.0
-      y: -2200.0
+      y: -2920.0
       w: 360.0
       h: 900.0
       collapsed: false
@@ -5982,35 +5927,11 @@ layout:
       custW: true
       custH: true
       softH: true
-    producer:wf_market_relic:
-      x: 1540.0
-      y: -7060.0
-      w: 360.0
-      h: 1340.0
-      collapsed: false
-      custW: false
-      custH: false
-      softW: true
-      softH: true
-    ds:relic_prices:
-      x: 1540.0
-      y: -5680.0
-      collapsed: false
-    trigger:trigger_on_new_relic:
-      x: 1140.0
-      y: -6360.0
-      w: 360.0
-      h: 240.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
     sound:relic_sound:
-      x: 3560.0
-      y: -6840.0
+      x: 1580.0
+      y: -6620.0
       w: 360.0
-      h: 140.0
+      h: 160.0
       collapsed: false
       custW: true
       custH: true
@@ -6034,29 +5955,19 @@ layout:
       custW: true
       custH: false
       softW: true
-    trigger:on_new_relic_fetched:
-      x: 2440.0
-      y: -7060.0
-      w: 360.0
-      h: 220.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-      softH: true
     toast:toast_2:
-      x: 3440.0
-      y: -6480.0
+      x: 1580.0
+      y: -6420.0
       w: 700.0
-      h: 1504.0
+      h: 1540.0
       collapsed: false
       custW: true
-      custH: false
+      custH: true
       softW: true
       softH: true
     sub:relic_rewards_with_price:
-      x: 2440.0
-      y: -6660.0
+      x: 1160.0
+      y: -6400.0
       w: 360.0
       h: 900.0
       collapsed: false
@@ -6969,25 +6880,6 @@ layout:
       custH: true
       softW: true
       softH: true
-    prodhist:wf_market_relic:
-      x: 1940.0
-      y: -7060.0
-      w: 460.0
-      h: 320.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: false
-    vt:sub:relic_rewards_with_price:
-      x: 2840.0
-      y: -6660.0
-      w: 560.0
-      h: 360.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
     prev:relic_rewards:
       x: 1740.0
       y: -4280.0
@@ -6997,16 +6889,6 @@ layout:
       custW: true
       custH: false
       softW: true
-    hist:on_new_relic_fetched:
-      x: 2840.0
-      y: -7060.0
-      w: 700.0
-      h: 360.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
     vt:ds:relics_offered:
       x: 1560.0
       y: -3840.0
@@ -7016,25 +6898,6 @@ layout:
       y: -5100.0
       w: 240.0
       h: 380.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
-    vt:sub:relic_rewards_limit:
-      x: 1140.0
-      y: -6760.0
-      w: 360.0
-      h: 360.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: false
-    vt:ds:relic_prices:
-      x: 1960.0
-      y: -5680.0
-      w: 620.0
-      h: 760.0
       collapsed: false
       custW: true
       custH: true
@@ -7386,19 +7249,23 @@ layout:
       custH: true
       softW: true
       softH: true
-    sub:relic_rewards_with_price-copy:
-      x: 2880.0
-      y: -5840.0
+    sub:distinct_relic_items:
+      x: -900.0
+      y: -2700.0
+      collapsed: false
+    vt:ds:prices_live:
+      x: -60.0
+      y: -1620.0
+      collapsed: false
+    trigger:on_new_relics_offered:
+      x: 1160.0
+      y: -6620.0
       w: 360.0
-      h: 900.0
+      h: 192.0
       collapsed: false
-      custW: false
-      custH: true
-      softH: true
-    vt:sub:relic_rewards_with_price-copy:
-      x: 3300.0
-      y: -5840.0
-      collapsed: false
+      custW: true
+      custH: false
+      softW: true
   tables:
     warframe:ds:master:
       sorts:
@@ -7516,9 +7383,10 @@ layout:
       widths:
         _seq: 36
         _batch: 36
-        price_min: 70
-        price_median: 90
-        name: 153
+        price_min: 54
+        price_median: 54
+        name: 231
+        volume: 54
     view:statistic_prices_joined:
       widths:
         _seq: 36
@@ -7648,10 +7516,6 @@ layout:
       widths:
         price: 68
       order: []
-    hist:trigger:
-      widths: {}
-      order: []
-      sorts: []
     hist:ab_trigger:
       widths:
         when: 147
@@ -7659,14 +7523,6 @@ layout:
         throttled: 69
         fires: 69
         node: 88
-    ds:relic_prices:
-      widths:
-        _seq: 49
-        _batch: 57
-        _pos: 53
-        price_min: 70
-        price_median: 90
-        volume: 53
     ds:mod_catalog:
       widths:
         compat: 134
@@ -7919,6 +7775,10 @@ layout:
     prodhist:wf_market_live:
       widths:
         dataset: 123
+    hist:on_new_relics_offered:
+      widths: {}
+      order: []
+      sorts: []
   open_images:
   - atlas
   - live_game_window
@@ -8045,6 +7905,8 @@ layout:
     - producer:wf_market_live
     - trigger:owned_refresh
     - sub:master_prime_parts
+    - sub:distinct_relic_items
+    - vt:ds:prices_live
     outline:
       color: '#8a91a0'
       style: none
@@ -8543,21 +8405,11 @@ layout:
   - id: group_68
     title: group_68
     members:
-    - ds:relic_prices
     - sub:relic_rewards_limit
     - sub:relic_rewards_with_price
-    - producer:wf_market_relic
-    - trigger:trigger_on_new_relic
-    - trigger:on_new_relic_fetched
     - toast:toast_2
     - sound:relic_sound
-    - prodhist:wf_market_relic
-    - vt:sub:relic_rewards_with_price
-    - hist:on_new_relic_fetched
-    - vt:sub:relic_rewards_limit
-    - vt:ds:relic_prices
-    - sub:relic_rewards_with_price-copy
-    - vt:sub:relic_rewards_with_price-copy
+    - trigger:on_new_relics_offered
     outline:
       color: '#5ad7e6'
       style: none
@@ -8843,20 +8695,15 @@ layout:
   - vt:ds:ee_log_
   - vtd:src:source
   - vt:sub:overframe_suggestions
-  - prodhist:wf_market_relic
-  - vt:sub:relic_rewards_with_price
   - prev:relic_rewards
-  - hist:on_new_relic_fetched
   - vt:ds:relics_offered
-  - vt:sub:relic_rewards_limit
-  - vt:ds:relic_prices
   - rohist:live_game_window:warframe_name_live
   - rohist:live_game_window:value_ab_1
   - rohist:live_game_window:value_ab_2
   - rohist:live_game_window:value_ab_3
   - rohist:live_game_window:value_ab_4
   - reghist:value_ab_register
-  - vt:sub:relic_rewards_with_price-copy
+  - vt:ds:prices_live
   sub_groups:
   - id: subgroup_5
     parent: group_22
