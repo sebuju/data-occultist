@@ -60,6 +60,51 @@ def test_http_producer_maps_rows_by_name(tmp_path, monkeypatch):
     assert rows["Vitality"]["price_min"] == 15
 
 
+def test_http_producer_identity_field_diverges_from_source_field(tmp_path, monkeypatch):
+    """The source view names the item under `item` (e.g. a distinct-by view that hides the
+    dataset's own key), but the dataset keys on `name`. Without `identity_field`, every row
+    would be written under `item` and dropped as unkeyable by the `name`-keyed store (see
+    GameProfile.key_map_for) — this is exactly the prices_live bug: fetched, but 0 batches."""
+    prices = {"serration": _orders(40, 20, 60)}
+
+    def fake_get(url, **kw):
+        return prices[url.rsplit("/", 1)[-1]]
+    monkeypatch.setattr(http_producer, "http_get_json", fake_get)
+
+    node = ProducerDef(id="live", dataset="prices_live", type="http", sources=["master"],
+                       source_field="item", identity_field="name", http=_sell_spec())
+    ctx = ProducerCtx(data_dir=str(tmp_path), game="g", node=node, dataset="prices_live",
+                      key=KeySpec(fields=("name",)), profile=None, items=["Serration"], workers=1)
+    res = HttpProducer().run(ctx)
+    assert res == {"total": 1, "fetched": 1, "failed": 0}
+
+    out = DatasetStore(tmp_path, "g", "prices_live", key=KeySpec(fields=("name",)))
+    rows = {r["name"]: r for r in out.records()}
+    assert rows["Serration"]["price_min"] == 20, "row must be keyed under identity_field, not source_field"
+    assert out.batch_count() == 1
+
+
+def test_http_producer_empty_sweep_opens_no_batch(tmp_path, monkeypatch):
+    """A sweep whose every response maps to no row (a required field comes back empty) must
+    not spawn an empty batch — begin_batch defers to the first real write, mirroring the
+    collector's _pending_batch. Otherwise keep_batches churns folds on nothing and the ledger
+    shows a growing batch count with zero events (the observed prices_live symptom)."""
+    monkeypatch.setattr(http_producer, "http_get_json", lambda url, **kw: _orders())  # no orders
+
+    flt = [HttpFilter(path="type", op="eq", value="sell")]
+    spec = HttpSpec(
+        request=HttpRequest(method="GET", url="https://x/item/{key}", timeout=10),
+        key_transform="slugify", key_encode=True, root="data",
+        fields=[HttpField(out_field="price_min", type="number", required=True,
+                          array=HttpArraySpec(filter=flt, pluck="platinum", agg="min"))])
+    node = ProducerDef(id="live", dataset="prices_live", type="http", sources=["master"], http=spec)
+    res = HttpProducer().run(_ctx(tmp_path, node, ["Serration"]))
+    assert res["fetched"] == 1   # the fetch succeeded, it just mapped to no row
+
+    out = DatasetStore(tmp_path, "g", "prices_live", key=KeySpec(fields=("name",)))
+    assert out.batch_count() == 0, "no row was mappable -> no batch should have opened"
+
+
 def test_http_producer_catalogue_resolves_set_name(tmp_path, monkeypatch):
     catalogue = {"data": [
         {"i18n": {"en": {"name": "Acceltra Prime Set"}}, "slug": "acceltra_prime_set"},

@@ -1002,6 +1002,12 @@ class ProducerDef(BaseModel):
     # list contributes its ``source_field`` value, deduped across the whole source (a
     # build's mod loadout -> the distinct mod ids used across every fetched build).
     source_array: str = ""
+    # Output column the fetched item's identity is written under (per-item, non-explode mode
+    # only). "" -> ``source_field``. Needed when the source dataset hides the dataset's own key
+    # field (e.g. a distinct-by view exposes only ``item`` while the priced dataset keys on
+    # ``name``) — without this the write key silently mismatches the read key and every row is
+    # dropped as unkeyable (see ``GameProfile.key_map_for``).
+    identity_field: str = ""
     # The generic HTTP fetch+map spec (for ``type: http``). Authored in the UI.
     http: HttpSpec | None = None
     # How this producer's output rows are keyed/deduped in the dataset — its own

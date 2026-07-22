@@ -2,15 +2,17 @@
 columns. Three shapes, chosen by the spec:
 
 * **per item** (default) — fetch the URL once per source item (``{name}``/``{key}``
-  substituted) and map the response to ONE row (warframe.market pricing works this way).
+  substituted) and map the response to ONE row (warframe.market pricing works this way). The
+  row's identity column is ``identity_field`` (falling back to ``source_field``) — the two
+  diverge when the source view hides the dataset's own key under a different name.
 * **list / explode, no sources** (``HttpSpec.explode`` set, ``sources`` empty) — fetch the
   URL ONCE and expand nested arrays into MANY rows, one per leaf (the WFCD relic table
   works this way: ``explode: [relics, rewards]`` -> one row per (relic, reward)).
 * **per item / explode** (``HttpSpec.explode`` set, ``sources`` wired) — fetch the URL once
   PER source item and expand EACH response into many rows (a builds-list-per-frame feed:
   one fetch per frame, one row per build). Every row is tagged with the source item under
-  the node's ``source_field`` (e.g. ``item_id``), same convention as the per-item row's
-  injected identity column.
+  the node's ``source_field`` (e.g. ``item_id``), a data column here, not necessarily the
+  record key.
 
 This is the one network backend: warframe.market pricing AND the relic reward table are
 just ``http`` nodes in a profile (URL, headers, and response mapping authored in the
@@ -470,24 +472,36 @@ class HttpProducer(ProducerSource):
 
         store = store_for(ctx.data_dir, ctx.game, ctx.dataset, profile=ctx.profile,
                           key=ctx.key or KeySpec(fields=("name",)))
-        store.begin_batch()
+        # Deferred, not eager: a sweep that writes nothing (every fetch failed, or the source
+        # was empty) must not spawn an empty batch — mirrors the collector's _pending_batch.
+        began = [False]
 
-        # The source item's identity is injected under source_field (default "name") —
-        # the same convention as every per-item producer's output row. In explode mode this
-        # tags every row a fetch expands into (e.g. a build row keeps its frame's item_id).
-        key_field = getattr(node, "source_field", "name") or "name"
+        def begin_once() -> None:
+            if not began[0]:
+                store.begin_batch()
+                began[0] = True
+
+        # The source item's identity tags every explode-mode row under source_field (e.g. a
+        # build row keeps its frame's item_id) — a data column, not necessarily the record key.
+        # The per-item (non-explode) row's own identity column is identity_field, falling back
+        # to source_field: the two diverge when the source exposes the item under a different
+        # name than the dataset's own key (see ProducerDef.identity_field).
+        tag_field = getattr(node, "source_field", "name") or "name"
+        id_field = getattr(node, "identity_field", "") or tag_field
 
         def write_one(k: str, name: str, data: object) -> None:
             rooted = json_path(data, spec.root)
             if spec.explode:
-                rows = [{key_field: name, **row} for row in map_rows(rooted, spec)]
+                rows = [{tag_field: name, **row} for row in map_rows(rooted, spec)]
                 if rows:
+                    begin_once()
                     store.record_many(rows)     # one txn per item's rows, not per row
                 return
             row = map_response(rooted, spec.fields)
             if row is None:
                 return
-            store.record_seen({key_field: name, **row})
+            begin_once()
+            store.record_seen({id_field: name, **row})
 
         return run_sweep(items, fetch_one, write_one, dataset_store=store,
                          throttle=float(getattr(node, "throttle", 0.4) or 0.0),
@@ -510,8 +524,9 @@ class HttpProducer(ProducerSource):
         rows = map_rows(json_path(data, spec.root), spec)
         store = store_for(ctx.data_dir, ctx.game, ctx.dataset, profile=ctx.profile,
                           key=ctx.key or KeySpec(fields=("name",)))
-        store.begin_batch()
-        store.record_many(rows)                            # one txn, one announce (not per row)
+        if rows:                                           # no rows -> no empty batch
+            store.begin_batch()
+            store.record_many(rows)                        # one txn, one announce (not per row)
         store.save()
         n = len(rows)
         if ctx.on_item:
