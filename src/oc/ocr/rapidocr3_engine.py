@@ -101,6 +101,8 @@ class Rapid3OcrEngine(OcrEngine):
         self._engine = None
         self._scale = 1   # integer downscale factor for big frames (1 = off; 2 -> quarter area)
         self._gpu_mem_gb = 3.0   # CUDA arena ceiling; see _CUDA_PARAMS in the map module
+        self._det_unclip_default = 1.6   # engine's own Det.unclip_ratio/box_thresh, captured
+        self._det_box_thresh_default = 0.5   # from cfg once built; see _ensure_engine
         if self._gpu:
             register_cuda_dlls()
         _preload_onnxruntime(self.engine_type)
@@ -306,19 +308,35 @@ class Rapid3OcrEngine(OcrEngine):
                         params["Det.limit_type"] = "min"
                         params["Det.limit_side_len"] = 320
                     self._engine = RapidOCR(params=_to_enums(params))
+                    # baseline det params (settings.yaml Det.* passthrough already folded
+                    # in above) — the concrete numbers a per-window override falls back to,
+                    # since update_params() below skips None and would otherwise leave a
+                    # PRIOR call's custom value stuck on the shared engine (see read_image).
+                    try:
+                        self._det_unclip_default = float(self._engine.cfg.Det.unclip_ratio)
+                        self._det_box_thresh_default = float(self._engine.cfg.Det.box_thresh)
+                    except (AttributeError, TypeError, ValueError):
+                        pass
         return self._engine
 
-    def read_image(self, image: np.ndarray) -> list[OcrLine]:
+    def read_image(self, image: np.ndarray, *, unclip_ratio: float | None = None,
+                    box_thresh: float | None = None) -> list[OcrLine]:
         engine = self._ensure_engine()
         f = self._scale
         h, w = image.shape[:2]
         # v3's per-call flags are STATEFUL: update_params skips None, so a flag set by
         # any earlier call sticks on the shared engine. One read_line (use_det=False)
         # would otherwise flip every later read_image to rec-only — which also changes
-        # the return TYPE to a boxless TextRecOutput. Always pass all three.
+        # the return TYPE to a boxless TextRecOutput. Always pass all three. Same lesson
+        # applies to unclip_ratio/box_thresh: a caller's custom override would otherwise
+        # stick on the NEXT default-preprocess read, so resolve None -> the engine's own
+        # baseline (captured once in _ensure_engine) and always pass a concrete number.
+        ur = unclip_ratio if unclip_ratio is not None else self._det_unclip_default
+        bt = box_thresh if box_thresh is not None else self._det_box_thresh_default
         if f <= 1 or max(h, w) <= 600:   # no downscale / small crop: the normal pipeline
             with _INFER_LOCK:
-                out = engine(image, use_det=True, use_cls=False, use_rec=True)
+                out = engine(image, use_det=True, use_cls=False, use_rec=True,
+                             unclip_ratio=ur, box_thresh=bt)
             return to_lines(out.boxes, out.txts, out.scores)
 
         # Downscaled read (same split as the old backend): DETECT on a reduced frame —
@@ -329,7 +347,8 @@ class Rapid3OcrEngine(OcrEngine):
         # rec entry point that never touches the stateful per-call flags.
         small = cv2.resize(image, (w // f, h // f), interpolation=cv2.INTER_AREA)
         with _INFER_LOCK:
-            det = engine(small, use_det=True, use_cls=False, use_rec=False)
+            det = engine(small, use_det=True, use_cls=False, use_rec=False,
+                         unclip_ratio=ur, box_thresh=bt)
             if det.boxes is None or len(det.boxes) == 0:
                 return []
             # det boxes back to full-frame coords, clipped against rounding overshoot

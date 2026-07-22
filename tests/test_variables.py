@@ -20,7 +20,7 @@ class StubOcr(OcrEngine):
     def __init__(self, text, conf=0.95):
         self._text, self._conf = text, conf
 
-    def read_image(self, image) -> list[OcrLine]:
+    def read_image(self, image, **_kw) -> list[OcrLine]:
         h, w = image.shape[:2]
         return [OcrLine(self._text, PixelBox(0, 0, w, h), self._conf)]
 

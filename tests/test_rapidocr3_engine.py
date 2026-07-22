@@ -30,7 +30,8 @@ def test_read_image_pins_all_stage_flags():
 
     eng._engine = fake
     assert eng.read_image(np.zeros((10, 10, 3), np.uint8)) == []
-    assert calls == [{"use_det": True, "use_cls": False, "use_rec": True}]
+    assert calls == [{"use_det": True, "use_cls": False, "use_rec": True,
+                       "unclip_ratio": eng._det_unclip_default, "box_thresh": eng._det_box_thresh_default}]
 
 
 def test_thread_knob_mutates_options_and_forces_rebuild():

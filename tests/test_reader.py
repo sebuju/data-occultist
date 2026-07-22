@@ -19,7 +19,7 @@ class StubOcr(OcrEngine):
     def __init__(self, lines):
         self._lines = lines
 
-    def read_image(self, image) -> list[OcrLine]:
+    def read_image(self, image, **_kw) -> list[OcrLine]:
         return list(self._lines)
 
 
@@ -177,7 +177,7 @@ class SequencedOcr(OcrEngine):
         self._responses = list(responses)
         self.calls = 0
 
-    def read_image(self, image):
+    def read_image(self, image, **_kw):
         resp = self._responses[self.calls] if self.calls < len(self._responses) else []
         self.calls += 1
         return list(resp)
@@ -312,7 +312,7 @@ class ShapeOcr(OcrEngine):
     def __init__(self):
         self.shapes = []
 
-    def read_image(self, image):
+    def read_image(self, image, **_kw):
         self.shapes.append(tuple(image.shape[:2]))
         return [OcrLine("x", PixelBox(0, 0, 5, 5), 0.9)]
 
@@ -371,7 +371,7 @@ class RecEmptyOcr(OcrEngine):
         self._det = list(det_lines)
         self.det_calls = 0
 
-    def read_image(self, image):
+    def read_image(self, image, **_kw):
         self.det_calls += 1
         return list(self._det)
 
@@ -424,7 +424,7 @@ class BatchOnlyOcr(OcrEngine):
         self._per = list(per_crop)
         self.batch_sizes = []
 
-    def read_image(self, image):
+    def read_image(self, image, **_kw):
         raise AssertionError("expected the batched read_images path, got a per-box read_image")
 
     def read_images(self, images):
@@ -555,7 +555,7 @@ def _masked_pending(window):
 class ExplodeOcr(OcrEngine):
     """Any OCR call is a failure — proves a box was gated to absent with zero OCR."""
 
-    def read_image(self, image):
+    def read_image(self, image, **_kw):
         raise AssertionError("OCR called on a box that should have been gated absent")
 
     def read_lines(self, images):
@@ -571,7 +571,7 @@ class SplitOcr(OcrEngine):
         self._det = list(det)      # list[list[OcrLine]]
         self.rec_calls = self.det_calls = 0
 
-    def read_image(self, image):
+    def read_image(self, image, **_kw):
         raise AssertionError("expected batched reads, not read_image")
 
     def read_lines(self, images):
@@ -694,7 +694,7 @@ class MaskedRecOcr(OcrEngine):
     def __init__(self, text, conf=0.9):
         self._t = (text, conf)
 
-    def read_image(self, image):
+    def read_image(self, image, **_kw):
         raise AssertionError("no detection expected")
 
     def read_lines(self, images):

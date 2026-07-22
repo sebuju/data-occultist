@@ -53,6 +53,23 @@ function wirePreprocess(div, holder, { nodeId, winId, edit, pick }) {
     div.querySelector(".ppscale")?.addEventListener("change", (e) => {
         edit(() => { model._ppOf(holder).scale = +e.target.value || 1; });
     });
+    // Detector split knobs: blank -> engine default (delete the key rather than store a
+    // stale number), matching the "placeholder: default" UI. Neither needs a rebuild or
+    // preview refresh — they change what the DETECTOR sees, not the mask/preview pixels.
+    div.querySelector(".ppunclip")?.addEventListener("change", (e) => {
+        const v = e.target.value === "" ? null : +e.target.value;
+        edit(() => {
+            if (v == null || Number.isNaN(v)) delete model._ppOf(holder).det_unclip_ratio;
+            else model._ppOf(holder).det_unclip_ratio = v;
+        });
+    });
+    div.querySelector(".ppboxthresh")?.addEventListener("change", (e) => {
+        const v = e.target.value === "" ? null : +e.target.value;
+        edit(() => {
+            if (v == null || Number.isNaN(v)) delete model._ppOf(holder).det_box_thresh;
+            else model._ppOf(holder).det_box_thresh = v;
+        });
+    });
     div.querySelector(".ppdenoise")?.addEventListener("change", (e) => {
         // UI is a percent (0-100); stored as a fraction of the largest blob's area.
         const pct = Math.min(100, Math.max(0, Math.trunc(+e.target.value) || 0));

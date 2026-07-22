@@ -237,6 +237,8 @@ const PP_TIP = {
     tol: "how far a pixel's colour may sit from a taught colour and still be kept (BGR distance, 0-200). Too low = anti-aliased glyph edges drop out and thin strokes (a decimal point) vanish; too high = background bleeds in. Start ~60 and widen until the glyphs are solid without the background leaking.",
     scale: "enlarge the crop before OCR (INTER_CUBIC). Small HUD numbers are often too few pixels for the recogniser to resolve a thin decimal point — 2-3x gives it enough to read '4.00' instead of '400'. 1 = no upscale.",
     denoise: "kill isolated speckle: drop any near-colour blob smaller than this % of the LARGEST blob in the crop (relative, so it scales with resolution and font). Use when the mask leaves stray specks around the glyphs. The preview labels each blob's %, so set this just below the smallest part you must keep — a decimal point is tiny, so keep it low (a few %). 0 = off.",
+    detUnclip: "text detector box dilation. Two adjacent names sitting close together (e.g. reward tiles in a row) can get fused into ONE detection box, merging their text into a single garbled read. Lower this to shrink the detected box back toward the glyphs and split them apart. Blank = engine default (~1.6). Only affects locating/grid text, not isolated field reads.",
+    detBoxThresh: "text detector minimum box score. Raise this to reject the faint low-confidence bridge between two merged names when lowering unclip ratio alone isn't enough. Blank = engine default (~0.5).",
 };
 
 const _hex6 = (c) => /^#[0-9a-fA-F]{6}$/.test(c || "");
@@ -343,7 +345,13 @@ export function preprocessControls(holder) {
                 value: Math.round((pp.min_frac ?? 0) * 100), title: PP_TIP.denoise }),
                 { title: PP_TIP.denoise })),
         kv("upscale", h("input", { type: "number", class: "ppscale", step: "0.5", min: "1", max: "4", value: pp.scale ?? 1, title: PP_TIP.scale }),
-            { title: PP_TIP.scale }));
+            { title: PP_TIP.scale }),
+        kv("split unclip", h("input", { type: "number", class: "ppunclip", step: "0.1", min: "0", placeholder: "default",
+            value: pp.det_unclip_ratio ?? "", title: PP_TIP.detUnclip }),
+            { title: PP_TIP.detUnclip }),
+        kv("split score", h("input", { type: "number", class: "ppboxthresh", step: "0.05", min: "0", max: "1", placeholder: "default",
+            value: pp.det_box_thresh ?? "", title: PP_TIP.detBoxThresh }),
+            { title: PP_TIP.detBoxThresh }));
 }
 
 // Scrollbar node: orientation + the cutout-based scroll-calibration tool. Each cutout is a

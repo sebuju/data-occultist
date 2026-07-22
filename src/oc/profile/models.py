@@ -199,6 +199,9 @@ class Preprocess(BaseModel):
     scale: float = 1.0                                 # upscale factor for small fonts
     min_frac: float = 0.0                              # denoise: drop near-colour blobs smaller
     #                                                    than this fraction of the largest (0 = off)
+    det_unclip_ratio: float | None = None      # DB detector box dilation; lower splits two
+    #                                            adjacent lines the detector fuses into one box
+    det_box_thresh: float | None = None        # DB detector min box score; None = engine default
 
 
 class FieldDef(BaseModel):

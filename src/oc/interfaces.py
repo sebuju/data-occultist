@@ -77,8 +77,15 @@ class OcrEngine(ABC):
     """Turn an image region into text."""
 
     @abstractmethod
-    def read_image(self, image) -> list[OcrLine]:
-        """OCR a whole BGR image. Boxes are relative to that image."""
+    def read_image(self, image, *, unclip_ratio: float | None = None,
+                    box_thresh: float | None = None) -> list[OcrLine]:
+        """OCR a whole BGR image. Boxes are relative to that image.
+
+        ``unclip_ratio``/``box_thresh`` are an optional per-call override of the text
+        detector's box dilation / score floor (a window's ``Preprocess.det_unclip_ratio``/
+        ``det_box_thresh``) — lower dilation splits two adjacent lines the detector would
+        otherwise fuse into one box. ``None`` means the backend's own default. Backends
+        without a tunable detector ignore them."""
 
     def prepare(self) -> None:
         """Build/load any heavy model NOW, outside any timed read region. Called before a

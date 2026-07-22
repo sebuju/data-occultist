@@ -218,7 +218,11 @@ class RegionReader:
         scale = preprocess.scale if (preprocess and preprocess.scale) else 1.0
         if preprocess is not None:
             crop = apply_preprocess(crop, preprocess)
-        lines = self._ocr.read_image(crop)
+        lines = self._ocr.read_image(
+            crop,
+            unclip_ratio=preprocess.det_unclip_ratio if preprocess else None,
+            box_thresh=preprocess.det_box_thresh if preprocess else None,
+        )
         return [
             OcrLine(
                 text=ln.text,
