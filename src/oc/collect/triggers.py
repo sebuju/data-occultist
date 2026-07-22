@@ -23,6 +23,8 @@ Kinds:
 * ``on_capture``   — fire when a capture session starts, live OR precapture (:meth:`fire_capture`).
 * ``on_live_start``— fire when the server live-collection session starts (:meth:`fire_live_start`).
 * ``on_live_stop`` — fire when the server live-collection session stops (:meth:`fire_live_stop`).
+* ``on_input``     — pulse on a keyboard/mouse event matching a chord/rect/window (:meth:`on_input`),
+  called from an :class:`oc.interfaces.InputSource` hook thread. LIVE ONLY (see :mod:`oc.collect.live`).
 * ``manual``       — never auto-fires (the sweep button drives it); declared only for wiring.
 
 A trigger ``target`` is a price-node id, a file-source id, a toast/sound id, OR an action id:
@@ -153,6 +155,10 @@ class TriggerRunner:
         # Previous pass/block result per gate id — so emit_gate_flow animates a blob only when a
         # gate's decision FLIPS (a steady value never spams the flow layer). Seeded on first sight.
         self._gate_prev: dict[str, bool] = {}
+        # Previous SELECTED BRANCH index per router id (None = no branch matched) — so
+        # emit_router_flow logs a route-history row only when the selection CHANGES (mirrors
+        # _gate_prev). Seeded on first sight.
+        self._router_prev: dict[str, int | None] = {}
         # last-fire time per interval trigger; seed to "now" so the first fire waits a
         # full interval rather than firing immediately on startup.
         now = clock()
@@ -187,6 +193,21 @@ class TriggerRunner:
         self._settle_pending: dict[str, tuple] = {}   # id -> (why, items, node, value)
         self._settle_timer: dict[str, object] = {}    # id -> Timer
         self._settle_first: dict[str, float] = {}     # id -> window-open monotonic time
+        # ---- on_input state (see the "on_input" section below) ----
+        # Currently-recognized window id + its client box (x,y,w,h), pushed each live tick by
+        # set_input_context — an on_input trigger's window/rect gate reads this, never the
+        # collector's own state directly (the hook fires on its own thread).
+        self._input_context: dict = {"window": None, "box": None}
+        # Every key/mouse button currently held, as "key:<name>"/"mouse:<name>" tokens — GLOBAL
+        # system state, not per-trigger. Used both for chord checks (a trigger's input_mods) and
+        # to suppress OS key-repeat (a held button re-fires WM_KEYDOWN every repeat interval; only
+        # the first — the token entering this set — is a real edge).
+        self._input_held: set[str] = set()
+        # Per-trigger: did the button's matching DOWN edge pass chord+window/rect (so a
+        # subsequent UP can complete a "press"/"double" cycle)? Popped on the matching up.
+        self._input_down_match: dict[str, bool] = {}
+        # Per-trigger: monotonic time of the last completed matching press, for "double" detection.
+        self._input_last_press: dict[str, float] = {}
 
     # ---- throttle + shared fire funnel -------------------------------------
 
@@ -206,6 +227,7 @@ class TriggerRunner:
 
         ``node``/``value`` (on_readout only) record the readout node whose reading justified the
         fire and the actual value that crossed, for the history satellite."""
+        from . import sound_history
         from .trigger_history import record as record_hist
         ts = self._wall().isoformat(timespec="milliseconds")
         if self._throttled(t):
@@ -226,6 +248,8 @@ class TriggerRunner:
         # publishes (client no-ops) -- the server stays game-dumb about target kinds. ``sound_ids``
         # names the sounds a router selected (empty -> the client plays the trigger's own sounds).
         publish_fire(self._profile.name, t.id, sound_ids)
+        for sid in sound_ids:
+            sound_history.record(self._profile.name, sid, ts=ts, trigger=t.id)
         record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),
                     throttled=False, ts=ts, node=node, value=value)
         self._last_fire_any[t.id] = self._clock()
@@ -683,6 +707,18 @@ class TriggerRunner:
         results = [self._cond_holds(c, value, prev) for c in conds]
         return all(results) if (logic or "or") == "and" else any(results)
 
+    def _condset_breakdown(self, source: str, conds) -> list[dict]:
+        """Per-condition hold breakdown for a condition set (a gate, or one router branch) — the
+        satellite-log column source: one ``{"when", "arg", "hold"}`` dict per condition, evaluated
+        against ``source``'s CURRENT live value. Mirrors :meth:`_condset_holds`'s per-cond results
+        but keeps them separate instead of folding to one bool."""
+        if not conds:
+            return []
+        value = self._source_value(source)
+        prev = self._source_prev.get(source)
+        return [{"when": getattr(c.when, "value", c.when), "arg": c.arg or "",
+                 "hold": self._cond_holds(c, value, prev)} for c in conds]
+
     def _gate_holds(self, gate) -> bool:
         """Does a gate pass? ``negate`` flips it (a block-list). A disabled gate is a no-op (passes)."""
         if not getattr(gate, "enabled", True):
@@ -722,10 +758,15 @@ class TriggerRunner:
         its pass/block result FLIPS. Called each live tick; an unchanged result emits nothing, so a
         steady value never spams the flow layer. First sight of a gate seeds its state without a blob.
         The gate -> trigger decision is NOT a blob — the graph tints that line ok/danger by live pass/
-        block instead (see :meth:`gate_states`), so nothing streams from a gate to its triggers here."""
+        block instead (see :meth:`gate_states`), so nothing streams from a gate to its triggers here.
+
+        The same flip also feeds the gate's (non-persisted) flip-history satellite — see
+        :mod:`oc.collect.gate_history` — so a closed satellite costs nothing and an open one shows
+        exactly the flips that animated the flow layer."""
         gates = getattr(self._profile, "gates", None)
         if not gates:
             return
+        from . import gate_history
         game = self._profile.name
         for g in gates:
             if not getattr(g, "enabled", True):
@@ -734,10 +775,49 @@ class TriggerRunner:
             prev = self._gate_prev.get(g.id)
             self._gate_prev[g.id] = holds
             if prev is None or holds == prev:
-                continue   # seed, or no flip -> no animation
+                continue   # seed, or no flip -> no animation/log
             src = self._source_node(g.source)
             if src:
                 publish_flow(game, "data", src, f"gate:{g.id}", 1)
+            gate_history.record(
+                game, g.id, ts=self._wall().isoformat(timespec="milliseconds"), source=g.source,
+                source_value=self._source_value(g.source),
+                conds=self._condset_breakdown(g.source, g.conds),
+                logic=g.logic or "or", negate=bool(getattr(g, "negate", False)), holds=holds)
+
+    def emit_router_flow(self) -> None:
+        """Log a router's SELECTED-BRANCH change to its (non-persisted) route-history satellite —
+        see :mod:`oc.collect.router_history`. Called each live tick (mirrors :meth:`emit_gate_flow`);
+        an unchanged selection emits nothing, so a steady value never spams the log. First sight of a
+        router seeds its state without a log row. Unlike a gate, a router has no flow-blob animation
+        (it doesn't gate/pass a value, it fans out targets) and its actual fire-time routing still
+        goes through :meth:`_resolve_fire` independently — this only detects the CHANGE for the log."""
+        routers = getattr(self._profile, "routers", None)
+        if not routers:
+            return
+        from . import router_history
+        game = self._profile.name
+        for r in routers:
+            if not getattr(r, "enabled", True):
+                continue
+            branches = []
+            selected = None
+            targets: list[str] = []
+            for i, b in enumerate(r.branches or []):
+                matched = self._condset_holds(r.source, b.conds, b.logic)
+                branches.append({"i": i, "matched": matched})
+                if matched and selected is None:
+                    selected = i
+                    targets = list(b.targets or [])
+            seen = r.id in self._router_prev   # None IS a valid "no branch matched" state, unlike
+            prev = self._router_prev.get(r.id)  # gate's bool prev, so track "seen" separately
+            self._router_prev[r.id] = selected
+            if not seen or selected == prev:
+                continue   # seed, or no change -> no log
+            router_history.record(
+                game, r.id, ts=self._wall().isoformat(timespec="milliseconds"), source=r.source,
+                source_value=self._source_value(r.source), branches=branches, selected=selected,
+                targets=targets)
 
     def gate_states(self) -> dict[str, bool]:
         """Per-gate live pass/block: ``{gate_id: holds}`` for every ENABLED gate, evaluated against
@@ -872,6 +952,147 @@ class TriggerRunner:
                     c = self._facet_count(ring, facet)
                     if c is not None:
                         self._source_prev[f"register:{reg}#{k}@{facet}"] = float(c)
+
+    # ---- on_input: raw keyboard/mouse events from an InputSource hook (live only) -----------
+    # Called on the HOOK's own thread (see oc.input.win32_hook), not the collector tick — so this
+    # must not touch anything the collector thread isn't already prepared to share. It only reads
+    # profile triggers (immutable per run) and the small caches below, and routes matches through
+    # the same _route_fire funnel as every other kind (gates/throttle/settle/history all apply).
+
+    @staticmethod
+    def _mod_token(m: str) -> str:
+        """Canonicalise one ``TriggerDef.input_mods`` entry into a held-set token: a bare
+        modifier name (``"ctrl"``) is a key; ``"mouse:<button>"`` is already prefixed."""
+        return m if m.startswith("mouse:") else f"key:{m}"
+
+    def set_input_context(self, window_id: str | None, box) -> None:
+        """Cache the currently-recognized window id + its client box (an ``(x, y, w, h)``
+        tuple, or an object with those attributes) so an ``on_input`` trigger's window/rect gate
+        can be evaluated on the hook thread without reaching into the collector's own state.
+        Called each live tick (mirrors :meth:`set_readouts`/:meth:`set_registers`)."""
+        b = None
+        if box is not None:
+            b = tuple(box) if isinstance(box, (tuple, list)) else (box.x, box.y, box.w, box.h)
+        self._input_context = {"window": window_id, "box": b}
+
+    def _input_chord_holds(self, t) -> bool:
+        return all(self._mod_token(m) in self._input_held for m in (t.input_mods or []))
+
+    def _input_place_reason(self, t, x: float, y: float) -> str:
+        """``""`` if ``t``'s window/rect gate holds for point ``(x, y)`` (screen px), else the
+        reason it doesn't (``"window_miss"``/``"rect_miss"``)."""
+        if not t.input_window:
+            return ""
+        if self._input_context.get("window") != t.input_window:
+            return "window_miss"
+        if not t.input_rect:
+            return ""
+        box = self._input_context.get("box")
+        if not box or box[2] <= 0 or box[3] <= 0:
+            return "rect_miss"
+        bx, by, bw, bh = box
+        fx, fy = (x - bx) / bw, (y - by) / bh
+        rx, ry, rw, rh = t.input_rect
+        return "" if (rx <= fx <= rx + rw and ry <= fy <= ry + rh) else "rect_miss"
+
+    def _input_reason(self, t, x: float, y: float) -> str:
+        """``""`` if ``t``'s full predicate (chord + window/rect) holds right now, else why not."""
+        if not self._input_chord_holds(t):
+            return "chord_miss"
+        return self._input_place_reason(t, x, y)
+
+    def _log_input(self, t, ev: dict, result: str) -> None:
+        from .input_history import record as record_log
+        record_log(self._profile.name, t.id, ts=self._wall().isoformat(timespec="milliseconds"),
+                   event=ev.get("action", ""), button=f"{ev.get('device', '')}:{ev.get('button', '')}",
+                   mods=list(t.input_mods or []), x=ev.get("x", 0), y=ev.get("y", 0), result=result)
+
+    def _input_fire_or_log(self, t, matched: bool, reason: str, ev: dict) -> str:
+        """Route a MATCHED input pulse through the shared fire funnel (gates/throttle/settle),
+        or just log a miss. Returns the disposition string recorded to the input log:
+        ``"fired"``/``"deferred"`` (settle armed)/``"throttled"``/``"gated"``, or ``reason``."""
+        if not matched:
+            self._log_input(t, ev, reason)
+            return reason
+        if not self._gates_pass(t):
+            self._log_input(t, ev, "gated")
+            return "gated"
+        if self._throttled(t):
+            self._log_input(t, ev, "throttled")
+            return "throttled"
+        why = f"input {t.input_button or 'any'} {t.input_event}"
+        ok = self._route_fire(t, why, items=None)
+        disp = "fired" if ok else ("deferred" if (t.settle_ms or 0) > 0 else "gated")
+        self._log_input(t, ev, disp)
+        return disp
+
+    def on_input(self, ev: dict) -> list[str]:
+        """Handle one raw hook event (``{"device", "action", "button", "x", "y", "ts"}`` — see
+        :class:`oc.interfaces.InputSource`). Updates the global held-button set (edge-detects a
+        real down from OS key-repeat), then evaluates every enabled ``on_input`` trigger whose
+        device+button matches. Returns fired trigger ids."""
+        device, action, button = ev.get("device", ""), ev.get("action", ""), ev.get("button", "")
+        if action == "move":
+            return []   # position is read off button events themselves; move never pulses
+        x, y = ev.get("x", 0), ev.get("y", 0)
+        token = f"{device}:{button}"
+        is_down = action == "down"
+        was_held = token in self._input_held
+        if is_down:
+            if was_held:
+                return []   # OS key-repeat -- not a real edge
+            self._input_held.add(token)
+        else:
+            self._input_held.discard(token)
+        fired: list[str] = []
+        for t in self._profile.triggers:
+            if not t.enabled or t.kind != "on_input":
+                continue
+            raw = (t.input_button or "").strip()
+            if raw and raw not in ("any",):
+                w_device, _, w_button = raw.partition(":")
+                if not w_button:   # tolerate a bare key name with no "key:" prefix
+                    w_device, w_button = "key", w_device
+                if w_device != device or w_button != button:
+                    continue
+            reason = self._input_reason(t, x, y)
+            matched = reason == ""
+            if is_down:
+                self._input_down_match[t.id] = matched
+                if t.input_event != "down":
+                    continue   # up/press/double resolve on the release below
+                if self._input_fire_or_log(t, matched, reason, ev) == "fired":
+                    fired.append(t.id)
+                continue
+            # release
+            down_matched = self._input_down_match.pop(t.id, False)
+            if t.input_event == "up":
+                if self._input_fire_or_log(t, matched, reason, ev) == "fired":
+                    fired.append(t.id)
+                continue
+            if t.input_event not in ("press", "double"):
+                continue
+            full_match = down_matched and matched
+            if t.input_event == "press":
+                r = "" if full_match else (reason or "chord_miss")
+                if self._input_fire_or_log(t, full_match, r, ev) == "fired":
+                    fired.append(t.id)
+                continue
+            # double: two full-match presses within input_double_ms of each other
+            if not full_match:
+                self._log_input(t, ev, reason or "chord_miss")
+                continue
+            now = self._clock()
+            last = self._input_last_press.get(t.id)
+            window = (t.input_double_ms or 350.0) / 1000.0
+            self._input_last_press[t.id] = now
+            if last is not None and (now - last) <= window:
+                self._input_last_press.pop(t.id, None)   # consume the pair -- a 3rd tap starts fresh
+                if self._input_fire_or_log(t, True, "", ev) == "fired":
+                    fired.append(t.id)
+            else:
+                self._log_input(t, ev, "awaiting_double")
+        return fired
 
     # ---- helpers -----------------------------------------------------------
 
@@ -1172,7 +1393,7 @@ def fire_action(game: str, action, data_dir, *, profile, trigger_id: str | None 
 
     def run() -> bool:
         return _run_action(game, action, data_dir, profile=profile, seen=seen,
-                           timer_factory=timer_factory)
+                           timer_factory=timer_factory, trigger_id=trigger_id)
     delay = max(0, int(getattr(action, "delay_ms", 0) or 0))
     if not delay:
         return run()
@@ -1183,9 +1404,10 @@ def fire_action(game: str, action, data_dir, *, profile, trigger_id: str | None 
 
 
 def _run_action(game: str, action, data_dir, *, profile, seen: set[str],
-                timer_factory: Callable[..., object]) -> bool:
+                timer_factory: Callable[..., object], trigger_id: str | None = None) -> bool:
     """The action's actual work, run either inline or off its delay timer — dataset/register ops,
     then the sound cue, then the chained action nodes. Split out so ``delay_ms`` defers ONE thing."""
+    from . import action_history
     from ..store.dataset_ops import fire_dataset_target
     from .register_ops import fire_register_target
     from .live import active_session
@@ -1213,8 +1435,11 @@ def _run_action(game: str, action, data_dir, *, profile, seen: set[str],
     for rid in chained:
         nxt = by_action.get(rid)
         if nxt is not None and fire_action(game, nxt, data_dir, profile=profile, seen=seen,
-                                           timer_factory=timer_factory):
+                                           timer_factory=timer_factory, trigger_id=trigger_id):
             ran = True
+    action_history.record(
+        game, action.id, ts=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        trigger=trigger_id, ran=ran, sounds=sounds, chained=chained)
     return ran
 
 
@@ -1226,18 +1451,25 @@ def _cue_sounds(game: str, action, sound_ids: list[str], *, profile,
     action rather than a trigger because a delayed / manual fire has no live trigger to name (the
     client uses that id only for its empty-``sounds`` fallback). Disabled sounds are dropped here,
     exactly as :meth:`TriggerRunner._resolve_fire` drops them. Returns True if anything was cued."""
+    from . import sound_history
     off = {s.id for s in (getattr(profile, "sounds", None) or []) if not getattr(s, "enabled", True)}
     known = {s.id for s in (getattr(profile, "sounds", None) or [])}
     ids = [s for s in sound_ids if s in known and s not in off]
     if not ids:
         return False
     tid = f"action:{action.id}"
+
+    def cue() -> None:
+        publish_fire(game, tid, list(ids))
+        ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        for sid in ids:
+            sound_history.record(game, sid, ts=ts, trigger=tid)
     repeat = max(1, int(getattr(action, "repeat", 1) or 1))
     every = max(10, int(getattr(action, "repeat_ms", 300) or 300)) / 1000.0
-    publish_fire(game, tid, list(ids))
+    cue()
 
     def again(n: int) -> None:
-        publish_fire(game, tid, list(ids))
+        cue()
         if n + 1 < repeat:
             _arm_delay(timer_factory, every, lambda: again(n + 1))
     if repeat > 1:

@@ -576,9 +576,15 @@ export class GraphModel {
         if (id.startsWith("prodhist:")) return `producer:${id.slice(9)}`; // producer's recent-fetches history
         if (id.startsWith("prod:")) return `producer:${id.slice(5)}`;   // producer preview (inputs/schema/test)
         if (id.startsWith("hist:")) return `trigger:${id.slice(5)}`;    // trigger's recent-fires history
+        if (id.startsWith("inlog:")) return `trigger:${id.slice(6)}`;   // trigger's raw input-event log
         if (id.startsWith("rohist:")) return `ro:${id.slice(7)}`;       // readout's recent-reads history
         if (id.startsWith("reghist:")) return `register:${id.slice(8)}`; // register's recent-pushes history
         if (id.startsWith("prochist:")) return `process:${id.slice(9)}`; // process's recent input/output history
+        if (id.startsWith("gatehist:")) return `gate:${id.slice(9)}`;    // gate's recent flips
+        if (id.startsWith("routhist:")) return `router:${id.slice(9)}`;  // router's recent route changes
+        if (id.startsWith("sndhist:")) return `sound:${id.slice(8)}`;    // sound's recent plays
+        if (id === "gamehist") return "game";                            // game node's OCR-tick log
+        if (id.startsWith("acthist:")) return `action:${id.slice(8)}`;   // action's recent runs
         return null;
     }
     satelliteBonds() {
@@ -589,6 +595,10 @@ export class GraphModel {
 
     nodes() {
         const ns = [{ id: "game", type: "game", ref: this.profile }];
+        // OCR-tick log satellite (opt-in): recent live-collection ticks (window/state/saved image/
+        // reads), non-persisted — a standard vttable grid (kind "gamehistory"). Replaces the old
+        // live-panel "OCR log". See game_history_node.js.
+        if (this.satelliteOn("gamehist")) ns.push({ id: "gamehist", type: "vttable", ref: { kind: "gamehistory" } });
         // standalone cutout-atlas node (its own image surface; teaches glyph refinement + symbol classification)
         ns.push({ id: "atlas", type: "atlas", ref: this.profile });
         for (const w of this.profile.windows) {
@@ -637,14 +647,42 @@ export class GraphModel {
             // history satellite (opt-in): recent fires (why/what), non-persisted — a standard vttable
             // grid (kind "triggerhistory"), so it resizes like every other node. See history_node.js.
             if (this.satelliteOn(`hist:${t.id}`)) ns.push({ id: `hist:${t.id}`, type: "vttable", ref: { kind: "triggerhistory", id: t.id } });
+            // input-log satellite (opt-in, on_input only): every raw event considered + its
+            // disposition, non-persisted — standard vttable grid (kind "inputlog"). See input_log_node.js.
+            if (t.kind === "on_input" && this.satelliteOn(`inlog:${t.id}`))
+                ns.push({ id: `inlog:${t.id}`, type: "vttable", ref: { kind: "inputlog", id: t.id } });
         }
         // gate: a boolean guard a trigger must satisfy before it fires (tests one live value).
-        for (const x of this.profile.gates || []) ns.push({ id: `gate:${x.id}`, type: "gate", ref: x });
+        for (const x of this.profile.gates || []) {
+            ns.push({ id: `gate:${x.id}`, type: "gate", ref: x });
+            // flip-history satellite (opt-in): recent pass/block flips, non-persisted — a standard
+            // vttable grid (kind "gatehistory"). See gate_history_node.js.
+            if (this.satelliteOn(`gatehist:${x.id}`))
+                ns.push({ id: `gatehist:${x.id}`, type: "vttable", ref: { kind: "gatehistory", id: x.id } });
+        }
         // router: branches a live value to different targets (first matching branch wins).
-        for (const x of this.profile.routers || []) ns.push({ id: `router:${x.id}`, type: "router", ref: x });
+        for (const x of this.profile.routers || []) {
+            ns.push({ id: `router:${x.id}`, type: "router", ref: x });
+            // route-history satellite (opt-in): recent selected-branch changes, non-persisted — a
+            // standard vttable grid (kind "routerhistory"). See router_history_node.js.
+            if (this.satelliteOn(`routhist:${x.id}`))
+                ns.push({ id: `routhist:${x.id}`, type: "vttable", ref: { kind: "routerhistory", id: x.id } });
+        }
         for (const x of this.profile.toasts || []) ns.push({ id: `toast:${x.id}`, type: "toast", ref: x });
-        for (const x of this.profile.sounds || []) ns.push({ id: `sound:${x.id}`, type: "sound", ref: x });
-        for (const x of this.profile.actions || []) ns.push({ id: `action:${x.id}`, type: "action", ref: x });
+        for (const x of this.profile.sounds || []) {
+            ns.push({ id: `sound:${x.id}`, type: "sound", ref: x });
+            // play-history satellite (opt-in): recent plays + the firing trigger, non-persisted — a
+            // standard vttable grid (kind "soundhistory"). See sound_history_node.js.
+            if (this.satelliteOn(`sndhist:${x.id}`))
+                ns.push({ id: `sndhist:${x.id}`, type: "vttable", ref: { kind: "soundhistory", id: x.id } });
+        }
+        for (const x of this.profile.actions || []) {
+            ns.push({ id: `action:${x.id}`, type: "action", ref: x });
+            // run-history satellite (opt-in): recent runs (by whom/ran/sounds/chained), non-persisted
+            // — a standard vttable grid (kind "actionhistory"). See action_history_node.js.
+            if (this.satelliteOn(`acthist:${x.id}`))
+                ns.push({ id: `acthist:${x.id}`, type: "vttable", ref: { kind: "actionhistory", id: x.id } });
+        }
         // in-memory keyed map fed by readouts (never persisted). Id prefix is `register:` — NOT
         // `reg:`, which _TYPE_BY_PREFIX already maps to a region node.
         for (const x of this.profile.registers || []) {
@@ -709,6 +747,8 @@ export class GraphModel {
     edges() {
         const es = [];
         es.push({ from: "game", to: "atlas", kind: "own" });   // cutout-atlas node hangs off the game node
+        // OCR-tick log satellite: dotted "img" edge game -> its recent-ticks grid (opt-in)
+        if (this.satelliteOn("gamehist")) es.push({ from: "game", to: "gamehist", kind: "img" });
         for (const w of this.profile.windows) {
             es.push({ from: "game", to: `win:${w.id}`, kind: "own" });   // game node owns each window
             if (this.satelliteOn(`prev:${w.id}`)) es.push({ from: `win:${w.id}`, to: `prev:${w.id}`, kind: "img" });
@@ -785,12 +825,17 @@ export class GraphModel {
                 }
             // history satellite: dotted "img" edge trigger -> its recent-fires grid (opt-in)
             if (this.satelliteOn(`hist:${t.id}`)) es.push({ from: `trigger:${t.id}`, to: `hist:${t.id}`, kind: "img" });
+            // input-log satellite: dotted "img" edge trigger -> its raw considered-events grid (opt-in)
+            if (t.kind === "on_input" && this.satelliteOn(`inlog:${t.id}`))
+                es.push({ from: `trigger:${t.id}`, to: `inlog:${t.id}`, kind: "img" });
         }
         // a gate READS the live value it tests from a readout/register (source -> gate); the
         // trigger(s) it gates wire IN from above (trigger -> gate).
         for (const g of this.profile.gates || []) {
             const from = this.refNode(g.source);
             if (from) es.push({ from, to: `gate:${g.id}`, kind: "data" });
+            // flip-history satellite: dotted "img" edge gate -> its recent-flips grid (opt-in)
+            if (this.satelliteOn(`gatehist:${g.id}`)) es.push({ from: `gate:${g.id}`, to: `gatehist:${g.id}`, kind: "img" });
         }
         // a router READS its tested value from a readout/register (source -> router) and, per branch,
         // FIRES that branch's targets (router -> target) when the branch's conds match.
@@ -802,6 +847,8 @@ export class GraphModel {
                     const to = this.refNode(tid);
                     if (to) es.push({ from: `router:${r.id}`, to, kind: "trigger" });
                 }
+            // route-history satellite: dotted "img" edge router -> its recent-route-changes grid (opt-in)
+            if (this.satelliteOn(`routhist:${r.id}`)) es.push({ from: `router:${r.id}`, to: `routhist:${r.id}`, kind: "img" });
         }
         // an action node ACTS ON its dataset AND register sources, CUES its sound sources and FIRES
         // its chained action sources (all control, hence kind "trigger"), and WRITES into its
@@ -812,7 +859,13 @@ export class GraphModel {
                 if (to) es.push({ from: `action:${x.id}`, to, kind: "trigger" });
             }
             if (x.dest && (x.action || "").match(/^(clone|move)_/)) es.push({ from: `action:${x.id}`, to: `ds:${x.dest}`, kind: "data" });
+            // run-history satellite: dotted "img" edge action -> its recent-runs grid (opt-in)
+            if (this.satelliteOn(`acthist:${x.id}`)) es.push({ from: `action:${x.id}`, to: `acthist:${x.id}`, kind: "img" });
         }
+        // a sound has no data/trigger sources of its own (it's only ever a target); it just carries
+        // its opt-in play-history satellite (dotted "img" edge sound -> its recent-plays grid).
+        for (const x of this.profile.sounds || [])
+            if (this.satelliteOn(`sndhist:${x.id}`)) es.push({ from: `sound:${x.id}`, to: `sndhist:${x.id}`, kind: "img" });
         // a toast READS its wired sources' live values as {{tokens}} (readout/dataset/subset -> toast)
         for (const x of this.profile.toasts || [])
             for (const s of this.toastSources(x.id)) {
@@ -1052,7 +1105,7 @@ export class GraphModel {
         this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_register", "on_ready", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_register", "on_ready", "on_input", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     // minimum ms between fires — empty/invalid clears it (null = no throttle).
     setTriggerThrottle(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.throttle_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }
@@ -1062,6 +1115,20 @@ export class GraphModel {
     setTriggerSettleMax(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.settle_max_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }
     // on_ready completeness column — the visible subset field that must be filled on every row.
     setTriggerReadyField(id, v) { const t = this.trigger(id); if (!t) return; t.ready_field = (v || "").trim(); }
+
+    // ---- on_input: keyboard/mouse chord + optional window/rect bind (live only) ----
+    setTriggerInputEvent(id, v) { const t = this.trigger(id); if (t && ["down", "up", "press", "double"].includes(v)) t.input_event = v; }
+    setTriggerInputButton(id, v) { const t = this.trigger(id); if (t) t.input_button = (v || "").trim(); }
+    setTriggerInputMods(id, mods) { const t = this.trigger(id); if (t) t.input_mods = mods.filter(Boolean); }
+    setTriggerInputWindow(id, winId) { const t = this.trigger(id); if (t) t.input_window = winId || ""; }
+    // rect is [x, y, w, h] client-relative fractions (0..1); any blank/invalid component clears the whole rect.
+    setTriggerInputRect(id, xywh) {
+        const t = this.trigger(id);
+        if (!t) return;
+        const nums = xywh.map((v) => parseFloat(v));
+        t.input_rect = nums.some((n) => Number.isNaN(n)) ? [] : nums;
+    }
+    setTriggerInputDoubleMs(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.input_double_ms = (Number.isNaN(n) || n <= 0) ? 350 : n; }
     addTriggerTarget(id, pid) {
         const t = this.trigger(id);
         // a target is a price node (sweep), a file source (read), a toast (notify), a sound (play), an action (dataset op), OR a router (branch) — accept any id

@@ -153,6 +153,12 @@ class LiveSession:
         # The live session this run's saved frames go into — one folder per live start (see
         # web.live_sessions / captures_store.save_live). None while feeding (a replay saves nothing).
         self._session_id: str | None = None
+        # This run's Collector (read by _on_tick for .last_window — the input hook's window/rect
+        # gate) and its input hook (an InputSource, started/stopped with the run — see
+        # _start_input_hook). Both None outside a live run; an on_input trigger simply never
+        # pulses when there's no run (or no hook backend on this platform).
+        self._collector: Collector | None = None
+        self._input_hook = None
 
     # ---- profile -----------------------------------------------------------
 
@@ -262,6 +268,8 @@ class LiveSession:
             collector = Collector(self._engine, self._profile)
             collector.on_frame = self._save_frame   # persist a frame only when a record was written
             collector.save_recognized_frames = self._save_recognized   # ...or on every recognised grab (panel toggle)
+            self._collector = collector   # _on_tick reads collector.last_window for the input hook
+            self._start_input_hook()
             # Collector.run owns the trigger loop + flushes via close() on the way out. Pass the
             # session's SHARED runner so a concurrent test feed sees the same on_readout edge state.
             collector.run(self._interval, on_tick=self._on_tick, should_stop=self._stop.is_set,
@@ -270,9 +278,42 @@ class LiveSession:
             with self._lock:
                 self._error = str(exc)
         finally:
+            self._stop_input_hook()
+            self._collector = None
             if not self._feed_images:
                 self._end_session()   # a capturing run's session closes with the loop
             exit_device(self._engine, restore)
+
+    # ---- input hook (keyboard/mouse) — LIVE ONLY, mirrors on_readout's edge-state ownership --
+
+    def _start_input_hook(self) -> None:
+        """Install the system-wide input hook for this run, but only if the profile actually
+        declares an ``on_input`` trigger (no hook installed for every other profile) and a
+        backend registered for this platform (``None`` on non-Windows — see ``oc.registry``).
+        Best-effort: a failed hook must never stop live collection, exactly like a failed toast."""
+        if not any(t.enabled and t.kind == "on_input" for t in getattr(self._profile, "triggers", [])):
+            return
+        runner = self._trigger_runner()
+        if runner is None:
+            return
+        try:
+            from ..registry import build_input
+            hook = build_input("win32")
+            if hook is None:
+                return
+            hook.start(runner.on_input)
+            self._input_hook = hook
+        except Exception:  # pragma: no cover - defensive
+            self._input_hook = None
+
+    def _stop_input_hook(self) -> None:
+        hook = self._input_hook
+        self._input_hook = None
+        if hook is not None:
+            try:
+                hook.stop()
+            except Exception:  # pragma: no cover - defensive
+                pass
 
     def _feed_loop(self) -> None:
         """Replay ONE saved live session's images through the SAME collector, paced by their
@@ -424,6 +465,18 @@ class LiveSession:
                 if reg_events:
                     runner.on_register(reg_events, reg_snapshot)
                 runner.emit_gate_flow()   # animate any gate whose pass/block flipped this tick
+                runner.emit_router_flow()   # log any router whose selected branch changed this tick
+        # Refresh the on_input window/rect gate context every tick (not only on a change) so a
+        # hook event arriving between ticks reads the freshest window box — cheap (a dict write),
+        # mirrors set_registers above. window=None while unrecognised (self._cur resets on a
+        # non-saved/throttled tick), so a window-bound on_input trigger correctly stops pulsing
+        # the instant the screen leaves that window, even though the hook itself never stops.
+        collector = self._collector
+        win = getattr(collector, "last_window", None) if collector is not None else None
+        if win is not None:
+            runner = self._trigger_runner()
+            if runner is not None:
+                runner.set_input_context(self._cur[0], win.client)
 
     # ---- readout flow blobs ------------------------------------------------
 
@@ -1130,15 +1183,16 @@ class LiveSession:
 
     # ---- status ------------------------------------------------------------
 
-    def debug(self, after: int = 0) -> dict:
-        """Debug-log entries with seq > ``after`` (incremental poll). ``seq`` is the newest
-        entry number so a caller knows the high-water mark even when nothing is newer."""
+    def debug_recent(self, cap: int = 80) -> list[dict]:
+        """The game node's recent tick-debug entries, NEWEST FIRST, capped at ``cap`` — feeds the
+        game node's satellite log (see :mod:`oc.web.routes.activity`) exactly like every other
+        history ring's ``snapshot``, so a closed satellite costs nothing and an open one paints from
+        the live heartbeat. ``self._debug`` is oldest -> newest (append-only); this just reverses +
+        slices, no separate ring (the debug deque already IS one, at a deeper cap)."""
         with self._lock:
-            return {
-                "running": self.is_running(),
-                "seq": self._debug_seq,
-                "entries": [e for e in self._debug if e["seq"] > after],
-            }
+            entries = list(self._debug)
+        entries.reverse()
+        return entries[:cap]
 
     def _readout_history_snapshot(self) -> dict:
         """``{"<window>:<readout>": [recent reads]}`` for every enabled readout that has been read

@@ -7267,6 +7267,14 @@ layout:
       custW: true
       custH: false
       softW: true
+    prochist:process_value_ab:
+      x: -3420.0
+      y: -5260.0
+      collapsed: false
+    prev:equipment_window:
+      x: -1740.0
+      y: -760.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -8025,6 +8033,7 @@ layout:
     - reghist:value_ab_register
     - register:warframe_name_live_register
     - process:process_warframe_name_live
+    - prochist:process_value_ab
     outline:
       color: '#5aa9e6'
       style: none
@@ -8703,6 +8712,8 @@ layout:
   - rohist:live_game_window:value_ab_4
   - reghist:value_ab_register
   - vt:ds:prices_live
+  - prochist:process_value_ab
+  - prev:equipment_window
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -8775,6 +8786,7 @@ layout:
     - det:equipment_window:detect_h
     - det:equipment_window:detect_1
     - sb:equipment_window:scrollbar
+    - prev:equipment_window
     outline:
       color: '#5aa9e6'
       style: none

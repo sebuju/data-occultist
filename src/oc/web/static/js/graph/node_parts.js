@@ -50,11 +50,11 @@ const SAT_DISMISS = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height
 const SAT_HIST = () => svg("svg", { viewBox: "0 0 16 16", width: "13", height: "13", "aria-hidden": "true" },
     svg("circle", { cx: "8", cy: "8", r: "5.5", fill: "none", stroke: "currentColor", "stroke-width": "1.3" }),
     svg("path", { fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round", d: "M8 5v3l2 1.5" }));
-const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)", history: "fire history", readouthistory: "read history", producerhistory: "fetch history", registerhistory: "push history", processhistory: "input/output history" };
-const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS, history: SAT_HIST, readouthistory: SAT_HIST, producerhistory: SAT_HIST, registerhistory: SAT_HIST, processhistory: SAT_HIST };
+const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "data table", producer: "preview (inputs + test fetch)", history: "fire history", readouthistory: "read history", producerhistory: "fetch history", registerhistory: "push history", processhistory: "input/output history", inputlog: "input event log", gatehistory: "flip history", routerhistory: "route history", soundhistory: "play history", gamehistory: "OCR log", actionhistory: "run history" };
+const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS, history: SAT_HIST, readouthistory: SAT_HIST, producerhistory: SAT_HIST, registerhistory: SAT_HIST, processhistory: SAT_HIST, inputlog: SAT_HIST, gatehistory: SAT_HIST, routerhistory: SAT_HIST, soundhistory: SAT_HIST, gamehistory: SAT_HIST, actionhistory: SAT_HIST };
 // the one-word header label per kind (rendered bare; CSS wraps it in [ ]). Every history flavour
 // reads "log"; the full meaning stays in the button's title/aria-label (unchanged below).
-const _SAT_WORD = { preview: "preview", producer: "preview", vttable: "data", dismissed: "dropped", history: "log", readouthistory: "log", producerhistory: "log", registerhistory: "log", processhistory: "log" };
+const _SAT_WORD = { preview: "preview", producer: "preview", vttable: "data", dismissed: "dropped", history: "log", readouthistory: "log", producerhistory: "log", registerhistory: "log", processhistory: "log", inputlog: "log", gatehistory: "log", routerhistory: "log", soundhistory: "log", gamehistory: "log", actionhistory: "log" };
 export function satToggleBtn(satId, kind) {
     const on = model.satelliteOn(satId);
     const title = `${on ? "hide" : "show"} ${_SAT_LABEL[kind] || "data table"}`;
@@ -850,6 +850,7 @@ export function nodeParts(n) {
         const g = n.ref;
         return {
             title: h("input", { class: "gi gi-id", dataset: { k: "name" }, value: g.name, title: "game name" }),
+            head: satToggleBtn("gamehist", "gamehistory"),
             body: frag(
                 kv("process", h("input", { class: "gi", dataset: { k: "proc" }, value: (g.process_names || []).join(", "), placeholder: "Warframe.x64.exe" })),
                 kv("title hint", h("input", { class: "gi", dataset: { k: "title" }, value: g.window_title_hint || "", placeholder: "Warframe" })),
@@ -1026,6 +1027,60 @@ export function nodeParts(n) {
                 body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
             };
         }
+        if (r.kind === "inputlog") {
+            // an on_input trigger's raw considered events (non-persisted): every hook event it
+            // matched by button, and what it decided (fired/throttled/gated/rect|window/chord miss)
+            // — the "why isn't this firing" debugger. Filled by renderInputLog (input_log_node.js).
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} input log`),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
+        if (r.kind === "gatehistory") {
+            // a gate's recent pass/block FLIPS (non-persisted): one row per flip — source value, the
+            // per-condition breakdown, and the resulting hold. Filled by renderGateHistory
+            // (gate_history_node.js) into the .hist-host.
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} flips`),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
+        if (r.kind === "routerhistory") {
+            // a router's recent SELECTED-BRANCH changes (non-persisted): one row per change — source
+            // value, per-branch match breakdown, selected branch, forwarded targets. Filled by
+            // renderRouterHistory (router_history_node.js) into the .hist-host.
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} routes`),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
+        if (r.kind === "soundhistory") {
+            // a sound's recent plays (non-persisted): when + which trigger named it in a fire cue
+            // (the server only knows the cue was PUBLISHED, not that audio actually sounded). Filled
+            // by renderSoundHistory (sound_history_node.js) into the .hist-host.
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} plays`),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
+        if (r.kind === "gamehistory") {
+            // the game node's recent live-collection ticks (non-persisted): window/state, saved image
+            // filename, delta since the last tick, and a read summary — replaces the old live-panel
+            // "OCR log". Filled by renderGameHistory (game_history_node.js) into the .hist-host.
+            return {
+                title: h("span", { class: "gi-id" }, "OCR log"),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
+        if (r.kind === "actionhistory") {
+            // an action's recent runs (non-persisted): when, by which trigger (or manual/chained), did
+            // a dataset/register op actually run, which sounds it cued, which actions it chained into.
+            // Filled by renderActionHistory (action_history_node.js) into the .hist-host.
+            return {
+                title: h("span", { class: "gi-id" }, `${r.id} runs`),
+                body: h("div", { class: "nodehost scrollhost hist-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
+            };
+        }
         if (r.kind === "producer") {
             // an http producer's preview: what it WILL fetch (resolved names -> keys), the columns
             // it emits, and a live one-item test-fetch (raw response vs mapped row). Filled by
@@ -1081,12 +1136,18 @@ export function nodeParts(n) {
     if (n.type === "filesource") return { ...sourceParts(n.ref),
         head: frag(satToggleBtn(`vt:src:${n.ref.id}`, "vttable"),
             satToggleBtn(`vtd:src:${n.ref.id}`, "dismissed")) };
-    if (n.type === "trigger") return { ...triggerParts(n.ref, model), head: satToggleBtn(`hist:${n.ref.id}`, "history") };
-    if (n.type === "gate") return gateParts(n.ref, model);
-    if (n.type === "router") return routerParts(n.ref, model);
+    if (n.type === "trigger") return { ...triggerParts(n.ref, model),
+        head: frag(satToggleBtn(`hist:${n.ref.id}`, "history"),
+            n.ref.kind === "on_input" ? satToggleBtn(`inlog:${n.ref.id}`, "inputlog") : null) };
+    if (n.type === "gate") return { ...gateParts(n.ref, model),
+        head: satToggleBtn(`gatehist:${n.ref.id}`, "gatehistory") };
+    if (n.type === "router") return { ...routerParts(n.ref, model),
+        head: satToggleBtn(`routhist:${n.ref.id}`, "routerhistory") };
     if (n.type === "toast") return toastParts(n.ref, model);
-    if (n.type === "sound") return soundParts(n.ref, model);
-    if (n.type === "action") return actionParts(n.ref, model);
+    if (n.type === "sound") return { ...soundParts(n.ref, model),
+        head: satToggleBtn(`sndhist:${n.ref.id}`, "soundhistory") };
+    if (n.type === "action") return { ...actionParts(n.ref, model),
+        head: satToggleBtn(`acthist:${n.ref.id}`, "actionhistory") };
     if (n.type === "register") return { ...registerParts(n.ref, model),
         head: satToggleBtn(`reghist:${n.ref.id}`, "registerhistory") };
     if (n.type === "process") return { ...processParts(n.ref, model),

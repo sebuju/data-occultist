@@ -40,7 +40,7 @@ _COLLECT_SKIP = frozenset({
     "collector.py", "live.py", "precapture.py", "settle.py", "sink.py", "slice_sync.py",
     "stability.py", "register_history.py", "register_ops.py",
     "producer_history.py", "readout_history.py", "trigger_history.py", "triggers.py",
-    "commit.py", "templating.py", "detsig.py",
+    "commit.py", "templating.py", "detsig.py", "input_history.py",
 })
 
 

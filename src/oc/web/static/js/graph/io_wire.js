@@ -18,6 +18,7 @@ import { since } from "../datefmt.js";
 import { log, timed } from "../log.js";
 import { wireProducerNode, mapRow } from "./producer_node.js";
 import { renderTriggerHistory } from "./history_node.js";
+import { renderInputLog } from "./input_log_node.js";
 import { refreshRegister, populateRegister, REG_AGGREGATES, AGG_DESC } from "./register_node.js";
 import { richPickerPop } from "./rich_picker.js";
 import { renderProcessHistory } from "./process_history_node.js";
@@ -220,6 +221,62 @@ function wireTrigger(div, n) {
         model.setTriggerKind(t.id, e.target.value); rebuildNode(n.id); render(); autosave(null);
     });
     div.querySelector(".tg-interval")?.addEventListener("change", (e) => { model.setTriggerInterval(t.id, e.target.value); autosave(null); });
+    // on_input: chord + window/rect bind. Event/window/double rebuild (their presence/value shows
+    // or hides other fields — the double-window input, the rect row); button/mods/rect just save.
+    div.querySelector(".tg-inevent")?.addEventListener("change", (e) => { model.setTriggerInputEvent(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    div.querySelector(".tg-inbutton")?.addEventListener("change", (e) => { model.setTriggerInputButton(t.id, e.target.value); autosave(null); });
+    div.querySelector(".tg-inmods")?.addEventListener("change", (e) => {
+        model.setTriggerInputMods(t.id, e.target.value.split(",").map((s) => s.trim())); autosave(null);
+    });
+    div.querySelector(".tg-indouble")?.addEventListener("change", (e) => { model.setTriggerInputDoubleMs(t.id, e.target.value); autosave(null); });
+    div.querySelector(".tg-inwindow")?.addEventListener("change", (e) => { model.setTriggerInputWindow(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    const inRect = () => model.setTriggerInputRect(t.id,
+        [".tg-inrx", ".tg-inry", ".tg-inrw", ".tg-inrh"].map((sel) => div.querySelector(sel)?.value ?? ""));
+    div.querySelector(".tg-inrx")?.addEventListener("change", () => { inRect(); autosave(null); });
+    div.querySelector(".tg-inry")?.addEventListener("change", () => { inRect(); autosave(null); });
+    div.querySelector(".tg-inrw")?.addEventListener("change", () => { inRect(); autosave(null); });
+    div.querySelector(".tg-inrh")?.addEventListener("change", () => { inRect(); autosave(null); });
+    // "listen": arm the button, capture the NEXT keydown/mousedown (incl. held modifiers) into the
+    // button field, then disarm. No blocking dialog (rule 2) — just a label swap while armed;
+    // Escape cancels. preventDefault so the captured key/click never reaches the page underneath.
+    div.querySelector(".tg-inlisten")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        const input = div.querySelector(".tg-inbutton");
+        btn.textContent = "press a key…";
+        btn.disabled = true;
+        const finish = (token) => {
+            document.removeEventListener("keydown", onKey, true);
+            document.removeEventListener("mousedown", onMouse, true);
+            document.removeEventListener("contextmenu", onCtx, true);
+            btn.textContent = "listen";
+            btn.disabled = false;
+            if (token) { input.value = token; model.setTriggerInputButton(t.id, token); autosave(null); }
+        };
+        // Named-key translation to the SAME token vocabulary oc.input.win32_hook's _key_name
+        // produces (VK-derived), so a browser-captured bind matches the live hook's events.
+        // Letters/digits/punctuation already agree (both lowercase the printable char).
+        const NAMED_KEYS = {
+            Escape: "esc", " ": "space", ArrowLeft: "left", ArrowUp: "up", ArrowRight: "right",
+            ArrowDown: "down", PageUp: "pageup", PageDown: "pagedown",
+        };
+        const MOD_KEYS = { Control: "ctrl", Shift: "shift", Alt: "alt", Meta: "win" };
+        const onKey = (ev) => {
+            ev.preventDefault(); ev.stopPropagation();
+            if (ev.key === "Escape") return finish(null);
+            if (MOD_KEYS[ev.key]) return;   // a bare modifier arms the chord but isn't itself the button
+            const name = NAMED_KEYS[ev.key] || ev.key.toLowerCase();
+            finish(`key:${name}`);
+        };
+        const onMouse = (ev) => {
+            ev.preventDefault(); ev.stopPropagation();
+            const NAMES = { 0: "left", 1: "middle", 2: "right", 3: "x1", 4: "x2" };
+            finish(`mouse:${NAMES[ev.button] || "left"}`);
+        };
+        const onCtx = (ev) => ev.preventDefault();   // suppress the right-click menu while armed
+        document.addEventListener("keydown", onKey, true);
+        document.addEventListener("mousedown", onMouse, true);
+        document.addEventListener("contextmenu", onCtx, true);
+    });
     // rebuildNode (not render) re-renders THIS node's chips — render() only builds NEW nodes,
     // so an in-place chip add/remove wouldn't show. drawEdges() drops/adds the trigger's edges
     // (watch source→trigger and trigger→price) so a chip change reflects on the canvas live.
@@ -249,6 +306,7 @@ function wireTrigger(div, n) {
     // satellite is toggled on — the parent trigger rebuilds and populates its follower, exactly like
     // a dataset/subset fills its vt-table satellite). No-op when the satellite is hidden.
     renderTriggerHistory(t.id);
+    renderInputLog(t.id);   // on_input's raw-event log satellite; no-op when hidden or not on_input
 }
 
 // ---- gate node: a boolean value-guard a trigger must satisfy before firing --

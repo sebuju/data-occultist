@@ -12,10 +12,16 @@ import { since, countdown } from "../../datefmt.js";
 import { liveAgo, liveUntil, stopAgo } from "../../ago.js";
 import { autosave } from "../main.js";
 import { renderTriggerHistory } from "../history_node.js";
+import { renderInputLog } from "../input_log_node.js";
 import { renderReadoutHistory } from "../readout_history_node.js";
 import { renderProducerHistory } from "../producer_history_node.js";
 import { renderRegisterHistory } from "../register_history_node.js";
 import { renderProcessHistory } from "../process_history_node.js";
+import { renderGateHistory } from "../gate_history_node.js";
+import { renderRouterHistory } from "../router_history_node.js";
+import { renderSoundHistory } from "../sound_history_node.js";
+import { renderGameHistory } from "../game_history_node.js";
+import { renderActionHistory } from "../action_history_node.js";
 import { refreshRegister } from "../register_node.js";
 import { liveCollecting } from "./livewin.js";
 import { panZoomTo } from "../camera.js";
@@ -317,6 +323,34 @@ function updateTriggerNodes(data) {
     // register push-history satellites ride the same beat (register_history, keyed by register id);
     // TOP-LEVEL (not under `live`) so a test feed updates them with the collector stopped too.
     // paint each OPEN one (no-op / no host when hidden). VTable reconciles in place (rule 1).
+    // gate flip-history satellites ride the same beat (gate_history, keyed by gate id); TOP-LEVEL
+    // (not under `live`) so a test feed updates them with the collector stopped too. paint each OPEN
+    // one (no-op / no host when hidden). VTable reconciles in place (rule 1).
+    const gateHist = data.gate_history || {};
+    for (const gid in gateHist) renderGateHistory(gid, gateHist[gid]);
+    // router route-history satellites ride the same beat (router_history, keyed by router id).
+    const routHist = data.router_history || {};
+    for (const rid in routHist) renderRouterHistory(rid, routHist[rid]);
+    // sound play-history satellites ride the same beat (sound_history, keyed by sound id).
+    const sndHist = data.sound_history || {};
+    for (const sid in sndHist) renderSoundHistory(sid, sndHist[sid]);
+    // game node's OCR-tick history rides the same beat (game_history, keyed "game"); only present
+    // while live collection is running (see LiveSession.debug_recent) — an idle beat carries {}.
+    const gameHist = data.game_history || {};
+    if (gameHist.game) renderGameHistory(gameHist.game);
+    // action run-history satellites ride the same beat (action_history, keyed by action id).
+    const actHist = data.action_history || {};
+    for (const aid in actHist) renderActionHistory(aid, actHist[aid]);
+    // trigger fire-history satellites ride the same beat (trigger_history, keyed by trigger id) —
+    // its own top-level key now, migrated onto HistoryRing like every other ring (rule 7); it used
+    // to ride nested inside each trigger object (trigger_sched.py).
+    const trigHist = data.trigger_history || {};
+    for (const tid in trigHist) renderTriggerHistory(tid, trigHist[tid]);
+    // an on_input trigger's CONSIDERED-event log (input_history, keyed by trigger id) — the same
+    // migration off `triggers[].input_log`. Only on_input triggers ever populate the ring, so this
+    // loop is empty for every other kind.
+    const inHist = data.input_history || {};
+    for (const tid in inHist) renderInputLog(tid, inHist[tid]);
     const regHist = data.register_history || {};
     const regRefresh = new Set();   // registers whose membank to repaint this beat (deduped, flushed below)
     for (const rid in regHist) {
@@ -329,9 +363,8 @@ function updateTriggerNodes(data) {
         if (latest && latest !== _lastRegPush.get(rid)) { _lastRegPush.set(rid, latest); regRefresh.add(rid); }
     }
     for (const t of (data.triggers || [])) {
-        // the heartbeat carries each trigger's history now (trigger_sched.py), so this just
-        // paints it into an OPEN satellite — no-op / no network when it's hidden.
-        renderTriggerHistory(t.id, t.history);
+        // both history rings are painted from their own top-level loops above now; this loop only
+        // drives each trigger node's progress span.
         const span = nodeEls.get(`trigger:${t.id}`)?.querySelector(".tg-prog");
         if (!span) continue;
         const running = (t.targets || []).some((x) => x.running);

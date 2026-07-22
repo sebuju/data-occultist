@@ -94,7 +94,7 @@ function clearGridSize(el) { el.style.width = ""; el.style.height = ""; el.style
 // still-empty panel collapses to the .hist-host CSS floor (120px) even though it was resized taller
 // last session. Dataset/subset vt-table satellites persist their rows, so their content-driven
 // height is trustworthy and must NOT get this floor.
-const isTransientSatellite = (id) => id.startsWith("hist:") || id.startsWith("rohist:") || id.startsWith("prodhist:");
+const isTransientSatellite = (id) => id.startsWith("hist:") || id.startsWith("inlog:") || id.startsWith("rohist:") || id.startsWith("prodhist:");
 // Stamp a min-height floor from the LAST saved height on a transient satellite whose height was
 // never explicitly customized (custH:false) — applySavedSize leaves that axis unstamped (by
 // design, for content-driven nodes), so without this the node shows its true saved size only until

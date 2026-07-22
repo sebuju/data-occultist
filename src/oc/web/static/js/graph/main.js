@@ -51,6 +51,11 @@ import { renderReadoutHistory } from "./readout_history_node.js";
 import { renderProducerHistory } from "./producer_history_node.js";
 import { renderRegisterHistory } from "./register_history_node.js";
 import { renderProcessHistory } from "./process_history_node.js";
+import { renderGateHistory } from "./gate_history_node.js";
+import { renderRouterHistory } from "./router_history_node.js";
+import { renderSoundHistory } from "./sound_history_node.js";
+import { renderGameHistory } from "./game_history_node.js";
+import { renderActionHistory } from "./action_history_node.js";
 import { clearTools } from "./drawtool.js";
 import { singleFlight } from "../singleflight.js";
 import { nmSyncSelection, renderNodeViews } from "./panels/nodemap.js";
@@ -1046,6 +1051,9 @@ function wireNode(div, n) {
         } else if (r.kind === "triggerhistory") {
             // filled by the trigger's wire (renderTriggerHistory) + the heartbeat (triggers ride
             // EVERY beat, so an idle/empty one still renders an empty grid — no fetch here).
+        } else if (r.kind === "inputlog") {
+            // filled by the trigger's wire (renderInputLog) + the heartbeat, same as triggerhistory
+            // above — no fetch here.
         } else if (r.kind === "readouthistory") {
             // readout_history rides the beat top-level (fed by live collection AND the test feed).
             // Paint on mount so a just-opened satellite shows its last snapshot (or an empty grid)
@@ -1063,6 +1071,23 @@ function wireNode(div, n) {
             // process_history rides the activity beat top-level (live collection AND the test feed);
             // paint on mount so a just-opened satellite shows its last snapshot (or empty) immediately.
             queueMicrotask(() => renderProcessHistory(r.id));
+        } else if (r.kind === "gatehistory") {
+            // gate_history rides the activity beat top-level; paint on mount so a just-opened
+            // satellite shows its last snapshot (or empty) immediately instead of a stale "loading…".
+            queueMicrotask(() => renderGateHistory(r.id));
+        } else if (r.kind === "routerhistory") {
+            // router_history rides the activity beat top-level; paint on mount, same as gatehistory.
+            queueMicrotask(() => renderRouterHistory(r.id));
+        } else if (r.kind === "soundhistory") {
+            // sound_history rides the activity beat top-level; paint on mount, same as gatehistory.
+            queueMicrotask(() => renderSoundHistory(r.id));
+        } else if (r.kind === "gamehistory") {
+            // game_history rides the activity beat top-level (present only while live is running);
+            // paint on mount so a just-opened satellite shows its last snapshot (or empty) immediately.
+            queueMicrotask(() => renderGameHistory());
+        } else if (r.kind === "actionhistory") {
+            // action_history rides the activity beat top-level; paint on mount, same as gatehistory.
+            queueMicrotask(() => renderActionHistory(r.id));
         } else {
             const rmTog = div.querySelector(".vt-showrm");   // "show removed" header toggle (checkbox)
             rmTog?.addEventListener("change", (e) => {
