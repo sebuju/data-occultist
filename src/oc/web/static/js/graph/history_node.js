@@ -3,9 +3,10 @@
 // records grid as a dataset/subset data table (rule 7), so it resizes like every other node. Rows,
 // newest first: WHEN each fire happened, WHY (the condition that justified it), WHAT it fired
 // (target ids), and whether the fire was suppressed by the trigger's throttle. Data rides the
-// shared activity heartbeat (each trigger's snapshot now carries its own `history`, see
-// trigger_sched.py) — no per-trigger fetch, so a closed satellite costs nothing and an open one
-// updates the instant the beat pushes a change (rule 7: one heartbeat, not a poll per node).
+// shared activity heartbeat TOP-LEVEL (`trigger_history["<id>"]`, build_activity — trigger_history
+// now builds on the same HistoryRing every other history satellite uses, rule 7) — no per-trigger
+// fetch, so a closed satellite costs nothing and an open one updates the instant the beat pushes a
+// change.
 //
 // The node body (a `.hist-host` scrollhost) is built in node_parts (the vttable dispatch);
 // `renderTriggerHistory` feeds a VTable into that host from the passed (or last-seen) snapshot.
@@ -25,10 +26,8 @@ const COLS = ["when", "node", "value", "why", "fires", "throttled"];
 export function renderTriggerHistory(triggerId, history) {
     const host = nodeEls.get(`hist:${triggerId}`)?.querySelector(".hist-host");
     if (!host) return;
-    if (history === undefined) {
-        const t = (hub.latest()?.triggers || []).find((x) => x.id === triggerId);
-        history = t?.history || [];
-    }
+    if (history === undefined)
+        history = hub.latest()?.trigger_history?.[triggerId] || [];
     const rows = history.map((e) => ({
         when: fmtDateTimeMs(e.ts),
         node: e.node || "-",

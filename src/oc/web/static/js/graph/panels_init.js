@@ -20,6 +20,7 @@ import { tb, tbState, buildToolbox } from "./panels/toolbox.js";
 import { themeState, buildTheme } from "./panels/theme.js";
 import { pc, pcState, buildPrecap } from "./panels/precap.js";
 import { liveWin, liveWinState, buildLiveWindow } from "./panels/livewin.js";
+import { buildNodeLog } from "./panels/nodelog.js";
 import { onOutside } from "../inputbus.js";
 import { render, autosave } from "./main.js";
 
@@ -130,11 +131,21 @@ export function initPanels() {
         pc.setVisible(!pcState.visible, true);
     });
 
+    // node-log panel: every node's satellite log merged into one table (see nodelog.js). Spans
+    // the full window width, docked above the logbar (span:"bottom", wired in floatwin.js) —
+    // unlike every other panel here it has no free-slot position of its own to persist, so w/x/y
+    // aren't meaningful state to save (span always recomputes them).
+    const nodeLogState = { visible: false, h: null, collapsed: false };   // height: CSS default (240px)
+                                                                            // until the user manually resizes it
+    const nodeLogWin = buildNodeLog(nodeLogState);
+    $("nodelogBtn")?.classList.toggle("active", nodeLogState.visible);
+    $("nodelogBtn")?.addEventListener("click", () => nodeLogWin.setVisible(!nodeLogState.visible, true));
+
     // Shift-clicking a panel's topbar toggle resets that panel's box (size + position) instead
     // of toggling it. Capture phase so it can pre-empt the normal toggle handler above. If the
     // panel is already open we reset in place and suppress the toggle (which would hide it); if
     // it's closed/not-built we let the toggle open it, then reset on the next tick.
-    const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", themeBtn: "graph-theme", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", inspectorBtn: "inspector", statsBtn: "stats", dbstructBtn: "dbstruct", historyBtn: "history" };
+    const _PANEL_TOGGLES = { liveBtn: "live", precapBtn: "precap", createBtn: "toolbox", themeBtn: "graph-theme", nodemapBtn: "nodemap", nodelistBtn: "nodelist", activityBtn: "activity", inspectorBtn: "inspector", statsBtn: "stats", dbstructBtn: "dbstruct", historyBtn: "history", nodelogBtn: "nodelog" };
     for (const [btnId, panelId] of Object.entries(_PANEL_TOGGLES)) {
         $(btnId)?.addEventListener("click", (ev) => {
             if (!ev.shiftKey) return;

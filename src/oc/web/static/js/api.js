@@ -527,8 +527,6 @@ export const live = {
     // Skip the feed-saved-images replay to the next image now (feed_images mode only).
     feedSkip: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/feed/skip`, { method: "POST", signal }).then((r) => r.json()),
     status: (game, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/status`, { signal }).then((r) => r.json()),
-    // Debug log: incremental poll (entries newer than `after`). { running, seq, entries:[...] }.
-    debug: (game, after = 0, signal) => tfetch(`/api/live/${encodeURIComponent(game)}/debug?after=${encodeURIComponent(after)}`, { signal }).then((r) => r.json()),
     // Persisted frame limiter (seconds; 0 = fastest). getInterval → { interval }; setInterval persists.
     getInterval: (signal) => tfetch("/api/live/interval", { signal }).then((r) => r.json()),
     setInterval: (seconds) => tfetch(`/api/live/interval?seconds=${encodeURIComponent(seconds)}`, { method: "POST" }).then((r) => r.json()),

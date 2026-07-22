@@ -70,6 +70,9 @@ let _prevW = window.innerWidth;
 function _reflowPanels(dw) {
     for (const [id, w] of _wins) {
         if (w.el.hidden || w.state.dock) continue;
+        // a spanning panel (span:"bottom") re-asserts its full-width/bottom-docked box instead of
+        // the normal "shift by the width delta" reflow — it has no fixed anchor corner to shift from.
+        if (w.span) { w.applySpan(); continue; }
         w.place(w.el.offsetLeft + (dw || 0), w.el.offsetTop);
         w.onResize && w.onResize();
         w.fitHeight && w.fitHeight();   // usable area moved -> re-fit (the cap may have shifted)
@@ -331,6 +334,10 @@ export function createFloatWin({
     resetW = RESET_W, // width restored by the header's reset-size button. Defaults to the
                                         // uniform 300 preset; a panel that wants a different default (e.g. the wide
                                         // inspector) overrides it so every reset path lands on its own width.
+    span = null,      // "bottom" -> pin to the FULL usable width, bottom-docked above the logbar
+                                        // (the "node log" panel's shape). The one place _usableW/_usableLeft/
+                                        // _usableBottom are read from outside a normal place() call, so a
+                                        // spanning panel needs no copy of the usable-area math (rule 7).
 }) {
     state.collapsed = !!state.collapsed;   // ensure the key exists so it round-trips + resets
     if (state.dock === undefined) state.dock = null;   // { to, dx } when docked below another panel
@@ -391,6 +398,17 @@ export function createFloatWin({
                 _hadSaved ? state.y : _usableTop());
     if (!_hadSaved) { state.x = null; state.y = null; }
 
+    // Force this panel to the full usable width, bottom-docked above the logbar. Width is pinned
+    // every call (a user width-drag gets re-asserted on the next layout event, e.g. window resize
+    // or reopen — simpler than fighting the drag live, and span panels have no other owner of their
+    // width). Height stays whatever fitHeight/the user's own resize set it to.
+    function applySpan() {
+        if (span !== "bottom" || el.hidden) return;
+        const w = _usableW();
+        el.style.width = `${w}px`; state.w = w;
+        place(_usableLeft(), _usableBottom() - el.offsetHeight);
+    }
+
     // record the panel's current box into state (skip the 0×0 hidden size + the short
     // collapsed height, which would otherwise overwrite the real expanded box)
     function stashSize() {
@@ -426,6 +444,7 @@ export function createFloatWin({
             // in spot; a docked one re-fits its whole chain (collapsing trailing members if it now
             // overruns the usable area).
             if (state.dock) fitChainToScreen(id);
+            else if (span === "bottom") applySpan();
             else if (Number.isFinite(state.x) && Number.isFinite(state.y)) place(state.x, state.y);
         } else el.style.height = `${cur}px`;   // restore a definite height (we were briefly auto)
         if (body && body.scrollTop !== sb) body.scrollTop = sb;
@@ -594,17 +613,21 @@ export function createFloatWin({
             onShow && onShow();
             if (state.visible) {
                 fitHeight();   // size to content (now rendered) BEFORE positioning, so placement uses the real height
-                // reopened with no saved spot (cleared on hide) -> find a free one instead of reusing
-                // wherever it last sat (which may now be occupied / off a resized screen). If that spot
-                // landed directly below another panel, DOCK under it so it joins the chain.
-                if (!Number.isFinite(state.x) || !Number.isFinite(state.y)) {
-                    const [x, y] = findFreeSlot(id, el.offsetWidth || state.w || RESET_W, el.offsetHeight || 120);
-                    place(x, y);
-                    const dp = findDockParent(id);
-                    if (dp) { state.dock = dp; reflowDock(dp.to); }
+                if (span === "bottom") {
+                    applySpan();   // always the same box — no free-slot search, no docking
+                } else {
+                    // reopened with no saved spot (cleared on hide) -> find a free one instead of reusing
+                    // wherever it last sat (which may now be occupied / off a resized screen). If that spot
+                    // landed directly below another panel, DOCK under it so it joins the chain.
+                    if (!Number.isFinite(state.x) || !Number.isFinite(state.y)) {
+                        const [x, y] = findFreeSlot(id, el.offsetWidth || state.w || RESET_W, el.offsetHeight || 120);
+                        place(x, y);
+                        const dp = findDockParent(id);
+                        if (dp) { state.dock = dp; reflowDock(dp.to); }
+                    }
+                    if (state.dock) reflowDock(state.dock.to);
+                    reflowDock(id);   // drag any children that are still docked under me into place
                 }
-                if (state.dock) reflowDock(state.dock.to);
-                reflowDock(id);   // drag any children that are still docked under me into place
             }
         } else {
             // hiding via the topbar: pull my docked chain UP to fill the gap I leave. My direct
@@ -634,7 +657,7 @@ export function createFloatWin({
         el.hidden = !state.visible;
         if (state.dock && state.visible) reflowDock(state.dock.to);   // snap under my parent
         _syncDockMarks();
-        if (state.visible) { onShow && onShow(); fitHeight(); } else onHide && onHide();
+        if (state.visible) { onShow && onShow(); fitHeight(); if (span === "bottom") applySpan(); } else onHide && onHide();
     }
     function collect() { stashSize(); return { ...state }; }
     // Restore to defaults, then overlay the saved blob — so switching to a profile that never
@@ -653,7 +676,8 @@ export function createFloatWin({
         el.style.width = ""; el.style.height = "";
         applySize(); applyCollapsed(); markSized();
         onResize && onResize(); fitHeight();
-        place(_usableRight() - (el.offsetWidth || 288), _usableTop());
+        if (span === "bottom") applySpan();
+        else place(_usableRight() - (el.offsetWidth || 288), _usableTop());
         _syncDockMarks();
         save();
     }
@@ -682,7 +706,7 @@ export function createFloatWin({
     }
     function reclaim() { if (_embedHost && body.parentElement !== _embedHost) _embedHost.appendChild(body); }
 
-    const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate, onResize, resetBox, fitHeight, collapse: setCollapsed, embed, unembed, reclaim };
+    const inst = { el, body, head, state, setVisible, applyState, place, stashSize, applySize, collect, hydrate, onResize, resetBox, fitHeight, collapse: setCollapsed, embed, unembed, reclaim, span, applySpan };
     _wins.set(id, inst);
     return inst;
 }

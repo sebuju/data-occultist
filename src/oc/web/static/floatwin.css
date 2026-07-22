@@ -368,52 +368,13 @@
 .clps-chev { flex: none; width: 6px; color: var(--muted); }
 .clps-title { flex: 1; min-width: 0; }
 .clps-body { margin-top: 4px; }
-/* stats body: same boxed panel as the OCR log body (no scroll — fixed rows) */
+/* stats body: same boxed panel as the sessions body below (no scroll — fixed rows) */
 .live-statbox { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
-/* the OCR log's right-aligned "clear" affordance in its header */
-.live-dbg-clear { flex: none; color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
-.live-dbg-clear:hover { color: var(--text); }
-/* scrollable log body; a data preview, not a grid — capped rows keep the DOM small (rule 4).
-   no margin-top: it sits flush under its collapsible header (overrides .clps-body). */
+/* scrollable boxed body shared by the sessions collapsible (was also the old OCR-log body — see
+   game_history_node.js, which replaced that with the game node's satellite). no margin-top: it
+   sits flush under its collapsible header (overrides .clps-body). */
 .live-dbg-body { margin-top: 4px; max-height: 260px; overflow-y: auto;
     background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; }
-/* When the user has manually set the panel HEIGHT (autoFit off — floatwin marks the frame
-   .rz-has-h), the OCR log absorbs the extra height instead of leaving dead space below a
-   260px-capped log: the content column fills the body and the (open) OCR-log section flex-grows.
-   In autoFit mode (no .rz-has-h) the cap above holds so the panel sizes to its content. */
-#live.rz-has-h .fw-body { display: flex; }
-#live.rz-has-h .live-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-/* .live-dbg-open is toggled on the OCR-log section by setDebugOpen (livewin.js) — mirrors the old
-   `:has(.live-dbg-body:not([hidden]))` without a :has() selector. */
-#live.rz-has-h .clps.live-dbg-open { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-#live.rz-has-h .clps.live-dbg-open .live-dbg-body { flex: 1; min-height: 0; max-height: none; }
-.live-dbg-empty { font-size: var(--fs-xs); padding: 4px 2px; }
-.live-dbg-list { display: flex; flex-direction: column; gap: 4px; }
-/* one tick: header line + its per-read lines, hairline-separated */
-.live-dbg-row { border-bottom: 1px solid var(--border); padding-bottom: 4px; }
-.live-dbg-row:last-child { border-bottom: 0; padding-bottom: 0; }
-.live-dbg-row-head { display: flex; align-items: baseline; gap: 6px; font-size: var(--fs-xs); }
-.live-dbg-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
-.live-dbg-phase { flex: 1; min-width: 0; color: var(--text); font-weight: 600;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* capture-recognised: image file this grab was written to (between phase and the write summary) */
-.live-dbg-file { flex: 0 1 auto; min-width: 0; max-width: 45%; color: var(--muted);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    font-variant-numeric: tabular-nums; opacity: 0.8; }
-.live-dbg-wrote { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
-.live-dbg-wrote.wrote { color: var(--ok); font-weight: 600; }
-/* a read: field chips wrap; each shows fid + optional raw->value */
-.live-dbg-read { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 0 12px; font-size: var(--fs-xs); }
-/* readout reads (live HUD scalars) sit apart from record reads: accented rail + tinted ids */
-.live-dbg-read.readout { border-left: 2px solid var(--accent); padding-left: 8px; margin-left: 10px; }
-.live-dbg-read.readout .live-dbg-fid { color: var(--accent); }
-.live-dbg-fld { display: inline-flex; align-items: baseline; gap: 3px; white-space: nowrap; }
-.live-dbg-fld.cor { color: var(--warn); }        /* a corrected field stands out */
-.live-dbg-fid { color: var(--muted); }
-.live-dbg-raw { color: var(--muted); text-decoration: line-through; opacity: 0.8; }
-.live-dbg-arrow { color: var(--muted); }
-.live-dbg-val { color: var(--text); font-weight: 500; }
-.live-dbg-fld.cor .live-dbg-val { color: var(--warn); }
 
 /* ---- node inspector (feed synthetic readout values into the live session) -- */
 /* Its own panel opens wide (500px, set in JS) and at FULL usable height like pretty view's
@@ -428,6 +389,14 @@
 .insp-panel { display: flex; flex-direction: column; gap: 8px; }
 .insp-head { color: var(--text); font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
 .insp-body { display: flex; flex-direction: column; gap: 8px; }
+
+/* Node-log panel: spans the full width (span:"bottom" in floatwin.js), a fixed default height like
+   #inspector's fixed CSS height above (autoFit is off in JS, so nothing fights this until the user
+   manually resizes it — a manual resize's inline height then wins). The VTable fills the body via
+   its own internal virtualized scroll (.vt-host owns overflow), so the body itself must NOT also
+   scroll (that would double-scroll and clip the VTable's own scrollbar/header). */
+#nodelog:not(.collapsed) { height: 240px; }
+#nodelog .fw-body { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .insp-empty { color: var(--muted); font-size: var(--fs-xs); }
 .insp-target { color: var(--text); font-size: var(--fs-xs); font-weight: 500; }
 .insp-tip { color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }

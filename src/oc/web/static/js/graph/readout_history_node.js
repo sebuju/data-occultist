@@ -37,10 +37,19 @@ export function cellFor(s) {
 // unique (a suffix on collision) so VTable's row-object keys don't clash. Exported so the process-
 // history satellite derives its rule columns identically (rule 7).
 export function ruleColumns(history) {
-    const label = new Map();   // step index -> label (first seen wins)
+    return unionIndexColumns(history, "trace", (s) => s.i, ruleLabel);
+}
+
+// Shared "one column per indexed sub-item, unioned across every history row" primitive — the same
+// shape a gate's per-condition breakdown and a router's per-branch breakdown need (rule 7: gate/
+// router history reuse this instead of copying the union-by-index loop above). `listKey` names the
+// per-entry array field (e.g. "trace"/"conds"/"branches"); `idxOf`/`labelOf` pull the stable index +
+// display label off one sub-item. Headers are made unique (a suffix on collision).
+export function unionIndexColumns(history, listKey, idxOf, labelOf) {
+    const label = new Map();   // index -> label (first seen wins)
     for (const e of history)
-        for (const s of (e.trace || []))
-            if (!label.has(s.i)) label.set(s.i, ruleLabel(s));
+        for (const s of (e[listKey] || []))
+            if (!label.has(idxOf(s))) label.set(idxOf(s), labelOf(s));
     const seen = new Map();
     return [...label.keys()].sort((a, b) => a - b).map((i) => {
         let col = label.get(i);
