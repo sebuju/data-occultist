@@ -792,8 +792,12 @@ windows:
     type: text
     rules:
     - when: always
+      then: extract
+      strategy: text_before
+      sep: relic
+    - when: always
       then: dictionary
-      dict_mode: correct
+      dict_mode: correct_drop
       dict_id: relics
       fuzzy: 0.82
     min_confidence: 0.0
@@ -2544,6 +2548,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   - dataset: mod_catalog
     join_field: unique_name
@@ -2554,6 +2559,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters: []
   derived: []
@@ -2577,6 +2583,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: overframe_builds
     join_field: build_id
@@ -2587,6 +2594,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: mark
   filters: []
   derived: []
@@ -2610,6 +2618,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: overframe_mods
     join_field: mod
@@ -2620,6 +2629,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters: []
   derived: []
@@ -2649,6 +2659,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   - dataset: overframe_frame_index
     join_field: frame_name
@@ -2659,6 +2670,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   filters:
   - field: name
@@ -2688,6 +2700,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   - dataset: prices_live
     join_field: name
@@ -2698,6 +2711,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters:
   - field: price_median
@@ -2735,6 +2749,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   filters:
   - field: name
@@ -2763,6 +2778,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: prices_live
     join_field: name
@@ -2773,6 +2789,7 @@ subsets:
       strip_words: []
     aggregate: ''
     required: false
+    prefer_newest: false
     mode: join
   filters: []
   derived:
@@ -2804,7 +2821,7 @@ subsets:
   distinct: false
   distinct_by: []
   config_collapsed: true
-- id: relics_with_content
+- id: relics_owned
   sources:
   - dataset: relics_select
     join_field: name
@@ -2814,10 +2831,11 @@ subsets:
       collapse_ws: true
       strip_words:
       - relic
-    aggregate: all
-    required: true
+    aggregate: latest
+    required: false
+    prefer_newest: true
     mode: join
-  - dataset: relic_contents
+  - dataset: relics_refinement
     join_field: name
     join_norm:
       case_insensitive: true
@@ -2825,88 +2843,9 @@ subsets:
       collapse_ws: true
       strip_words:
       - relic
-    aggregate: all
-    required: true
-    mode: join
-  filters: []
-  derived: []
-  hidden_columns:
-  - count
-  - _item
-  - _seq
-  - key
-  sort: []
-  sort_by: ''
-  sort_desc: false
-  latest_batch: false
-  limit: 0
-  distinct: false
-  distinct_by: []
-  config_collapsed: false
-- id: relics_with_content_view
-  sources:
-  - dataset: relics_with_content
-    join_field: item
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
-    aggregate: latest
-    required: true
-    mode: join
-  - dataset: prices_live
-    join_field: name
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
     aggregate: latest
     required: false
-    mode: join
-  filters: []
-  derived: []
-  hidden_columns:
-  - _item
-  - _seq
-  - key
-  - slug
-  - live_ask
-  - price_median
-  - updated
-  - ducats
-  - live_median
-  - _pos
-  sort: []
-  sort_by: ''
-  sort_desc: false
-  latest_batch: false
-  limit: 0
-  distinct: false
-  distinct_by: []
-  config_collapsed: false
-- id: relics_refinement_with_contents
-  sources:
-  - dataset: relics_refinement
-    join_field: name
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
-    aggregate: latest
-    required: true
-    mode: join
-  - dataset: relic_contents
-    join_field: name
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
-    aggregate: latest
-    required: true
+    prefer_newest: true
     mode: join
   filters: []
   derived: []
@@ -2915,50 +2854,6 @@ subsets:
   - _seq
   - _pos
   - _item
-  sort: []
-  sort_by: ''
-  sort_desc: false
-  latest_batch: false
-  limit: 0
-  distinct: false
-  distinct_by: []
-  config_collapsed: false
-- id: contents_with_price
-  sources:
-  - dataset: relics_refinement_with_contents
-    join_field: item
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
-    aggregate: latest
-    required: true
-    mode: join
-  - dataset: prices_live
-    join_field: name
-    join_norm:
-      case_insensitive: true
-      strip_punct: false
-      collapse_ws: true
-      strip_words: []
-    aggregate: latest
-    required: true
-    mode: join
-  filters: []
-  derived: []
-  hidden_columns:
-  - _seq
-  - _pos
-  - _item
-  - live_median
-  - live_sellers
-  - price_median
-  - slug
-  - key
-  - live_ask
-  - updated
-  - volume
   sort: []
   sort_by: ''
   sort_desc: false
@@ -2978,6 +2873,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: prices_live
     join_field: name
@@ -2988,6 +2884,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   filters:
   - field: name
@@ -3017,6 +2914,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: mod_catalog
     join_field: name
@@ -3027,6 +2925,7 @@ subsets:
       strip_words: []
     aggregate: ''
     required: true
+    prefer_newest: false
     mode: mark
   filters:
   - field: type
@@ -3066,6 +2965,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters:
   - field: name
@@ -3095,6 +2995,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: mods
     join_field: mod_name
@@ -3105,6 +3006,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: exclude
   filters:
   - field: type
@@ -3146,6 +3048,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: loadout_equipped
     join_field: value
@@ -3156,6 +3059,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: exclude
   filters: []
   derived:
@@ -3190,6 +3094,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: empty_general_slots
     join_field: xk
@@ -3200,6 +3105,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: drain_remaining
     join_field: ''
@@ -3210,6 +3116,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: broadcast
   filters:
   - field: compat
@@ -3272,6 +3179,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: empty_aura_slot
     join_field: xk
@@ -3282,6 +3190,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: drain_remaining
     join_field: ''
@@ -3292,6 +3201,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: broadcast
   filters:
   - field: compat
@@ -3350,6 +3260,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   - dataset: unowned_suggestions_aura
     join_field: ''
@@ -3360,6 +3271,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters:
   - field: drain_headroom
@@ -3413,6 +3325,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: loadout_equipped
     join_field: value
@@ -3423,6 +3336,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: exclude
   - dataset: overframe_build_mods_named
     join_field: name
@@ -3433,6 +3347,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: mark
   filters: []
   derived:
@@ -3467,6 +3382,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters: []
   derived: []
@@ -3499,6 +3415,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters:
   - field: name
@@ -3525,6 +3442,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters:
   - field: name
@@ -3555,6 +3473,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters:
   - field: name
@@ -3586,6 +3505,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters:
   - field: name
@@ -3619,6 +3539,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: empty_general_slots
     join_field: xk
@@ -3629,6 +3550,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: drain_remaining
     join_field: ''
@@ -3639,6 +3561,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: broadcast
   filters:
   - field: compat
@@ -3701,6 +3624,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: empty_aura_slot
     join_field: xk
@@ -3711,6 +3635,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: true
+    prefer_newest: false
     mode: join
   - dataset: drain_remaining
     join_field: ''
@@ -3721,6 +3646,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: broadcast
   filters:
   - field: compat
@@ -3779,6 +3705,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   - dataset: mod_suggestions_aura
     join_field: ''
@@ -3789,6 +3716,7 @@ subsets:
       strip_words: []
     aggregate: latest
     required: false
+    prefer_newest: false
     mode: join
   filters:
   - field: drain_headroom
@@ -3858,6 +3786,7 @@ subsets:
       strip_words: []
     aggregate: ''
     required: false
+    prefer_newest: false
     mode: join
   filters: []
   derived: []
@@ -3875,6 +3804,122 @@ subsets:
   distinct: true
   distinct_by:
   - item
+  config_collapsed: false
+- id: owned_arcanes
+  sources:
+  - dataset: master
+    join_field: ''
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: latest
+    required: false
+    prefer_newest: false
+    mode: join
+  filters:
+  - field: arcane_level
+    op: nonempty
+    value: ''
+  derived: []
+  hidden_columns:
+  - key
+  - _seq
+  - _pos
+  - rarity
+  - _item
+  sort:
+  - field: name
+    desc: false
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  distinct: false
+  distinct_by: []
+  config_collapsed: false
+- id: relics_owned_with_contents
+  sources:
+  - dataset: relics_owned
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: ''
+    required: true
+    prefer_newest: false
+    mode: join
+  - dataset: relic_contents
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: ''
+    required: true
+    prefer_newest: false
+    mode: join
+  filters: []
+  derived:
+  - name: relic
+    template: '{name}'
+  hidden_columns: []
+  sort: []
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  distinct: false
+  distinct_by: []
+  config_collapsed: false
+- id: subset_2
+  sources:
+  - dataset: prices_live
+    join_field: name
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: ''
+    required: true
+    prefer_newest: false
+    mode: join
+  - dataset: relics_owned_with_contents
+    join_field: item
+    join_norm:
+      case_insensitive: true
+      strip_punct: false
+      collapse_ws: true
+      strip_words: []
+    aggregate: ''
+    required: true
+    prefer_newest: false
+    mode: join
+  filters:
+  - field: count
+    op: gt
+    value: '0'
+  derived: []
+  hidden_columns:
+  - key
+  - _seq
+  - _pos
+  - _item
+  - item
+  sort:
+  - field: price_min
+    desc: true
+  sort_by: ''
+  sort_desc: false
+  latest_batch: false
+  limit: 0
+  distinct: false
+  distinct_by: []
   config_collapsed: false
 producers:
 - id: wf_market_live
@@ -4559,6 +4604,12 @@ triggers:
   - wf_market_live
   enabled: true
   ready_field: ''
+  input_event: down
+  input_button: ''
+  input_mods: []
+  input_rect: []
+  input_window: ''
+  input_double_ms: 350.0
 - id: trigger_ab_1
   kind: on_register
   interval_s: 300.0
@@ -4575,6 +4626,12 @@ triggers:
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
+  input_event: down
+  input_button: ''
+  input_mods: []
+  input_rect: []
+  input_window: ''
+  input_double_ms: 350.0
 - id: trigger_ab_2
   kind: on_register
   interval_s: 300.0
@@ -4591,6 +4648,12 @@ triggers:
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
+  input_event: down
+  input_button: ''
+  input_mods: []
+  input_rect: []
+  input_window: ''
+  input_double_ms: 350.0
 - id: trigger_ab_3
   kind: on_register
   interval_s: 300.0
@@ -4607,6 +4670,12 @@ triggers:
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
+  input_event: down
+  input_button: ''
+  input_mods: []
+  input_rect: []
+  input_window: ''
+  input_double_ms: 350.0
 - id: trigger_ab_4
   kind: on_register
   interval_s: 300.0
@@ -4623,6 +4692,12 @@ triggers:
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
+  input_event: down
+  input_button: ''
+  input_mods: []
+  input_rect: []
+  input_window: ''
+  input_double_ms: 350.0
 - id: on_new_relics_offered
   kind: on_new_batch
   interval_s: 300.0
@@ -4636,6 +4711,274 @@ triggers:
   - relic_sound
   enabled: true
   ready_field: ''
+  input_event: down
+  input_button: ''
+  input_mods: []
+  input_rect: []
+  input_window: ''
+  input_double_ms: 350.0
+- id: click_slot_1
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_mod_general
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.316226
+  - 0.32775
+  - 0.112253
+  - 0.063864
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_2
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_mod_general
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.442198
+  - 0.327683
+  - 0.1135
+  - 0.063057
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_3
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_mod_general
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.569812
+  - 0.32783
+  - 0.112794
+  - 0.064659
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_4
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_mod_general
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.697029
+  - 0.327714
+  - 0.113732
+  - 0.065331
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_5
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_mod_general
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.314406
+  - 0.452646
+  - 0.113102
+  - 0.059391
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_6
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_mod_general
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.440951
+  - 0.45312
+  - 0.114221
+  - 0.058917
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_7
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_mod_general
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.568171
+  - 0.452591
+  - 0.114872
+  - 0.058983
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_8
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_mod_general
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.695391
+  - 0.453017
+  - 0.115994
+  - 0.058465
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_exilus
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_mod_general
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.570132
+  - 0.202395
+  - 0.113601
+  - 0.061192
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_aura
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets:
+  - toast_mod_aura
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.442708
+  - 0.204242
+  - 0.11224
+  - 0.058166
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_arcane_1
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets: []
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.8341666666666655
+  - 0.177777481481482
+  - 0.0918232499999998
+  - 0.1069443703703706
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
+- id: click_slot_arcane_2
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  gates: []
+  targets: []
+  enabled: true
+  throttle_ms: 500.0
+  ready_field: ''
+  input_event: down
+  input_button: mouse:left
+  input_mods: []
+  input_rect:
+  - 0.8344270833333322
+  - 0.378703407407406
+  - 0.09052124999999987
+  - 0.11481518518518524
+  input_window: arsenal_warframe
+  input_double_ms: 350.0
 gates:
 - id: gate_value_ab_1
   source: register:value_ab_register#value_ab_1
@@ -5046,6 +5389,64 @@ toasts:
   sources:
   - subset:relic_rewards_with_price
   replace_key: relic
+  accumulate: false
+  accumulate_cap: 10
+- id: toast_mod_general
+  title: Suggested mods
+  message: ''
+  texts:
+  - content: '{{subset:mod_suggestions_general.name[0]}}'
+    style: ''
+    align: ''
+    max_lines: 0
+  - content: '{{subset:mod_suggestions_general.name[1]}}'
+    style: ''
+    align: ''
+    max_lines: 0
+  - content: '{{subset:mod_suggestions_general.name[2]}}'
+    style: ''
+    align: ''
+    max_lines: 0
+  images: []
+  app_name: data-occultist
+  duration: short
+  icon: ''
+  show_icon: true
+  attribution: ''
+  muted: false
+  enabled: true
+  sources:
+  - subset:mod_suggestions_general
+  replace_key: arsenal_toast
+  accumulate: false
+  accumulate_cap: 10
+- id: toast_mod_aura
+  title: Suggested aura mods
+  message: ''
+  texts:
+  - content: '{{subset:mod_suggestions_aura.name[0]}}'
+    style: ''
+    align: ''
+    max_lines: 0
+  - content: '{{subset:mod_suggestions_aura.name[1]}}'
+    style: ''
+    align: ''
+    max_lines: 0
+  - content: '{{subset:mod_suggestions_aura.name[2]}}'
+    style: ''
+    align: ''
+    max_lines: 0
+  images: []
+  app_name: data-occultist
+  duration: short
+  icon: ''
+  show_icon: true
+  attribution: ''
+  muted: false
+  enabled: true
+  sources:
+  - subset:mod_suggestions_aura
+  replace_key: arsenal_toast
   accumulate: false
   accumulate_cap: 10
 sounds:
@@ -5640,26 +6041,26 @@ layout:
       custW: true
       custH: false
     win:relic_select:
-      x: 2100.0
-      y: -5180.0
+      x: -2100.0
+      y: -8580.0
       collapsed: false
     sb:relic_select:scrollbar:
-      x: 2660.0
-      y: -4700.0
+      x: -1540.0
+      y: -8100.0
       collapsed: false
     item:relic_select:relic_item:
-      x: 3340.0
-      y: -5180.0
-      w: 380.0
-      h: 827.0
+      x: -860.0
+      y: -8580.0
+      w: 400.0
+      h: 840.0
       collapsed: false
       custW: true
       custH: false
       softW: false
       softH: false
     fld:relic_select:relic_item:name:
-      x: 2980.0
-      y: -5180.0
+      x: -1220.0
+      y: -8580.0
       w: 320.0
       h: 360.0
       collapsed: false
@@ -5667,8 +6068,8 @@ layout:
       custH: true
       softH: true
     fld:relic_select:relic_item:count:
-      x: 2980.0
-      y: -4760.0
+      x: -1220.0
+      y: -8160.0
       w: 320.0
       h: 400.0
       collapsed: false
@@ -5676,8 +6077,8 @@ layout:
       custH: true
       softH: true
     item:relic_select:guard:
-      x: 3340.0
-      y: -4260.0
+      x: -860.0
+      y: -7700.0
       w: 400.0
       h: 760.0
       collapsed: false
@@ -5686,8 +6087,8 @@ layout:
       softW: false
       softH: false
     tell:relic_select:guard:tell_no_relic:
-      x: 2980.0
-      y: -4260.0
+      x: -1220.0
+      y: -7700.0
       w: 320.0
       h: 282.0
       collapsed: false
@@ -5711,47 +6112,29 @@ layout:
       collapsed: false
       custW: false
       custH: false
-    sub:relics_with_content:
-      x: 2520.0
-      y: -6400.0
-      w: 360.0
-      h: 820.0
-      collapsed: false
-      custW: false
-      custH: true
-      softH: true
-    sub:relics_with_content_view:
-      x: 2100.0
-      y: -6400.0
-      w: 360.0
-      h: 820.0
-      collapsed: false
-      custW: false
-      custH: true
-      softH: true
     win:relic_refinement:
-      x: 4040.0
-      y: -5180.0
+      x: -260.0
+      y: -8580.0
       w: 620.0
-      h: 920.0
+      h: 940.0
       collapsed: false
       custW: true
       custH: false
       softW: false
       softH: false
     sb:relic_refinement:scrollbar:
-      x: 5060.0
-      y: -5180.0
+      x: 740.0
+      y: -8580.0
       w: 260.0
-      h: 920.0
+      h: 940.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     item:relic_refinement:relic_item:
-      x: 5740.0
-      y: -5180.0
+      x: 1420.0
+      y: -8580.0
       w: 380.0
       h: 815.0
       collapsed: false
@@ -5760,14 +6143,15 @@ layout:
       softW: false
       softH: false
     fld:relic_refinement:relic_item:name:
-      x: 5380.0
-      y: -5180.0
+      x: 1060.0
+      y: -8580.0
       w: 320.0
-      h: 434.0
+      h: 340.0
       collapsed: false
       custW: true
-      custH: false
+      custH: true
       softW: true
+      softH: true
     win:relic_rewards:
       x: -100.0
       y: -4580.0
@@ -5802,8 +6186,8 @@ layout:
       custH: true
       softH: true
     det:relic_select:detect_h:
-      x: 2660.0
-      y: -5180.0
+      x: -1540.0
+      y: -8580.0
       w: 250.0
       h: 440.0
       collapsed: false
@@ -5811,8 +6195,8 @@ layout:
       custH: true
       softH: true
     det:relic_refinement:detect_h:
-      x: 4720.0
-      y: -5180.0
+      x: 420.0
+      y: -8580.0
       w: 280.0
       h: 440.0
       collapsed: false
@@ -5837,8 +6221,8 @@ layout:
       custW: true
       custH: false
     item:relic_refinement:not_owned:
-      x: 5740.0
-      y: -4260.0
+      x: 1420.0
+      y: -7700.0
       w: 380.0
       h: 760.0
       collapsed: false
@@ -5847,8 +6231,8 @@ layout:
       softW: false
       softH: false
     tell:relic_refinement:not_owned:tell_3:
-      x: 5380.0
-      y: -3840.0
+      x: 1060.0
+      y: -7280.0
       w: 320.0
       h: 155.0
       collapsed: false
@@ -5856,17 +6240,18 @@ layout:
       custH: false
       softW: true
     tell:relic_refinement:not_owned:tell_4:
-      x: 5380.0
-      y: -4260.0
+      x: 1060.0
+      y: -7700.0
       w: 320.0
-      h: 365.0
+      h: 380.0
       collapsed: false
       custW: true
-      custH: false
+      custH: true
       softW: true
+      softH: true
     ds:relics_refinement:
-      x: 4040.0
-      y: -4220.0
+      x: -260.0
+      y: -7600.0
       w: 380.0
       h: 220.0
       collapsed: false
@@ -5874,37 +6259,19 @@ layout:
       custH: false
       softW: true
       softH: true
-    sub:relics_refinement_with_contents:
-      x: 4040.0
-      y: -6400.0
-      w: 360.0
-      h: 820.0
-      collapsed: false
-      custW: false
-      custH: true
-      softH: true
-    sub:contents_with_price:
-      x: 4460.0
-      y: -6400.0
-      w: 360.0
-      h: 820.0
-      collapsed: false
-      custW: false
-      custH: true
-      softH: true
     det:relic_refinement:detect_1:
-      x: 4720.0
-      y: -4700.0
+      x: 420.0
+      y: -8100.0
       w: 280.0
-      h: 440.0
+      h: 460.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     ds:relics_select:
-      x: 2100.0
-      y: -4260.0
+      x: -2100.0
+      y: -7660.0
       collapsed: false
     sub:master_prime_parts:
       x: 360.0
@@ -5939,8 +6306,8 @@ layout:
       softW: true
       softH: true
     fld:relic_refinement:relic_item:count:
-      x: 5380.0
-      y: -4700.0
+      x: 1060.0
+      y: -8200.0
       w: 320.0
       h: 320.0
       collapsed: false
@@ -5976,8 +6343,8 @@ layout:
       custH: true
       softH: true
     win:mission_rewards:
-      x: 1140.0
-      y: -8120.0
+      x: -4280.0
+      y: -8160.0
       w: 620.0
       h: 660.0
       collapsed: false
@@ -5986,12 +6353,12 @@ layout:
       softW: false
       softH: false
     ds:mission_rewards:
-      x: 1820.0
-      y: -8120.0
+      x: -3600.0
+      y: -8160.0
       collapsed: false
     win:arsenal_warframe:
-      x: 11280.0
-      y: -6260.0
+      x: 4520.0
+      y: -5480.0
       w: 1080.0
       h: 1120.0
       collapsed: false
@@ -6000,8 +6367,8 @@ layout:
       softW: false
       softH: false
     item:arsenal_warframe:mod:
-      x: 11960.0
-      y: -4720.0
+      x: 5200.0
+      y: -3940.0
       w: 400.0
       h: 760.0
       collapsed: false
@@ -6010,8 +6377,8 @@ layout:
       softW: false
       softH: false
     fld:arsenal_warframe:mod:name:
-      x: 12120.0
-      y: -3920.0
+      x: 5360.0
+      y: -3140.0
       w: 240.0
       h: 321.0
       collapsed: false
@@ -6019,8 +6386,8 @@ layout:
       custH: false
       softW: true
     fld:arsenal_warframe:mod:drain:
-      x: 11840.0
-      y: -3920.0
+      x: 5080.0
+      y: -3140.0
       w: 240.0
       h: 321.0
       collapsed: false
@@ -6028,8 +6395,8 @@ layout:
       custH: false
       softW: true
     fld:arsenal_warframe:mod:rank:
-      x: 11560.0
-      y: -3920.0
+      x: 4800.0
+      y: -3140.0
       w: 240.0
       h: 320.0
       collapsed: false
@@ -6038,8 +6405,8 @@ layout:
       softW: true
       softH: true
     det:arsenal_warframe:detect_7:
-      x: 11280.0
-      y: -4720.0
+      x: 4520.0
+      y: -3940.0
       w: 240.0
       h: 222.0
       collapsed: false
@@ -6047,8 +6414,8 @@ layout:
       custH: false
       softW: false
     ro:arsenal_warframe:slot_arcane_1:
-      x: 12660.0
-      y: -7200.0
+      x: 5900.0
+      y: -6420.0
       w: 320.0
       h: 540.0
       collapsed: false
@@ -6056,8 +6423,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_arcane_2:
-      x: 13020.0
-      y: -7200.0
+      x: 6260.0
+      y: -6420.0
       w: 320.0
       h: 540.0
       collapsed: false
@@ -6075,8 +6442,8 @@ layout:
       softW: false
       softH: false
     ro:arsenal_warframe:mod_drain_remaining:
-      x: 13920.0
-      y: -7200.0
+      x: 7160.0
+      y: -6420.0
       w: 320.0
       h: 540.0
       collapsed: false
@@ -6085,8 +6452,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:mod_drain_max:
-      x: 14280.0
-      y: -7200.0
+      x: 7520.0
+      y: -6420.0
       w: 320.0
       h: 540.0
       collapsed: false
@@ -6105,8 +6472,8 @@ layout:
       softW: false
       softH: false
     ro:arsenal_warframe:slot_5_name:
-      x: 9080.0
-      y: -4240.0
+      x: 2320.0
+      y: -3460.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6115,8 +6482,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_6_name:
-      x: 10180.0
-      y: -4240.0
+      x: 3420.0
+      y: -3460.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6125,8 +6492,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_7_name:
-      x: 12700.0
-      y: -4240.0
+      x: 5940.0
+      y: -3460.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6135,8 +6502,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_8_name:
-      x: 13800.0
-      y: -4240.0
+      x: 7040.0
+      y: -3460.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6145,8 +6512,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_4_name:
-      x: 13800.0
-      y: -5780.0
+      x: 7040.0
+      y: -5000.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6155,8 +6522,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_3_name:
-      x: 12720.0
-      y: -5780.0
+      x: 5960.0
+      y: -5000.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6165,8 +6532,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_2_name:
-      x: 10180.0
-      y: -5780.0
+      x: 3420.0
+      y: -5000.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6175,8 +6542,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_1_name:
-      x: 9080.0
-      y: -5780.0
+      x: 2320.0
+      y: -5000.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6185,8 +6552,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_aura_name:
-      x: 9080.0
-      y: -7340.0
+      x: 2320.0
+      y: -6560.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6195,8 +6562,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_exilus_name:
-      x: 10180.0
-      y: -7340.0
+      x: 3420.0
+      y: -6560.0
       w: 520.0
       h: 660.0
       collapsed: false
@@ -6205,8 +6572,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_aura_drain:
-      x: 9080.0
-      y: -7820.0
+      x: 2320.0
+      y: -7040.0
       w: 240.0
       h: 424.0
       collapsed: false
@@ -6215,8 +6582,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_aura_school:
-      x: 9360.0
-      y: -7820.0
+      x: 2600.0
+      y: -7040.0
       w: 240.0
       h: 424.0
       collapsed: false
@@ -6225,8 +6592,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_aura_po:
-      x: 9640.0
-      y: -7820.0
+      x: 2880.0
+      y: -7040.0
       w: 240.0
       h: 424.0
       collapsed: false
@@ -6235,8 +6602,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_exilus_drain:
-      x: 10180.0
-      y: -7820.0
+      x: 3420.0
+      y: -7040.0
       w: 240.0
       h: 424.0
       collapsed: false
@@ -6245,8 +6612,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_exilus_school:
-      x: 10460.0
-      y: -7820.0
+      x: 3700.0
+      y: -7040.0
       w: 240.0
       h: 424.0
       collapsed: false
@@ -6255,8 +6622,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_exilus_po:
-      x: 10740.0
-      y: -7820.0
+      x: 3980.0
+      y: -7040.0
       w: 240.0
       h: 424.0
       collapsed: false
@@ -6265,8 +6632,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_1_drain:
-      x: 9080.0
-      y: -6260.0
+      x: 2320.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6274,8 +6641,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_1_school:
-      x: 9360.0
-      y: -6260.0
+      x: 2600.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6283,8 +6650,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_1_po:
-      x: 9640.0
-      y: -6260.0
+      x: 2880.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6293,8 +6660,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_2_drain:
-      x: 10180.0
-      y: -6260.0
+      x: 3420.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6302,8 +6669,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_2_po:
-      x: 10740.0
-      y: -6260.0
+      x: 3980.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6312,8 +6679,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_3_drain:
-      x: 12720.0
-      y: -6260.0
+      x: 5960.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6321,8 +6688,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_3_po:
-      x: 13240.0
-      y: -6260.0
+      x: 6480.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6331,8 +6698,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_4_drain:
-      x: 13800.0
-      y: -6260.0
+      x: 7040.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6340,8 +6707,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_4_po:
-      x: 14360.0
-      y: -6260.0
+      x: 7600.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6350,8 +6717,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_8_drain:
-      x: 13800.0
-      y: -4720.0
+      x: 7040.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6359,8 +6726,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_8_po:
-      x: 14360.0
-      y: -4720.0
+      x: 7600.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6369,8 +6736,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_7_drain:
-      x: 12720.0
-      y: -4720.0
+      x: 5960.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6378,8 +6745,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_7_po:
-      x: 13260.0
-      y: -4720.0
+      x: 6500.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6388,8 +6755,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_6_drain:
-      x: 10180.0
-      y: -4720.0
+      x: 3420.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6397,8 +6764,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_5_drain:
-      x: 9080.0
-      y: -4720.0
+      x: 2320.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6406,8 +6773,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_2_school:
-      x: 10460.0
-      y: -6260.0
+      x: 3700.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6416,8 +6783,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_3_school:
-      x: 12980.0
-      y: -6260.0
+      x: 6220.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6425,8 +6792,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_4_school:
-      x: 14080.0
-      y: -6260.0
+      x: 7320.0
+      y: -5480.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6434,8 +6801,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_8_school:
-      x: 14080.0
-      y: -4720.0
+      x: 7320.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6443,8 +6810,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_7_school:
-      x: 12980.0
-      y: -4720.0
+      x: 6220.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6452,8 +6819,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_6_school:
-      x: 10460.0
-      y: -4720.0
+      x: 3700.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6461,8 +6828,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_5_school:
-      x: 9360.0
-      y: -4720.0
+      x: 2600.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6470,8 +6837,8 @@ layout:
       custH: true
       softH: true
     ds:dataset:
-      x: 11560.0
-      y: -4720.0
+      x: 4800.0
+      y: -3940.0
       w: 380.0
       h: 189.0
       collapsed: false
@@ -6479,8 +6846,8 @@ layout:
       custH: false
       softW: true
     sub:installable_mods:
-      x: 12700.0
-      y: -580.0
+      x: 5940.0
+      y: 380.0
       w: 360.0
       h: 920.0
       collapsed: false
@@ -6489,8 +6856,8 @@ layout:
       softW: true
       softH: true
     ds:loadout:
-      x: 11660.0
-      y: -9160.0
+      x: 4900.0
+      y: -8380.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6498,8 +6865,8 @@ layout:
       custH: true
       softH: true
     producer:overframe_frames:
-      x: 9280.0
-      y: -2500.0
+      x: 2320.0
+      y: -1720.0
       w: 360.0
       h: 720.0
       collapsed: false
@@ -6508,12 +6875,12 @@ layout:
       softW: true
       softH: true
     ds:overframe_frames:
-      x: 9280.0
-      y: -1720.0
+      x: 2320.0
+      y: -940.0
       collapsed: false
     producer:overframe_builds:
-      x: 10540.0
-      y: -2500.0
+      x: 3580.0
+      y: -1720.0
       w: 360.0
       h: 1620.0
       collapsed: false
@@ -6522,8 +6889,8 @@ layout:
       softW: true
       softH: true
     ds:overframe_builds:
-      x: 10540.0
-      y: -840.0
+      x: 3580.0
+      y: -60.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6531,8 +6898,8 @@ layout:
       custH: true
       softH: true
     producer:overframe_build_detail:
-      x: 10960.0
-      y: -2500.0
+      x: 4000.0
+      y: -1720.0
       w: 360.0
       h: 1620.0
       collapsed: false
@@ -6541,8 +6908,8 @@ layout:
       softW: true
       softH: true
     ds:overframe_build_detail:
-      x: 10960.0
-      y: -840.0
+      x: 4000.0
+      y: -60.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6550,8 +6917,8 @@ layout:
       custH: true
       softH: true
     producer:overframe_mods:
-      x: 11380.0
-      y: -2500.0
+      x: 4420.0
+      y: -1720.0
       w: 360.0
       h: 1620.0
       collapsed: false
@@ -6559,8 +6926,8 @@ layout:
       custH: true
       softH: true
     ds:overframe_mods:
-      x: 11380.0
-      y: -840.0
+      x: 4420.0
+      y: -60.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6568,8 +6935,8 @@ layout:
       custH: true
       softH: true
     sub:overframe_mods_joined:
-      x: 10960.0
-      y: -580.0
+      x: 4000.0
+      y: 200.0
       w: 360.0
       h: 920.0
       collapsed: false
@@ -6578,8 +6945,8 @@ layout:
       softW: true
       softH: true
     producer:overframe_frame_index:
-      x: 9700.0
-      y: -2500.0
+      x: 2740.0
+      y: -1720.0
       w: 360.0
       h: 728.0
       collapsed: false
@@ -6587,12 +6954,12 @@ layout:
       custH: true
       softH: false
     ds:overframe_frame_index:
-      x: 9700.0
-      y: -1720.0
+      x: 2740.0
+      y: -940.0
       collapsed: false
     sub:current_frame:
-      x: 10120.0
-      y: -2500.0
+      x: 3160.0
+      y: -1720.0
       w: 360.0
       h: 840.0
       collapsed: false
@@ -6601,8 +6968,8 @@ layout:
       softW: true
       softH: true
     producer:overframe_build_mods:
-      x: 11800.0
-      y: -2500.0
+      x: 4840.0
+      y: -1720.0
       w: 360.0
       h: 1620.0
       collapsed: false
@@ -6611,8 +6978,8 @@ layout:
       softW: true
       softH: true
     ds:overframe_build_mods:
-      x: 11800.0
-      y: -840.0
+      x: 4840.0
+      y: -60.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6620,8 +6987,8 @@ layout:
       custH: true
       softH: true
     sub:overframe_build_mods_named:
-      x: 11380.0
-      y: -580.0
+      x: 4420.0
+      y: 200.0
       w: 360.0
       h: 920.0
       collapsed: false
@@ -6630,8 +6997,8 @@ layout:
       softW: true
       softH: true
     sub:overframe_build_mods_titled:
-      x: 11800.0
-      y: -580.0
+      x: 4840.0
+      y: 200.0
       w: 360.0
       h: 920.0
       collapsed: false
@@ -6639,8 +7006,8 @@ layout:
       custH: true
       softH: true
     sub:loadout_equipped:
-      x: 9280.0
-      y: -3160.0
+      x: 2320.0
+      y: -2380.0
       w: 360.0
       h: 440.0
       collapsed: false
@@ -6648,8 +7015,8 @@ layout:
       custH: true
       softH: true
     sub:mod_suggestions:
-      x: 12700.0
-      y: -2020.0
+      x: 5940.0
+      y: -1060.0
       w: 360.0
       h: 1240.0
       collapsed: false
@@ -6657,8 +7024,8 @@ layout:
       custH: true
       softH: true
     sub:loadout_wide:
-      x: 9700.0
-      y: -3160.0
+      x: 2740.0
+      y: -2380.0
       w: 360.0
       h: 440.0
       collapsed: false
@@ -6666,8 +7033,8 @@ layout:
       custH: true
       softH: true
     sub:empty_slots:
-      x: 10120.0
-      y: -3160.0
+      x: 3160.0
+      y: -2380.0
       w: 360.0
       h: 280.0
       collapsed: false
@@ -6676,8 +7043,8 @@ layout:
       softW: true
       softH: true
     sub:drain_remaining:
-      x: 13140.0
-      y: -200.0
+      x: 6380.0
+      y: 760.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -6685,8 +7052,8 @@ layout:
       custH: true
       softH: true
     sub:mod_suggestions_ranked:
-      x: 14020.0
-      y: -2020.0
+      x: 7260.0
+      y: -1060.0
       w: 360.0
       h: 1240.0
       collapsed: false
@@ -6694,8 +7061,8 @@ layout:
       custH: true
       softH: true
     register:loadout_register:
-      x: 11280.0
-      y: -8920.0
+      x: 4520.0
+      y: -8140.0
       w: 1100.0
       h: 860.0
       collapsed: false
@@ -6704,8 +7071,8 @@ layout:
       softW: true
       softH: true
     process:proc_slot_name:
-      x: 11400.0
-      y: -7120.0
+      x: 4640.0
+      y: -6340.0
       w: 320.0
       h: 440.0
       collapsed: false
@@ -6714,8 +7081,8 @@ layout:
       softW: true
       softH: true
     process:proc_slot_drain:
-      x: 11920.0
-      y: -7760.0
+      x: 5160.0
+      y: -6980.0
       w: 320.0
       h: 440.0
       collapsed: false
@@ -6724,8 +7091,8 @@ layout:
       softW: true
       softH: true
     process:proc_slot_school:
-      x: 11920.0
-      y: -7120.0
+      x: 5160.0
+      y: -6340.0
       w: 320.0
       h: 440.0
       collapsed: false
@@ -6734,8 +7101,8 @@ layout:
       softW: true
       softH: true
     process:proc_slot_po:
-      x: 11400.0
-      y: -7760.0
+      x: 4640.0
+      y: -6980.0
       w: 320.0
       h: 440.0
       collapsed: false
@@ -6744,8 +7111,8 @@ layout:
       softW: true
       softH: true
     process:proc_arcane:
-      x: 13020.0
-      y: -7540.0
+      x: 6260.0
+      y: -6760.0
       w: 320.0
       h: 240.0
       collapsed: false
@@ -6754,8 +7121,8 @@ layout:
       softW: true
       softH: true
     process:proc_mod_drain:
-      x: 14160.0
-      y: -7540.0
+      x: 7400.0
+      y: -6760.0
       w: 440.0
       h: 240.0
       collapsed: false
@@ -6764,8 +7131,8 @@ layout:
       softW: true
       softH: true
     process:proc_warframe_name:
-      x: 14160.0
-      y: -7820.0
+      x: 7400.0
+      y: -7040.0
       w: 440.0
       h: 240.0
       collapsed: false
@@ -6774,8 +7141,8 @@ layout:
       softW: true
       softH: true
     sub:empty_general_slots:
-      x: 13140.0
-      y: -580.0
+      x: 6380.0
+      y: 380.0
       w: 360.0
       h: 340.0
       collapsed: false
@@ -6783,16 +7150,16 @@ layout:
       custH: true
       softH: true
     sub:empty_aura_slot:
-      x: 13580.0
-      y: -580.0
+      x: 6820.0
+      y: 380.0
       w: 360.0
       h: 260.0
       collapsed: false
       custW: false
       custH: true
     sub:mod_suggestions_general:
-      x: 13140.0
-      y: -2020.0
+      x: 6380.0
+      y: -1060.0
       w: 360.0
       h: 1240.0
       collapsed: false
@@ -6800,8 +7167,8 @@ layout:
       custH: true
       softH: true
     sub:mod_suggestions_aura:
-      x: 13580.0
-      y: -2020.0
+      x: 6820.0
+      y: -1060.0
       w: 360.0
       h: 1240.0
       collapsed: false
@@ -6809,8 +7176,8 @@ layout:
       custH: true
       softH: true
     ro:arsenal_warframe:slot_5_po:
-      x: 9640.0
-      y: -4720.0
+      x: 2880.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6819,8 +7186,8 @@ layout:
       softW: true
       softH: true
     ro:arsenal_warframe:slot_6_po:
-      x: 10740.0
-      y: -4720.0
+      x: 3980.0
+      y: -3940.0
       w: 240.0
       h: 440.0
       collapsed: false
@@ -6829,53 +7196,53 @@ layout:
       softW: true
       softH: true
     sub:unowned_mods:
-      x: 12700.0
-      y: -3340.0
+      x: 5940.0
+      y: -2380.0
       w: 360.0
-      h: 1140.0
+      h: 1160.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     sub:unowned_suggestions:
-      x: 13140.0
-      y: -3340.0
+      x: 6380.0
+      y: -2380.0
       w: 360.0
-      h: 1140.0
+      h: 1160.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     sub:unowned_suggestions_general:
-      x: 13580.0
-      y: -3340.0
+      x: 6820.0
+      y: -2380.0
       w: 360.0
-      h: 1140.0
+      h: 1160.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     sub:unowned_suggestions_aura:
-      x: 14020.0
-      y: -3340.0
+      x: 7260.0
+      y: -2380.0
       w: 360.0
-      h: 1140.0
+      h: 1160.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     sub:unowned_suggestions_ranked:
-      x: 14460.0
-      y: -3340.0
+      x: 7700.0
+      y: -2380.0
       w: 360.0
-      h: 1140.0
+      h: 1160.0
       collapsed: false
       custW: false
       custH: true
       softH: true
     ro:arsenal_warframe:warframe_name:
-      x: 13560.0
-      y: -7200.0
+      x: 6800.0
+      y: -6420.0
       w: 320.0
       h: 540.0
       collapsed: false
@@ -7275,6 +7642,235 @@ layout:
       x: -1740.0
       y: -760.0
       collapsed: false
+    vt:ds:relics_refinement:
+      x: 160.0
+      y: -7600.0
+      w: 800.0
+      h: 400.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    sub:relics_owned:
+      x: -2080.0
+      y: -10440.0
+      w: 360.0
+      h: 780.0
+      collapsed: false
+      custW: false
+      custH: true
+      softH: true
+    sub:owned_arcanes:
+      x: 8140.0
+      y: -2380.0
+      collapsed: false
+    trigger:click_slot_1:
+      x: 9140.0
+      y: -1980.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_2:
+      x: 9540.0
+      y: -1980.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_3:
+      x: 9940.0
+      y: -1980.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_4:
+      x: 10340.0
+      y: -1980.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_5:
+      x: 9140.0
+      y: -1580.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_6:
+      x: 9540.0
+      y: -1580.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_7:
+      x: 9940.0
+      y: -1580.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_8:
+      x: 10340.0
+      y: -1580.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_exilus:
+      x: 9940.0
+      y: -2380.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_aura:
+      x: 9540.0
+      y: -2380.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_arcane_1:
+      x: 10900.0
+      y: -2380.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:click_slot_arcane_2:
+      x: 10900.0
+      y: -1980.0
+      w: 360.0
+      h: 360.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    toast:toast_mod_general:
+      x: 9140.0
+      y: -1060.0
+      w: 360.0
+      h: 960.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    toast:toast_mod_aura:
+      x: 9540.0
+      y: -1060.0
+      w: 360.0
+      h: 960.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    vt:sub:relics_owned:
+      x: -1660.0
+      y: -10440.0
+      w: 360.0
+      h: 780.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: false
+      softH: true
+    sub:subset_2:
+      x: -1260.0
+      y: -9600.0
+      w: 360.0
+      h: 880.0
+      collapsed: false
+      custW: false
+      custH: true
+      softH: true
+    vt:sub:subset_2:
+      x: -840.0
+      y: -9600.0
+      w: 1400.0
+      h: 880.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    sub:relics_owned_with_contents:
+      x: -1260.0
+      y: -10440.0
+      w: 360.0
+      h: 780.0
+      collapsed: false
+      custW: false
+      custH: true
+      softH: true
+    vt:sub:relics_owned_with_contents:
+      x: -840.0
+      y: -10440.0
+      w: 1380.0
+      h: 780.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    inlog:click_slot_5:
+      x: 8640.0
+      y: -1580.0
+      collapsed: false
+    gamehist:
+      x: -3540.0
+      y: -2940.0
+      w: 840.0
+      h: 320.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: false
+    vt:ds:relics_select:
+      x: -1680.0
+      y: -7660.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
@@ -7465,11 +8061,16 @@ layout:
     ds:relics_refinement:
       sorts:
       - col: _pos
-        dir: 1
+        dir: -1
       widths:
-        _seq: 36
-        _batch: 36
-        _pos: 81
+        name: 125
+        count: 100
+        _item: 138
+        _count: 100
+        _seq: 100
+        _batch: 100
+        _pos: 112
+      order: []
     view:relics_refinement_view:
       widths:
         rarity: 61
@@ -7494,6 +8095,12 @@ layout:
       sorts:
       - col: price_min
         dir: -1
+      widths:
+        name: 125
+        count: 100
+        item: 303
+        rarity: 125
+        price_min: 100
     ds:relics_select:
       widths:
         _seq: 36
@@ -7788,6 +8395,73 @@ layout:
       widths: {}
       order: []
       sorts: []
+    nodelog:
+      widths:
+        when: 147
+        node: 292
+        kind: 61
+        detail: 2484
+    view:relics_owned:
+      widths:
+        name: 190
+        count: 125
+        item: 389
+        rarity: 217
+    view:subset:
+      widths:
+        key: 134
+        _seq: 115
+        _pos: 115
+        name: 134
+        count: 115
+        _item: 153
+        item: 312
+        rarity: 140
+        relic: 134
+      order: []
+      sorts: []
+    view:subset_2:
+      widths:
+        name: 358
+        key: 261
+        _seq: 64
+        _pos: 76
+        price_min: 161
+        price_median: 161
+        volume: 161
+        count: 161
+        _item: 102
+        rarity: 186
+        item: 261
+        relic: 186
+    view:relics_owned_with_contents:
+      widths:
+        key: 134
+        _seq: 115
+        _pos: 115
+        name: 134
+        count: 115
+        _item: 153
+        item: 312
+        rarity: 140
+        relic: 134
+    gamehist:
+      widths:
+        when: 116
+        window: 116
+        image: 116
+        delta: 116
+        writes: 116
+        reads: 116
+        readouts: 116
+    inlog:click_slot_5:
+      widths:
+        when: 65
+        event: 65
+        button: 65
+        mods: 65
+        pos: 65
+        result: 65
   open_images:
   - atlas
   - live_game_window
@@ -7810,6 +8484,7 @@ layout:
     - dict:relics
     - ds:ee_log
     - src:log_ee
+    - gamehist
     outline:
       color: '#8a91a0'
       style: none
@@ -7967,6 +8642,7 @@ layout:
     - vt:ds:dataset_4
     - vt:sub:dataset_view
     - vt:ds:relics
+    - vt:ds:relics_select
     outline:
       color: '#8a91a0'
       style: none
@@ -7993,6 +8669,7 @@ layout:
     - vt:sub:relics_refinement_view_view
     - det:relic_refinement:detect_1
     - fld:relic_refinement:relic_item:count
+    - vt:ds:relics_refinement
     outline:
       color: '#8a91a0'
       style: none
@@ -8338,6 +9015,7 @@ layout:
     - sub:unowned_suggestions_general
     - sub:unowned_suggestions_aura
     - sub:unowned_suggestions_ranked
+    - sub:owned_arcanes
     outline:
       color: '#5ae6c2'
       style: none
@@ -8379,38 +9057,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: blue
-  - id: group_65
-    title: subsets
-    members:
-    - sub:relics_refinement_with_contents
-    - sub:contents_with_price
-    outline:
-      color: '#8a91a0'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#d3d8e0'
-    titleBg: '#aeb4c0'
-    titleColor: '#1a1d24'
-    titleAlign: left
-    titlePos: tl
-    schemeId: silver
-  - id: group_66
-    title: subsets
-    members:
-    - sub:relics_with_content
-    - sub:relics_with_content_view
-    outline:
-      color: '#8a91a0'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#d3d8e0'
-    titleBg: '#aeb4c0'
-    titleColor: '#1a1d24'
-    titleAlign: left
-    titlePos: tl
-    schemeId: silver
   - id: group_68
     title: group_68
     members:
@@ -8573,6 +9219,55 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: orange
+  - id: group_81
+    title: click suggestions
+    members:
+    - trigger:click_slot_1
+    - trigger:click_slot_2
+    - trigger:click_slot_3
+    - trigger:click_slot_4
+    - trigger:click_slot_5
+    - trigger:click_slot_6
+    - trigger:click_slot_7
+    - trigger:click_slot_8
+    - trigger:click_slot_exilus
+    - trigger:click_slot_aura
+    - trigger:click_slot_arcane_1
+    - trigger:click_slot_arcane_2
+    - toast:toast_mod_general
+    - toast:toast_mod_aura
+    - inlog:click_slot_5
+    outline:
+      color: '#5aa9e6'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#15212d'
+    titleBg: '#5aa9e6'
+    titleColor: '#08121d'
+    titleAlign: left
+    titlePos: tl
+    schemeId: blue
+  - id: group_82
+    title: subsets
+    members:
+    - sub:relics_owned
+    - vt:sub:relics_owned
+    - sub:relics_owned_with_contents
+    - vt:sub:relics_owned_with_contents
+    - sub:subset_2
+    - vt:sub:subset_2
+    outline:
+      color: '#e69a5a'
+      style: none
+      width: 2
+      offset: 0
+    bg: '#271f1b'
+    titleBg: '#e69a5a'
+    titleColor: '#1a0e08'
+    titleAlign: left
+    titlePos: tl
+    schemeId: orange
   float_windows: {}
   super_groups:
   - id: sgroup_2
@@ -8624,6 +9319,7 @@ layout:
     - group_48
     - group_70
     - group_71
+    - group_81
     outline:
       color: '#8a91a0'
       style: none
@@ -8646,10 +9342,11 @@ layout:
     titleColor: '#aeb4c0'
     schemeId: silver
   - id: sgroup_10
-    title: 'live: relic select'
+    title: 'live: relics'
     members:
     - group_22
-    - group_66
+    - group_25
+    - group_82
     outline:
       color: '#8a91a0'
       style: none
@@ -8686,19 +9383,6 @@ layout:
     bg: '#0e131a'
     titleColor: '#5aa9e6'
     schemeId: blue
-  - id: sgroup_13
-    title: 'live: relic refinement'
-    members:
-    - group_25
-    - group_65
-    outline:
-      color: '#8a91a0'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#101218'
-    titleColor: '#aeb4c0'
-    schemeId: silver
   satellites:
   - vt:sub:statistic_prices_joined
   - vt:ds:ee_log_
@@ -8714,6 +9398,13 @@ layout:
   - vt:ds:prices_live
   - prochist:process_value_ab
   - prev:equipment_window
+  - vt:ds:relics_refinement
+  - vt:sub:relics_owned
+  - vt:sub:relics_owned_with_contents
+  - vt:sub:subset_2
+  - inlog:click_slot_5
+  - gamehist
+  - vt:ds:relics_select
   sub_groups:
   - id: subgroup_5
     parent: group_22
