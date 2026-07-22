@@ -217,6 +217,7 @@ def _live_session():
     s._dbg_prev_readouts = {}
     s._last_saved_frame = None
     s._save_recognized = False
+    s._collector = None
     return s
 
 

@@ -1148,6 +1148,12 @@ class TriggerDef(BaseModel):
       when the sweep wrote nothing (the fetch still finished, e.g. all rewards unpriceable). No
       timers, no polling. Use for "notify when the fetch/pricing has finished" — the producer does
       the work and knows when it's done; a stateless subset never is.
+    * ``on_input``       — pulse on a keyboard/mouse event (``input_event``) matching ``input_button``
+      + ``input_mods`` (a held chord, e.g. ctrl+shift+w or shift+mouse:left). LIVE ONLY — the input
+      hook runs only while a live session is collecting. Mouse events may be bound to a window
+      (``input_window``) and optionally a client-relative rect within it (``input_rect``); a keyboard
+      event may also be window-bound (fires only while that window is the recognized one). No window
+      bound = fires regardless of what's on screen. See :class:`~oc.interfaces.InputSource`.
     * ``manual``         — never auto-fires; just declares the wiring (the sweep button drives it).
 
     A trigger's ``targets`` are producer ids (sweep/refresh), file-source ids (read), toast/sound
@@ -1162,7 +1168,8 @@ class TriggerDef(BaseModel):
 
     id: str
     # interval | true_interval | on_change | on_any_change | on_new_batch | on_app_start |
-    # on_capture | on_live_start | on_live_stop | on_readout | on_register | on_ready | manual
+    # on_capture | on_live_start | on_live_stop | on_readout | on_register | on_ready | on_input |
+    # manual
     kind: str = "interval"
     interval_s: float = 300.0               # for kind="interval"/"true_interval": seconds between fires
     watch: list[str] = Field(default_factory=list)    # for kind="on_change"/"on_any_change"/"on_new_batch": datasets to watch
@@ -1198,6 +1205,28 @@ class TriggerDef(BaseModel):
     # now watches a PRODUCER and fires on its sweep completion, so this is ignored. Kept so old
     # profiles that set it still load.
     ready_field: str = ""
+
+    # ---- kind="on_input" -----------------------------------------------------------------
+    # which stream transition pulses the trigger: "down" (key/button pressed, auto-repeat
+    # suppressed) | "up" (released) | "press" (a down->up pair completed) | "double" (two
+    # presses of the same button within input_double_ms).
+    input_event: str = "down"
+    # the watched button: "key:<name>" (e.g. "key:w") or "mouse:<left|right|middle|x1|x2>".
+    # "" or "any" matches any button of either device.
+    input_button: str = ""
+    # modifiers that must ALL be held at the moment input_button transitions, e.g.
+    # ["ctrl", "shift"] for ctrl+shift+w, or ["shift"] for shift+mouse:left. Values are bare
+    # modifier names (ctrl/shift/alt/win) or another "mouse:<button>" held at the same time.
+    input_mods: list[str] = Field(default_factory=list)
+    # client-relative fraction rect [x, y, w, h] (0..1) within input_window's client area — a
+    # mouse event only pulses when the pointer is inside it. Empty = no rect gate (whole
+    # window, or unbound). Requires input_window (checked by the profile checker).
+    input_rect: list[float] = Field(default_factory=list)
+    # a window id: the trigger pulses only while that window is the currently recognized one
+    # (mirrors a readout's window scoping). "" = no window gate (fires regardless of screen).
+    input_window: str = ""
+    # for input_event="double": max milliseconds between the two presses to count as a double.
+    input_double_ms: float = 350.0
 
 
 class ToastTextDef(BaseModel):

@@ -289,6 +289,33 @@ class ToastSpec:
     group: str = ""
 
 
+class InputSource(ABC):
+    """Watch raw keyboard/mouse input system-wide (regardless of which window has focus — a
+    fullscreen game included) and report it to a callback. Read-only observation, never
+    synthetic injection, so it never interferes with the target game. Selected by name
+    (``registry._INPUT`` -> ``build_input``); a platform without a working backend simply
+    doesn't register (see ``oc.input.win32_hook`` on non-Windows).
+
+    Callers own the callback's threading: events may arrive on a dedicated OS-hook thread, so a
+    callback that touches shared state must be safe to call off the caller's own thread (or
+    marshal internally, as :class:`~oc.collect.triggers.TriggerRunner` does)."""
+
+    @abstractmethod
+    def start(self, callback: Callable[[dict], None]) -> None:
+        """Begin watching input, invoking ``callback(event)`` for each one. ``event`` is
+        ``{"device": "key"|"mouse", "action": "down"|"up"|"move", "button": str, "x": int,
+        "y": int, "ts": float}`` — ``button`` is a stable name (``"w"``, ``"ctrl"``,
+        ``"left"``...) for key/mouse-button events, ``""`` for a bare ``"move"``; ``x``/``y``
+        are the mouse's current absolute screen position on EVERY event (including key events,
+        so a chord's window/rect gate can be evaluated without a separate mouse-position query).
+        Safe to call again after :meth:`stop` (re-arms); calling while already started restarts
+        with the new callback."""
+
+    @abstractmethod
+    def stop(self) -> None:
+        """Stop watching and release the hook. Must never raise; safe to call when not started."""
+
+
 class Notifier(ABC):
     """Raise an OS desktop notification. Fired server-side when a trigger targets a
     toast node — never in the capture loop, so a notification backend can never hurt

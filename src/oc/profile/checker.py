@@ -68,6 +68,7 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
     process_ids = {x.id for x in p.processes}
     dictionary_ids = {x.id for x in p.dictionaries}
     readout_ids = {r.id for w in p.windows for r in w.readouts}
+    window_ids = {w.id for w in p.windows}
     registers_by_id: dict[str, RegisterDef] = {x.id: x for x in p.registers}
     processes_by_id: dict[str, ProcessDef] = {x.id: x for x in p.processes}
 
@@ -250,6 +251,13 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
         for tgt in t.targets:
             if tgt not in trigger_targets:
                 err(node, f"fires missing target '{tgt}'")
+        if t.kind == "on_input":
+            if t.input_window and t.input_window not in window_ids:
+                err(node, f"binds missing window '{t.input_window}'")
+            if t.input_rect and not t.input_window:
+                err(node, "sets a rect but no bound window — a rect needs a window's client area")
+            if t.input_rect and len(t.input_rect) != 4:
+                err(node, "rect must be [x, y, w, h]")
 
     # ---- toasts: wired sources (readout/dataset/subset) ----
     for to in p.toasts:

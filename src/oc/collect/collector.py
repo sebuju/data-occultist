@@ -25,6 +25,7 @@ from ..locate import WindowLocator
 from ..profile.models import GameProfile, WindowDef
 from ..ocr.serialize import ocr_job
 from ..store import DatasetStore, KeyMap, store_for
+from ..types import WindowInfo
 from ..store.flow_events import publish_flow
 from . import detsig, readout_history, settle
 from .items import item_templates
@@ -179,6 +180,10 @@ class Collector:
         self._tick_no = 0
         self._last_seen_tick: dict[str, int] = {}
         self._pending_batch: set[str] = set()
+        # The most recently LOCATED window (client box included), set every tick that finds one —
+        # read by the live session to feed an on_input trigger's window/rect gate (TriggerRunner.
+        # set_input_context) without threading it through TickResult's many construction sites.
+        self.last_window: WindowInfo | None = None
         # Latest live readout values (health/bars/counters), ephemeral — never persisted.
         # Merged each tick and surfaced on TickResult; triggers watch it, the UI reads it.
         self._readouts: dict[str, object] = {}
@@ -347,6 +352,7 @@ class Collector:
         win = self._locator.locate(self._profile)
         if win is None:
             return TickResult(TickStatus.no_window)
+        self.last_window = win
         if self._tuning.require_foreground and not eng.window.is_foreground(win):
             return TickResult(TickStatus.not_foreground)
 

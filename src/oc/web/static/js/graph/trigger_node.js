@@ -19,7 +19,10 @@ const KINDS = [["interval", "interval"], ["true_interval", "true interval"], ["o
     ["on_any_change", "on any change"], ["on_new_batch", "on new batch"],
     ["on_app_start", "on app start"], ["on_capture", "on capture start"],
     ["on_live_start", "on live start"], ["on_live_stop", "on live stop"],
-    ["on_readout", "on readout"], ["on_register", "on register"], ["on_ready", "on ready"], ["manual", "manual only"]];
+    ["on_readout", "on readout"], ["on_register", "on register"], ["on_ready", "on ready"],
+    ["on_input", "on input (live only)"], ["manual", "manual only"]];
+
+const INPUT_EVENTS = [["down", "down"], ["up", "up"], ["press", "press (down+up)"], ["double", "double press"]];
 
 // The fire condition (was inline op/value / per-key rows) now lives on wired GATE node(s): the
 // trigger fires only when every gate wired to it passes. That wiring is owned by the GATE end —
@@ -98,6 +101,43 @@ export function triggerParts(t, model) {
                 addLabel: "+ watch register", addinCls: "sv-addin tg-addregwatch", rmCls: "sv-rmin tg-rmregwatch" }));
     }
 
+    // on_input: keyboard/mouse chord + optional window/rect bind. LIVE ONLY — the input hook (see
+    // oc.input.win32_hook) runs only while a live session is collecting. "listen" (wired in
+    // io_wire.js) captures the next keydown/mousedown, incl. held modifiers, into the button field —
+    // no blocking dialog (rule 2), just a label swap while armed.
+    let inputCfg = null;
+    if (kind === "on_input") {
+        const winOpt = (w) => h("option", { value: w.id, selected: w.id === t.input_window }, w.id);
+        const hasRect = !!t.input_window;
+        const rect = t.input_rect && t.input_rect.length === 4 ? t.input_rect : ["", "", "", ""];
+        inputCfg = frag(
+            labCell("event", "which stream transition pulses the trigger"),
+            h("select", { class: "tg-inevent" }, INPUT_EVENTS.map(([v, l]) =>
+                h("option", { value: v, selected: v === t.input_event }, v === t.input_event ? `<${l}>` : l))),
+            labCell("button", "the watched button — blank/\"any\" matches any key/mouse button"),
+            frag(
+                h("input", { class: "tg-inbutton", placeholder: "any", value: t.input_button || "",
+                    title: "key:<name> or mouse:<left|right|middle|x1|x2>" }),
+                h("button", { class: "tg-inlisten", type: "button",
+                    title: "click, then press the key/mouse button to bind" }, "listen")),
+            labCell("mods", "modifiers that must ALL be held (comma-separated): ctrl, shift, alt, win, mouse:left…"),
+            h("input", { class: "tg-inmods", placeholder: "(none)", value: (t.input_mods || []).join(", ") }),
+            t.input_event === "double" ? labCell("within", "max time between the two presses") : null,
+            t.input_event === "double" ? h("span", { class: "tg-secs" },
+                h("input", { class: "tg-indouble", type: "number", min: "1", step: "1",
+                    value: t.input_double_ms || 350 }), " ms") : null,
+            labCell("window", "fire only while this window is the recognized one (blank = any screen)"),
+            h("select", { class: "tg-inwindow" },
+                h("option", { value: "", selected: !t.input_window }, "(any)"),
+                (model.profile.windows || []).map(winOpt)),
+            hasRect ? labCell("rect", "fire only when the mouse is inside this client-relative box (blank = whole window)") : null,
+            hasRect ? h("span", { class: "tg-inrect" },
+                h("input", { class: "tg-inrx", type: "number", step: "0.01", min: "0", max: "1", placeholder: "x", value: rect[0] }),
+                h("input", { class: "tg-inry", type: "number", step: "0.01", min: "0", max: "1", placeholder: "y", value: rect[1] }),
+                h("input", { class: "tg-inrw", type: "number", step: "0.01", min: "0", max: "1", placeholder: "w", value: rect[2] }),
+                h("input", { class: "tg-inrh", type: "number", step: "0.01", min: "0", max: "1", placeholder: "h", value: rect[3] })) : null);
+    }
+
     // throttle: minimum ms between actual fires (blank = none) — a global rate limit across all kinds.
     const throttle = frag(
         labCell("throttle", "minimum time between fires (blank = none)"),
@@ -128,7 +168,7 @@ export function triggerParts(t, model) {
                 targets,
                 labCell("kind", "how the trigger decides to fire"),
                 h("select", { class: "tg-kind" }, KINDS.map(kopt)),
-                interval, watch, varwatch, regwatch, throttle, settle,
+                interval, watch, varwatch, regwatch, inputCfg, throttle, settle,
                 labCell("progress", "what the trigger is doing (live countdown for timed kinds)"),
                 h("span", { class: "tg-prog muted" }, "idle"))),
         foot: h("button", { class: "tg-fire" }, "↻ fire"),

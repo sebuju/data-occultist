@@ -24,6 +24,7 @@ from typing import TypeVar
 from .interfaces import (
     CaptureBackend,
     Corrector,
+    InputSource,
     Notifier,
     OcrEngine,
     ProcessDetector,
@@ -44,6 +45,7 @@ _CORRECTOR: dict[str, type[Corrector]] = {}
 _PRODUCER: dict[str, type[ProducerSource]] = {}
 _PARSER: dict[str, type[SourceParser]] = {}
 _NOTIFIER: dict[str, type[Notifier]] = {}
+_INPUT: dict[str, type[InputSource]] = {}
 
 # Modules that, when imported, self-register their backends. Add new backend
 # modules here (or rely on plugins importing them) so names resolve.
@@ -66,6 +68,7 @@ _IMPL_MODULES = (
     "oc.source.parsers.yaml",
     "oc.notify.null",
     "oc.notify.windows_toast",
+    "oc.input.win32_hook",
 )
 
 
@@ -111,6 +114,10 @@ def register_parser(name: str):
 
 def register_notifier(name: str):
     return _register(_NOTIFIER, name)
+
+
+def register_input(name: str):
+    return _register(_INPUT, name)
 
 
 _loaded = False
@@ -199,3 +206,19 @@ def parser_names() -> list[str]:
     """Registered source-parser format names (after discovery)."""
     _ensure_loaded()
     return sorted(_PARSER)
+
+
+def build_input(name: str, **opts) -> InputSource | None:
+    """Build the named input-hook backend, or None if it didn't register (e.g. ``win32`` on a
+    non-Windows host) — a missing backend degrades to "on_input triggers never pulse", never an
+    error, mirroring :func:`build_notifier`'s graceful fallback."""
+    _ensure_loaded()
+    if name not in _INPUT:
+        return None
+    return _build(_INPUT, "input", name, **opts)
+
+
+def input_names() -> list[str]:
+    """Registered input-hook backend names (after discovery)."""
+    _ensure_loaded()
+    return sorted(_INPUT)
