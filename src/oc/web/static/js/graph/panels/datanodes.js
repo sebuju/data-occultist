@@ -8,13 +8,17 @@ import { VTable } from "../../vtable.js";
 import { singleFlight } from "../../singleflight.js";
 import { nodeEls, setStatus, model } from "../state.js";
 import { refreshLive, refreshDatasetConsumers, setNodeBusy } from "../main.js";
-import { clockTime, vtShowRemoved } from "../node_parts.js";
+import { clockTime, vtShowRemoved, vtShowSpecial } from "../node_parts.js";
 
 // Show the "show removed" header toggle only when the dataset actually has removed rows (the server
 // reports `has_removed`; the removed rows themselves are filtered server-side per the toggle).
 function syncShowRemovedToggle(ds, hasRemoved) {
+    // `.vt-showrm` is the checkbox INSIDE the <label class="gn-slide-wrap" hidden> the initial
+    // render creates (slideToggle's `hidden:true`) -- the `hidden` attribute that actually hides
+    // the control sits on that wrapping label, not the checkbox, so it must be cleared there too.
     const tog = nodeEls.get(`vt:ds:${ds}`)?.querySelector(".vt-showrm");
-    if (tog) tog.hidden = !hasRemoved;
+    const wrap = tog?.closest(".gn-slide-wrap") || tog;
+    if (wrap) wrap.hidden = !hasRemoved;
 }
 
 // ---- dataset records (rendered inline in the dataset node body) ----
@@ -88,11 +92,12 @@ const batchTotal = (payload, batches) =>
 // after (the LATEST request wins) — never dropped, so the final write of a live sweep lands.
 const _dnKey = (ds) => `dn:${ds}`;
 
-// The window-fetch closure for a dataset's records table. Reads the show-removed toggle live, so a
-// toggle flip + refreshWindow() re-queries with/without soft-deleted rows. Server does q/sort/slice.
+// The window-fetch closure for a dataset's records table. Reads the show-removed + show-special
+// toggles live, so a toggle flip + refreshWindow() re-queries with/without soft-deleted rows /
+// bookkeeping columns. Server does q/sort/slice.
 function _dataFetch(ds) {
     const game = model.profile.name;
-    return (o) => api.datasetPage(game, ds, { ...o, removed: !!vtShowRemoved.get(ds) });
+    return (o) => api.datasetPage(game, ds, { ...o, removed: !!vtShowRemoved.get(ds), special: !!vtShowSpecial.get(ds) });
 }
 // Paint the dataset records table as a server-backed VTable: seed it on first mount (from the boot
 // window `pre`, or a fetched first window), else just refetch its current window. Returns the vt.

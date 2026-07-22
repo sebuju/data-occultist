@@ -125,16 +125,30 @@ def dataset_detail(game: str, dataset: str, limit: int = 0):
     return _detail(_store(game, dataset), dataset, limit)
 
 
+
+# Synthetic bookkeeping fields ``_current_records()`` adds beyond a record's own ``values_json``
+# (see ``DatasetStore.summary``'s "no plumbing keys to filter" columns sample, which never sees
+# these — they aren't stored data). Hidden from the table by DEFAULT (``summary()`` deliberately
+# excludes them, per ``test_pos_not_a_data_column``) but every row already carries them, so a
+# session-only "show special columns" toggle can surface them on demand for debugging a mirror
+# dataset (e.g. why ``_pos`` is empty — the terminator cut has nothing to match against). Keep in
+# sync with datanodes.js's ``VT_META`` (the inverse: what's ALWAYS hidden, toggle or not).
+_SPECIAL_COLUMNS = ("_count", "_seq", "_batch", "_pos")
+
+
 @router.get("/{game}/dataset/{dataset}/page")
 def dataset_page(game: str, dataset: str, q: str = "", sort: str = "", desc: bool = False,
-                 offset: int = 0, limit: int = 0, removed: bool = False):
+                 offset: int = 0, limit: int = 0, removed: bool = False, special: bool = False):
     """One window of a dataset for the server-backed node table: filter (``q`` — the same
     AND/OR/NOT/glob grammar the client used to run), sort (``sort``/``desc``), slice
     (``offset``/``limit``). ``total`` is the full match count (pre-slice) so the client scrollbar
     spans the true size; ``columns`` is server-authoritative + stable across pages. ``removed``
     includes soft-deleted rows (the node's show-removed toggle); ``has_removed`` tells the client
-    whether to offer that toggle at all."""
+    whether to offer that toggle at all. ``special`` appends the bookkeeping columns
+    (``_SPECIAL_COLUMNS``) a row already carries but ``columns`` omits by default."""
     allrows, columns = _dataset_rows(game, dataset)
+    if special:
+        columns = columns + [c for c in _SPECIAL_COLUMNS if c not in columns]
     has_removed = any(r.get("present") is False for r in allrows)
     rows = allrows if removed else [r for r in allrows if r.get("present") is not False]
     w = row_window(rows, columns, q=q, sort=sort, desc=desc, offset=offset, limit=limit)

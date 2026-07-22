@@ -217,6 +217,8 @@ function sourceCfgNode(s, ds, joined) {
                 if (mode === "join") {
                     rows.push(labCell("required", "key must exist in this source (inner-style); off = optional outer fill"),
                         h("input", { type: "checkbox", class: "sv-sreq", dataset: { ds }, checked: !!src.required }));
+                    rows.push(labCell("prefer newest", "when 2+ sources set this, whichever's row was seen most recently wins the WHOLE row (every column) for a shared key — e.g. two windows showing the same underlying entity where one may be stale"),
+                        h("input", { type: "checkbox", class: "sv-sprefnew", dataset: { ds }, checked: !!src.prefer_newest }));
                 }
                 const jn = model.sourceJoinNorm(s.id, ds);
                 const ckRow = (lbl, title, cls, on) => frag(labCell(lbl, title),
@@ -593,6 +595,7 @@ function wireSubset(div, s) {
     // the other knobs just re-canonicalise/recompute the view.
     div.querySelectorAll(".sv-sjoin").forEach((el) => el.addEventListener("change", (e) => restructure(() => model.setSourceJoinField(s.id, el.dataset.ds, e.target.value.trim()))));
     div.querySelectorAll(".sv-sreq").forEach((el) => el.addEventListener("change", (e) => recompute(() => model.setSourceRequired(s.id, el.dataset.ds, e.target.checked))));
+    div.querySelectorAll(".sv-sprefnew").forEach((el) => el.addEventListener("change", (e) => recompute(() => model.setSourcePreferNewest(s.id, el.dataset.ds, e.target.checked))));
     // switching mode toggles which rows show (required/join-on/norm), so rebuild the node
     div.querySelectorAll(".sv-smode").forEach((el) => el.addEventListener("change", (e) => restructure(() => model.setSourceMode(s.id, el.dataset.ds, e.target.value))));
     div.querySelectorAll(".sv-sagg").forEach((el) => el.addEventListener("change", (e) => recompute(() => model.setSourceAggregate(s.id, el.dataset.ds, e.target.value))));

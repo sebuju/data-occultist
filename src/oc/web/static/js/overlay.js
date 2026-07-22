@@ -26,7 +26,7 @@ const ROLE_COLOR = {
 // canvas too). Cached per type; the vars are static after load.
 const ROLE_NODE_TYPE = {
     region: "region", field: "itemfield", item: "item", bbox: "item",
-    detect: "detect", scrollbar: "scrollbar", readout: "readout",
+    detect: "detect", scrollbar: "scrollbar", readout: "readout", input_rect: "trigger",
 };
 const _ntCache = {};
 function roleColor(role) {

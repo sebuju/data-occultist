@@ -262,7 +262,7 @@
 .tn-blocks-h { font-size: 10px; letter-spacing: .02em; }
 .tn-block { display: flex; flex-direction: column; gap: 4px; padding: 0px 6px;
     border-left: 10px solid color-mix(in srgb, var(--nt) 15%, transparent); min-width: 0; }
-.tn-block > textarea.tn-bk-content { width: 100%; box-sizing: border-box; resize: vertical;
+.tn-block > textarea.tn-bk-content { width: 100%; box-sizing: border-box; resize: none; overflow-y: hidden;
     min-height: calc(2lh + 8px); font: inherit; border-color: var(--line); }
 .tn-bk-ctl { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .tn-bk-ctl select, .tn-bk-ctl input { font: inherit; font-size: 11px; min-width: 0; }
@@ -429,21 +429,25 @@
 .tn-il-off .tn-il-del { display: none; }           /* nothing selected -> no delete */
 .tn-il-del { cursor: pointer; flex: 0 0 auto; margin-left: auto; }
 .tn-il-empty { padding: 6px; font-size: 11px; }
-.tn-il-content { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; resize: vertical; min-height: 22px; }
+.tn-il-content { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; resize: none; overflow-y: hidden; min-height: calc(2lh + 8px); }
 .gnode .tn-il-content { border-color: var(--line) !important; padding: 1px 4px !important; color: var(--nt); }
 /* icon row: the show-icon toggle sits left of the icon path input */
 .tn-icon-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .tn-icon-row .tn-icon { flex: 1; min-width: 0; }
-/* token chips in a toast node: click to copy a wired source's {{token}} to the clipboard; a small
-   syntax legend (slice/aggregate/decimals) sits beneath them. The whole palette sits below the
-   images inside a bordered box (.tn-tokbox); .tn-tokwrap is its inner column. */
-.tn-tokbox { margin-top: 4px; min-width: 0; }
-.tn-tokwrap { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-/* per-source subheading above its chip row — so a chip label is just the field, not "src.field" */
-.tn-tokhead { font-size: 10px; text-transform: lowercase; letter-spacing: .02em; margin-top: 2px; }
-.tn-tokhead:first-child { margin-top: 0; }
-.tn-rotokens { display: flex; flex-wrap: wrap; gap: 4px; }
-.tn-rotoken { font: inherit; font-size: 11px; cursor: pointer; min-height: unset; color: var(--nt); background: color-mix(in srgb, var(--nt) 12%, transparent); }
+/* token picker in a toast node: one button opens a rich popover (rich_picker.js) of every wired
+   source's {{token}} with a live value preview; picking one copies {{token}} to the clipboard. A
+   small syntax legend (slice/aggregate/decimals) sits beneath the button. Both live inside a
+   bordered box (.tn-tokbox) below the images. */
+.tn-tokbox { margin-top: 4px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+/* the label span stays laid out (visibility:hidden, not removed) while loading, so the spinner
+   overlay never changes the button's width — reuses the shared `spin` keyframe (gn-hspin). */
+.tn-tokbtn { align-self: flex-start; cursor: pointer; position: relative; }
+.tn-tokbtn-spin { display: none; position: absolute; left: 50%; top: 50%; width: 11px; height: 11px;
+    margin: -6px 0 0 -6px; border-radius: 50%; border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-top-color: currentColor; pointer-events: none; }
+.tn-tokbtn.tn-loading { cursor: default; }
+.tn-tokbtn.tn-loading .tn-tokbtn-lbl { visibility: hidden; }
+.tn-tokbtn.tn-loading .tn-tokbtn-spin { display: block; animation: spin 0.7s linear infinite; }
 .tn-tokhint { font-size: 10px; line-height: 1.4; }
 .tn-tokhint code { font-size: 10px; padding: 0 2px; border-radius: 3px; background: color-mix(in srgb, currentColor 12%, transparent); }
 /* Nothing in the node canvas is text-selectable — kills the stray highlight that
@@ -807,6 +811,17 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    the thumb travels the full track end to end. The label takes only its own width. */
 .tg-secs input[type="range"] { flex: 1; width: auto; min-width: 0; margin: 0; }
 .tg-volnum { flex: 0 0 auto; min-width: 2.4em; text-align: right; }
+/* on_input "listen": armed cue on the ◉ icon nested in the button label (lab-add-btn base style
+   in flow.css) — full opacity + accent-red tint while capturing the next key/mouse press. */
+/* listen (record) icon: an SVG dot, not a font glyph — exact pixel centring instead of fighting
+   font metrics/ink offsets. .tg-inlisten is a flex box so the icon centres both axes. */
+.tg-inlisten { display: inline-flex; align-items: center; justify-content: center; }
+.ic-rec { width: 10px; height: 10px; display: block; pointer-events: none; }
+.tg-inlisten.armed { color: var(--danger, #e05252); opacity: 1; }
+/* rect row: four x/y/w/h fields on one line, each a dim inline label + its number input. */
+.tg-inrect { display: flex; gap: 6px; min-width: 0; }
+.tg-inrf { display: flex; align-items: center; gap: 2px; font-size: var(--fs-sm); color: var(--muted); min-width: 0; margin: 0px 0px 0px 4px; }
+.tg-inrf input { width: 100%; }
 
 /* on_register condition block: rows of [key][when][value(..value2)][trash] stacked in the content
    cell of their register's srcRow. The row is a horizontal flex; the two selects share the stretch,

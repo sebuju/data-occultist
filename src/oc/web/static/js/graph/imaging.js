@@ -150,6 +150,7 @@ function persistWinBox(winId, box) {
     else if (r === "data_area") model.setDataArea(winId, b);
     else if (r === "item") { model.setItemBox(winId, box.id, b); refreshItemBoxes(winId, box.id); }
     else if (r === "readout") model.setReadoutBox(winId, box.id, b);
+    else if (r === "input_rect") { model.setTriggerInputRect(box.id, [b.x, b.y, b.w, b.h]); rebuildNode(`trigger:${box.id}`); }
     else model.setRegionBox(winId, box.id, b);
     clearGrid(winId);   // layout changed → detected grid is stale
 }
@@ -2364,6 +2365,12 @@ function refreshImageBoxes(winId) {
     for (const r of model.regions(winId)) if (r.enabled !== false) boxes.push({ id: r.id, role: "region", field: r.field, ...r.box });
     for (const v of (model.window(winId)?.readouts || [])) if (v.enabled !== false) boxes.push({ id: v.id, role: "readout", label: v.id, ...v.box });
     for (const a of model.detects(winId)) if (a.enabled !== false) boxes.push({ id: a.id, role: "detect", ...a.search });
+    // on_input triggers bound to this window: their input_rect (client-relative click/bind box),
+    // editable here the same way as any other box (drag/resize -> persistWinBox above).
+    for (const t of model.profile.triggers || [])
+        if (t.kind === "on_input" && t.input_window === winId && t.input_rect?.length === 4)
+            boxes.push({ id: t.id, role: "input_rect", label: t.id,
+                x: t.input_rect[0], y: t.input_rect[1], w: t.input_rect[2], h: t.input_rect[3] });
     // item template box is NOT drawn here — it's the authored cell at one spot, which
     // isn't where detection actually reads; the live grid (below) shows the real cells
     const sb = model.scrollbar(winId);

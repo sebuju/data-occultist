@@ -719,6 +719,16 @@ export const toasts = {
     },
 };
 
+// Resolve {{token}} inner-scalars server-side (count/sum/slice/join via templating.py) — one POST
+// for the whole batch. Returns { values: { "<inner>": value|null } }. Used by the toast node's
+// token picker to show a live value preview next to each token (mirrors pretty's resolveTokens).
+export async function resolveTokens(game, tokens) {
+    const r = await tfetch(`/api/flow/${encodeURIComponent(game)}/resolve`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tokens }),
+    });
+    return r.ok ? r.json() : { values: {} };
+}
+
 // File sources: read a game log/config file into a dataset. `read` fires a read now; `preview`
 // parses the in-progress config WITHOUT writing (live editor preview); `find` auto-finds the file.
 export const sources = {
@@ -799,6 +809,7 @@ const _pageQS = (o = {}) => {
     if (o.offset) p.set("offset", String(o.offset));
     if (o.limit) p.set("limit", String(o.limit));
     if (o.removed) p.set("removed", "true");
+    if (o.special) p.set("special", "true");
     const s = p.toString();
     return s ? `?${s}` : "";
 };

@@ -164,7 +164,7 @@ function imageEditor(im, idx, sel) {
 // (the field/column name, or "row count" for the bare collection). Built ONLY from the sources
 // wired to it. Mirrors the pretty grammar so the same text renders identically server-side.
 // Returns [{ head, chips:[{ token, label, title }] }] — `token` is the inner (no braces).
-function tokenGroups(model, x) {
+export function tokenGroups(model, x) {
     const groups = [];
     const sources = model.toastSources(x.id);
     const readouts = sources.filter((s) => s.kind === "readout");
@@ -221,13 +221,17 @@ export function toastParts(x, model) {
         subhead("blocks", null, "the toast body — one styled line per block; the first is the bold title line"),
         blocks.map((b, i) => blockRow(b, i, blocks.length)),
         h("button", { class: "tn-bk-add", title: "add another text block" }, "+ text"));
-    // token chips (rendered below the images, inside a .tn-tokbox): click a chip to copy its
-    // {{token}} to the clipboard, ready to paste into any text block or image text line.
-    const hint = groups.length ? h("div", { class: "tn-tokwrap" },
-        groups.map((g) => frag(
-            groups.length > 1 ? subhead(g.head, null, `tokens from ${g.head}`) : null,
-            h("div", { class: "tn-rotokens" },
-                g.chips.map((c) => h("button", { class: "tn-rotoken", type: "button", dataset: { token: c.token }, title: c.title }, `{{${c.label}}}`))))),
+    // token picker trigger + a small syntax legend (rendered below the images, inside a
+    // .tn-tokbox). The button opens a rich popover listing every wired source's {{token}} with a
+    // live value preview (toast_wire.js) — picking one copies {{token}} to the clipboard, ready to
+    // paste into any text block or image text line.
+    const hint = groups.length ? frag(
+        h("button", { class: "tn-tokbtn gi", type: "button",
+            title: "browse the wired sources' {{tokens}} with a live value preview" },
+            // label stays in flow (visibility:hidden while loading, not removed) so the button's
+            // width never changes when the spinner shows/hides — only the spinner overlays it.
+            h("span", { class: "tn-tokbtn-lbl" }, "+ token"),
+            h("span", { class: "tn-tokbtn-spin" })),
         h("div", { class: "tn-tokhint muted" },
             "refine: ", h("code", {}, "[i]"), " / ", h("code", {}, "[a:b]"), " slice · ",
             h("code", {}, "|sum"), " mean min max count first latest · ",
@@ -238,8 +242,8 @@ export function toastParts(x, model) {
         title: h("input", { class: "gi gi-id toastrename", value: x.id, title: "rename toast" }),
         body: frag(
             h("div", { class: "lab-grid" }, sourcesRow),
-            // token palette sits directly UNDER sources (its tokens feed both text blocks and image
-            // text lines); borderless/heaerless — clicking a chip copies {{token}} to the clipboard.
+            // token picker sits directly UNDER sources (its tokens feed both text blocks and image
+            // text lines).
             groups.length ? h("div", { class: "tn-tokbox" }, hint) : null,
             blocksSection,
             // generated images (drawn on the fly, message text painted on) — a list, each with its

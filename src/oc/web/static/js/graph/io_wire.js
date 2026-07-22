@@ -25,6 +25,7 @@ import { renderProcessHistory } from "./process_history_node.js";
 import { wireSlotRows } from "./reg_slots.js";
 import { makeArmed } from "./armbtn.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
+import { refreshImageBoxes } from "./imaging.js";
 import {
     render, autosave, rebuildNode, rebuildNodeEdges, refreshLive, wireArmedRemove,
     withBusy, setNodeBusy, showSatellite, armConfirm, rulesEdit, wireFieldRules,
@@ -229,26 +230,38 @@ function wireTrigger(div, n) {
         model.setTriggerInputMods(t.id, e.target.value.split(",").map((s) => s.trim())); autosave(null);
     });
     div.querySelector(".tg-indouble")?.addEventListener("change", (e) => { model.setTriggerInputDoubleMs(t.id, e.target.value); autosave(null); });
-    div.querySelector(".tg-inwindow")?.addEventListener("change", (e) => { model.setTriggerInputWindow(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    // window bind also draws a trigger->window edge (model.edges) and, once a rect is set, an
+    // overlay box on that window (refreshImageBoxes) — refresh both the old and new window's
+    // canvas (refreshImageBoxes is a no-op if that window isn't open) so the box moves with it.
+    div.querySelector(".tg-inwindow")?.addEventListener("change", (e) => {
+        const prevWin = t.input_window;
+        model.setTriggerInputWindow(t.id, e.target.value);
+        rebuildNodeEdges(n.id);
+        if (prevWin) refreshImageBoxes(prevWin);
+        if (t.input_window) refreshImageBoxes(t.input_window);
+        autosave(null);
+    });
     const inRect = () => model.setTriggerInputRect(t.id,
         [".tg-inrx", ".tg-inry", ".tg-inrw", ".tg-inrh"].map((sel) => div.querySelector(sel)?.value ?? ""));
-    div.querySelector(".tg-inrx")?.addEventListener("change", () => { inRect(); autosave(null); });
-    div.querySelector(".tg-inry")?.addEventListener("change", () => { inRect(); autosave(null); });
-    div.querySelector(".tg-inrw")?.addEventListener("change", () => { inRect(); autosave(null); });
-    div.querySelector(".tg-inrh")?.addEventListener("change", () => { inRect(); autosave(null); });
+    const inRectChanged = () => { inRect(); autosave(null); if (t.input_window) refreshImageBoxes(t.input_window); };
+    div.querySelector(".tg-inrx")?.addEventListener("change", inRectChanged);
+    div.querySelector(".tg-inry")?.addEventListener("change", inRectChanged);
+    div.querySelector(".tg-inrw")?.addEventListener("change", inRectChanged);
+    div.querySelector(".tg-inrh")?.addEventListener("change", inRectChanged);
     // "listen": arm the button, capture the NEXT keydown/mousedown (incl. held modifiers) into the
-    // button field, then disarm. No blocking dialog (rule 2) — just a label swap while armed;
-    // Escape cancels. preventDefault so the captured key/click never reaches the page underneath.
+    // button field, then disarm. No blocking dialog (rule 2) — just an .armed class on the icon
+    // button while armed; Escape cancels. preventDefault so the captured key/click never reaches
+    // the page underneath.
     div.querySelector(".tg-inlisten")?.addEventListener("click", (e) => {
         const btn = e.currentTarget;
         const input = div.querySelector(".tg-inbutton");
-        btn.textContent = "press a key…";
+        btn.classList.add("armed");
         btn.disabled = true;
         const finish = (token) => {
             document.removeEventListener("keydown", onKey, true);
             document.removeEventListener("mousedown", onMouse, true);
             document.removeEventListener("contextmenu", onCtx, true);
-            btn.textContent = "listen";
+            btn.classList.remove("armed");
             btn.disabled = false;
             if (token) { input.value = token; model.setTriggerInputButton(t.id, token); autosave(null); }
         };

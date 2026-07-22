@@ -288,10 +288,12 @@ a.node.win:hover { border-color: var(--accent); }
 
 /* slide toggles are native checkboxes now (base.css renders every checkbox as a slide switch,
    node-tinted via graph.css --nt). These rules only handle placement + the optional inline label.
-   The enable switch lives in `.gn-hctl` (graph.css), which lays itself out; vt-table "show
-   removed" is the one always-visible slide toggle left in header flow, still pinned to the right
-   edge. A labelled toggle is a <label class=gn-slide-wrap> wrapping the checkbox + text. */
-.gn-h .gn-slide-wrap { margin-left: auto; flex: 0 0 auto; }
+   The enable switch lives in `.gn-hctl` (graph.css), which lays itself out; vt-table's header
+   toggles ("removed" / "special") are hover-only like `.ds-tabs` above -- pinned to the right
+   edge but faded out at rest so they don't clutter the header. A labelled toggle is a
+   <label class=gn-slide-wrap> wrapping the checkbox + text. */
+.gn-h .gn-slide-wrap { margin-left: auto; flex: 0 0 auto; opacity: 0; transition: opacity .12s; }
+.gn-h:hover .gn-slide-wrap { opacity: 1; }
 .gn-slide-wrap { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
     color: var(--muted); font-size: 11px; margin: 0; }
 .gn-slide-lbl { white-space: nowrap; }

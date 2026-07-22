@@ -100,6 +100,21 @@ export function fieldset(legend, body, key, opts = {}) {
 
 export function mount(container, el) { container.replaceChildren(el); }
 
+// Grow a <textarea> to fit its content instead of scrolling/needing a manual resize drag: reset
+// to auto then snap to scrollHeight, on every input and once at mount (a rAF tick after append so
+// the element has its final width). Stores the fit fn on el._autogrow so a caller that sets
+// .value programmatically (a reconcile-in-place, not a user keystroke) can re-fit without
+// rebuilding the element. CSS pairs this with resize:none + overflow-y:hidden + a 2-line min-height
+// floor (the auto height owns the box; a manual grip would fight it).
+export function autoGrow(el) {
+    if (!el) return;
+    const fit = () => { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; };
+    el.addEventListener("input", fit);
+    el._autogrow = fit;
+    requestAnimationFrame(fit);
+    return fit;
+}
+
 // The ONE ResizeObserver idiom (CLAUDE.md rule 7). Every site that wants to react to an
 // element's box change goes through this instead of hand-rolling `new ResizeObserver` +
 // its own rAF coalescing + size-diff gate + teardown (which drifted per-site: some sync,
@@ -142,6 +157,13 @@ export const TRASH = () =>
     svg("svg", { class: "ic-trash", viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" },
         svg("path", { fill: "currentColor", d: "M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z" }));
 
+// A filled dot, as a node factory (same reasoning as TRASH — a DOM node lives in only one
+// place). Used for the on_input "listen" (record) button: a font glyph's ink doesn't sit
+// centred in its own box across fonts, an SVG circle does, exactly. `.ic-rec` sizes it.
+export const REC = () =>
+    svg("svg", { class: "ic-rec", viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" },
+        svg("circle", { cx: "12", cy: "12", r: "8", fill: "currentColor" }));
+
 // One labelled control row inside the node body grid (`.gn-grid`, graph.css): a label cell
 // that sizes to its own text (grid col 1) followed by whatever control the caller emits next
 // (col 2). The ONE label-cell primitive -- EVERY node's k/v rows build on it so labels line up
@@ -150,12 +172,19 @@ export const TRASH = () =>
 export const labCell = (label, title = "", top = false, cls = "") =>
     h("span", { class: "lab" + (top ? " lab-top" : "") + (cls ? " " + cls : ""), title: title || null }, label);
 
+// A label span with N glyph buttons nested after the text (chrome-less, node-tinted). Each entry
+// in `buttons` is `{ cls, title, glyph = "+", dataset }`. The ONE label+button-glyph(s) primitive
+// (rule 7) -- labAdd and colorPickLabel both build on this instead of hand-rolling the same span.
+export const labBtns = (text, title, buttons, top = false) =>
+    h("span", { class: "lab lab-add" + (top ? " lab-top" : ""), title: title || null },
+        text, ...buttons.map(({ cls, title: btnTitle, glyph = "+", dataset }) =>
+            h("button", { class: cls + " lab-add-btn", type: "button", title: btnTitle, ...(dataset ? { dataset } : {}) }, glyph)));
+
 // A section label with a bare "+" add-button nested after the text (chrome-less, node-tinted).
 // Shared by subset filters/columns/sort and the producer explode/keep-rows/fields sections.
 // `addCls` is the caller's wiring hook; `lab-add-btn` carries the shared styling.
 export const labAdd = (text, title, addCls, addTitle, top = false, dataset = null) =>
-    h("span", { class: "lab lab-add" + (top ? " lab-top" : ""), title: title || null },
-        text, h("button", { class: addCls + " lab-add-btn", title: addTitle, ...(dataset ? { dataset } : {}) }, "+"));
+    labBtns(text, title, [{ cls: addCls, title: addTitle, glyph: "+", dataset }], top);
 
 // A k/v field row for the body grid: the wrapped label (col 1) + the control (col 2), emitted
 // as two DIRECT grid children (never a wrapping row element — that would break the shared

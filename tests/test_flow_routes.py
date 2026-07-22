@@ -187,6 +187,16 @@ def test_dataset_page_sort_desc(env):
     assert [r["name"] for r in p["rows"]] == ["Kuva", "Forma"]
 
 
+def test_dataset_page_special_columns_opt_in(env):
+    client = env
+    p = client.get(f"/api/flow/{GAME}/dataset/loot/page").json()
+    assert "_pos" not in p["columns"] and "_count" not in p["columns"]   # hidden by default
+    p = client.get(f"/api/flow/{GAME}/dataset/loot/page", params={"special": "true"}).json()
+    for c in ("_count", "_seq", "_batch", "_pos"):
+        assert c in p["columns"]
+    assert "_count" in p["rows"][0]                 # the field was already on every row
+
+
 def test_subset_page_window(env):
     client = env
     p = client.get(f"/api/flow/{GAME}/subset/joined/page",

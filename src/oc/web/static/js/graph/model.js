@@ -828,6 +828,10 @@ export class GraphModel {
             // input-log satellite: dotted "img" edge trigger -> its raw considered-events grid (opt-in)
             if (t.kind === "on_input" && this.satelliteOn(`inlog:${t.id}`))
                 es.push({ from: `trigger:${t.id}`, to: `inlog:${t.id}`, kind: "img" });
+            // on_input bound to a window: dashed line trigger -> the window it watches (its
+            // input_rect, if set, is drawn as an overlay box on that window — see imaging.js)
+            if (t.kind === "on_input" && t.input_window && this.window(t.input_window))
+                es.push({ from: `trigger:${t.id}`, to: `win:${t.input_window}`, kind: "watch" });
         }
         // a gate READS the live value it tests from a readout/register (source -> gate); the
         // trigger(s) it gates wire IN from above (trigger -> gate).
@@ -1973,6 +1977,7 @@ export class GraphModel {
     // many->one policy, optional/outer, plain join)
     _newSource(ds) {
         return { dataset: ds, join_field: "name", aggregate: "", required: false, mode: "join",
+            prefer_newest: false,
             join_norm: { case_insensitive: true, strip_punct: false, collapse_ws: true, strip_words: [] } };
     }
     // `ds` (optional) seeds the subset's first input + name. Omitted (e.g. minted from the
@@ -2036,6 +2041,10 @@ export class GraphModel {
     setSourceJoinField(id, ds, field) { const src = this.subsetSource(id, ds); if (src) src.join_field = field || ""; }
     // required = key must be present in this source (inner-style); optional = outer gap-fill
     setSourceRequired(id, ds, on) { const src = this.subsetSource(id, ds); if (src) src.required = !!on; }
+    // prefer_newest: when 2+ sources of the same subset set this, whichever's row is more
+    // recently seen wins the WHOLE row (every column) for a shared key — see JoinSource in
+    // models.py. Fewer than two flagged matches on a key -> today's authored-order-wins, unchanged.
+    setSourcePreferNewest(id, ds, on) { const src = this.subsetSource(id, ds); if (src) src.prefer_newest = !!on; }
     // how this source combines beyond a plain key-matched join — see JoinSource in models.py:
     //   join (default) | exclude (anti-join, drops matching keys) | mark (semi-join, annotates
     //   without multiplying rows) | broadcast (merges onto every output row, unkeyed)

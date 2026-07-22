@@ -45,7 +45,7 @@ import {
     applyView, resizeCanvas, dragOnlyZoom,
 } from "./camera.js";
 import { movePos, renameNode } from "./node_lifecycle.js";
-import { nodeParts, windowControls, gamePriority, itemLists, enableBtn, vtShowRemoved, rectEditBtn, markColorCollisions } from "./node_parts.js";
+import { nodeParts, windowControls, gamePriority, itemLists, enableBtn, vtShowRemoved, vtShowSpecial, rectEditBtn, markColorCollisions } from "./node_parts.js";
 import * as dsevents from "./dsevents.js";
 import { renderReadoutHistory } from "./readout_history_node.js";
 import { renderProducerHistory } from "./producer_history_node.js";
@@ -1094,6 +1094,12 @@ function wireNode(div, n) {
                 e.stopPropagation();
                 vtShowRemoved.set(r.ds, e.currentTarget.checked);
                 refreshDataNode(r.ds);   // re-filter the table (and the data-tab count) to match
+            });
+            const specialTog = div.querySelector(".vt-showspecial");   // "show special columns" header toggle
+            specialTog?.addEventListener("change", (e) => {
+                e.stopPropagation();
+                vtShowSpecial.set(r.ds, e.currentTarget.checked);
+                refreshDataNode(r.ds);   // refetch with/without the bookkeeping columns
             });
             const cur = dsTab.get(r.ds) || "data";
             div.dataset.tab = cur;   // CSS hides the inactive host

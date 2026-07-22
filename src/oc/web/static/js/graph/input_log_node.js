@@ -22,9 +22,17 @@ const _MISS = new Set(["throttled", "gated", "rect_miss", "window_miss", "chord_
 // Render a trigger's input log into its (open) satellite. No-op when hidden (no host in the DOM).
 // `log` defaults to the last heartbeat snapshot's copy, so a bare call (satellite just opened)
 // paints immediately without waiting for the next beat.
-export function renderInputLog(triggerId, log) {
+export function renderInputLog(triggerId, log, _retried = false) {
     const host = nodeEls.get(`inlog:${triggerId}`)?.querySelector(".hist-host");
-    if (!host) return;
+    if (!host) {
+        // toggling the satellite on calls this mid-render, from the trigger's own wireTrigger —
+        // its satellite element is built LATER in that same render() pass, so nodeEls doesn't have
+        // it yet. Retry once the current render() has returned (nodeEls is then fully populated),
+        // so it paints an empty table instead of being stuck on the "loading…" placeholder until
+        // the next heartbeat happens to carry a (non-empty) entry for this trigger.
+        if (log === undefined && !_retried) queueMicrotask(() => renderInputLog(triggerId, undefined, true));
+        return;
+    }
     if (log === undefined)
         log = hub.latest()?.input_history?.[triggerId] || [];
     const rows = log.map((e) => ({

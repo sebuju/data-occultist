@@ -13,7 +13,7 @@
 //   body    -> a Node or DocumentFragment
 //   ports   -> a Node/frag or null (default null)
 //   pulse   -> a className fragment STRING (stays a string -- used in class="gn-h ${pulse}")
-import { h, frag, svg, TRASH, PLUS, copyPasteBtns, kv, subhead, gspan, srcRow, btn, iconBtn, trashBtn } from "../dom.js";
+import { h, frag, svg, TRASH, PLUS, copyPasteBtns, kv, subhead, gspan, srcRow, btn, iconBtn, trashBtn, labBtns } from "../dom.js";
 import { confMeter } from "./meter.js";
 import { buildKey } from "../keys.js";
 import { model, itemReads } from "./state.js";
@@ -54,15 +54,19 @@ const _SAT_LABEL = { preview: "preview", dismissed: "dismissed rows", vttable: "
 const _SAT_ICON = { preview: SAT_EYE, dismissed: SAT_DISMISS, history: SAT_HIST, readouthistory: SAT_HIST, producerhistory: SAT_HIST, registerhistory: SAT_HIST, processhistory: SAT_HIST, inputlog: SAT_HIST, gatehistory: SAT_HIST, routerhistory: SAT_HIST, soundhistory: SAT_HIST, gamehistory: SAT_HIST, actionhistory: SAT_HIST };
 // the one-word header label per kind (rendered bare; CSS wraps it in [ ]). Every history flavour
 // reads "log"; the full meaning stays in the button's title/aria-label (unchanged below).
-const _SAT_WORD = { preview: "preview", producer: "preview", vttable: "data", dismissed: "dropped", history: "log", readouthistory: "log", producerhistory: "log", registerhistory: "log", processhistory: "log", inputlog: "log", gatehistory: "log", routerhistory: "log", soundhistory: "log", gamehistory: "log", actionhistory: "log" };
+const _SAT_WORD = { preview: "preview", producer: "preview", vttable: "data", dismissed: "dropped", history: "log", readouthistory: "log", producerhistory: "log", registerhistory: "log", processhistory: "log", inputlog: "i-log", gatehistory: "log", routerhistory: "log", soundhistory: "log", gamehistory: "log", actionhistory: "log" };
 export function satToggleBtn(satId, kind) {
     const on = model.satelliteOn(satId);
     const title = `${on ? "hide" : "show"} ${_SAT_LABEL[kind] || "data table"}`;
     const word = _SAT_WORD[kind] || "data";
-    // `.gn-log` (every history flavour reads "log") is flex-ordered LAST in .gn-hctl (graph.css),
-    // so a [log] button always sits rightmost even when the node also carries a [box]/other toggle.
+    // `.gn-log` (every history flavour, incl. inputlog's "i-log") is flex-ordered LAST in .gn-hctl
+    // (graph.css), so a log-flavour button always sits rightmost even when the node also carries a
+    // [box]/other toggle. Match by kind (in _SAT_ICON, every log flavour shares SAT_HIST), not the
+    // word text, since inputlog's word now reads "i-log" to stand apart from the trigger's own
+    // "log" (fire-history) button on the same node.
+    const isLog = word === "log" || _SAT_ICON[kind] === SAT_HIST;
     return h("button", {
-        class: `gn-sat-tog gn-cog${on ? " on" : ""}${word === "log" ? " gn-log" : ""}`, dataset: { sat: satId },
+        class: `gn-sat-tog gn-cog${on ? " on" : ""}${isLog ? " gn-log" : ""}`, dataset: { sat: satId },
         title, "aria-label": title, "aria-pressed": on,
     }, word);
 }
@@ -107,6 +111,12 @@ export function enableBtn({ on, title }) {
 // off). Toggle lives in the satellite header; datanodes reads this to filter present===false rows.
 export const vtShowRemoved = new Map();
 
+// per-dataset "show special (bookkeeping) columns" flag — `_count`/`_seq`/`_batch`/`_pos`, present
+// in every row but hidden from `columns` by default (DatasetStore.summary() treats them as
+// plumbing, not stored data). Session-only (no persistence, matches the ask) — a debugging aid
+// for e.g. checking why `_pos` is empty on a mirror dataset, not a saved preference.
+export const vtShowSpecial = new Map();
+
 export const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds"], ["symbol", "symbol"]];
 export const EXTRACTS = [
     ["whole", "whole"], ["number", "number"], ["number_before", "number bef"], ["number_after", "number aft"],
@@ -149,6 +159,7 @@ export const RULE_THEN = [
     ["set", "set value", "any"],
     ["drop", "drop", "any"],
     ["blank", "blank", "any"],
+    ["prune", "prune (remove row)", "any"],
     ["lowercase", "lowercase", "t"],
     ["uppercase", "uppercase", "t"],
     ["fold", "fold", "t"],
@@ -315,10 +326,9 @@ export function matchCanvas() {
 // row) — the ONE idiom shared by the readout preprocess and the colour detector (rule 7). Both
 // buttons carry their own class so each node wires its own handler.
 export function colorPickLabel(text, title, { pickCls, pickTitle, addCls, addTitle }) {
-    return h("span", { class: "lab lab-add", title },
-        text,
-        h("button", { class: `${pickCls} lab-add-btn`, title: pickTitle }, "⊙"),
-        h("button", { class: `${addCls} lab-add-btn`, title: addTitle }, "+"));
+    return labBtns(text, title, [
+        { cls: pickCls, title: pickTitle, glyph: "⊙" },
+        { cls: addCls, title: addTitle, glyph: "+" }]);
 }
 
 export function preprocessControls(holder) {
@@ -547,7 +557,7 @@ export function ruleRows(fd, cls, fid) {
                     opts(RULE_WHEN, when, 3)),
                 RULE_WHEN_ARG.has(when) && h("input", { class: "rule-arg", dataset: d, value: r.arg || "", placeholder: "value", title: "value the condition compares against" }),
                 h("span", { class: "rule-arrow muted" }, "→"),
-                h("select", { class: "rule-then rule-op", dataset: d, title: "action when it matches (drop/blank stop here — drop removes the record, blank forwards a null gap; others rewrite the value and continue)" },
+                h("select", { class: "rule-then rule-op", dataset: d, title: "action when it matches (drop/blank/prune stop here — drop skips this read (invisible to mirror-sync), blank forwards a null gap, prune ACTIVELY removes the record's key from the dataset; others rewrite the value and continue)" },
                     opts(RULE_THEN, then, 2)),
                 ...ruleThenOperands(r, then, d),
                 trashBtn({ cls: "rule-del", dataset: d, title: "remove this rule" })));
@@ -1119,7 +1129,11 @@ export function nodeParts(n) {
                 h("div", { class: "ds-tabs", role: "tablist" },
                     h("button", { class: "ds-tab on", dataset: { tab: "data" }, role: "tab" }, "data ", h("span", { class: "ds-tab-n data-n" })),
                     h("button", { class: "ds-tab", dataset: { tab: "batches" }, role: "tab", title: "this dataset's collection/save runs" }, "batches ", h("span", { class: "ds-tab-n bat-n" }))),
-                slideToggle({ on: vtShowRemoved.get(r.ds) || false, cls: "vt-showrm", label: "removed", hidden: true, title: "show removed (no-longer-present) rows in the table + counts" })),
+                slideToggle({ on: vtShowRemoved.get(r.ds) || false, cls: "vt-showrm", label: "removed", hidden: true, title: "show removed (no-longer-present) rows in the table + counts" }),
+                // unlike "removed" (only relevant once removed rows exist, so it starts hidden
+                // and is un-hidden by syncShowRemovedToggle), "special" applies unconditionally --
+                // always visible, no data-dependent gating.
+                slideToggle({ on: vtShowSpecial.get(r.ds) || false, cls: "vt-showspecial", label: "special", title: "show bookkeeping columns (_count/_seq/_batch/_pos) every row already carries but hides by default" })),
             body: frag(
                 h("div", { class: "nodehost scrollhost data-host" }, h("p", { class: "muted", style: "padding:8px" }, "loading…")),
                 // detail is placed BEFORE the list so flow.css can grow the list via a `.bat-detail:empty

@@ -1,17 +1,19 @@
 // Toast node wiring: the notification's app/duration/icon fields, rich-text blocks, wired data
-// sources + {{token}} chips, and the generated-image editor (a full per-element inspector with a
+// sources + the {{token}} picker, and the generated-image editor (a full per-element inspector with a
 // draggable/resizable box overlay, anchoring, per-side borders and WASD nudging). Split out of
 // main.js; the node DOM is built elsewhere, this binds its controls. Element geometry edits ride
 // the shared rect transaction (edit_txn.js) so a drag/nudge batch is one save + one server render.
 import * as api from "../api.js";
 import * as rectTxn from "./edit_txn.js";
 import { model, setStatus, afterBoot } from "./state.js";
-import { h, svg } from "../dom.js";
+import { h, svg, autoGrow } from "../dom.js";
 import { renameNode, movePos } from "./node_lifecycle.js";
 import { drawEdges } from "./routing.js";
 import { persist } from "./persist.js";
 import { beginDrag } from "./dragresize.js";
 import { onGlobal } from "../inputbus.js";
+import { richPickerPop } from "./rich_picker.js";
+import { tokenGroups } from "./toast_node.js";
 import { render, autosave, rebuildNode, wireArmedRemove, NUDGE, armConfirm } from "./main.js";
 
 function wireToast(div, n) {
@@ -32,7 +34,7 @@ function wireToast(div, n) {
     $(".tn-accumcap")?.addEventListener("change", (e) => { model.setToastProp(x.id, "accumulate_cap", Math.max(1, +e.target.value || 1)); autosave(null); });
     // rich-text blocks: content + per-block style/align/max-lines edits persist in place; add /
     // remove / reorder rebuild the node body (the block list + its indices change).
-    div.querySelectorAll(".tn-bk-content").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "content", e.target.value); autosave(null); }));
+    div.querySelectorAll(".tn-bk-content").forEach((el) => { el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "content", e.target.value); autosave(null); }); autoGrow(el); });
     div.querySelectorAll(".tn-bk-style").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "style", e.target.value); autosave(null); }));
     div.querySelectorAll(".tn-bk-align").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "align", e.target.value); autosave(null); }));
     div.querySelectorAll(".tn-bk-max").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "max_lines", e.target.value); autosave(null); }));
@@ -44,17 +46,38 @@ function wireToast(div, n) {
     div.querySelectorAll(".tn-img").forEach((sec) => wireToastImage(sec, x, n));
     div.querySelector(".tn-img-add")?.addEventListener("click", () => { model.addToastImage(x.id); rebuildNode(n.id); autosave(null); });
     // sources row: add/remove a wired data feeder (readout/dataset/subset) — the picker twin of
-    // dragging a node's out-port here. Rebuild refreshes the pills + the {{token}} chips; drawEdges
-    // adds/drops the source's data edge.
+    // dragging a node's out-port here. Rebuild refreshes the pills + the token picker's list;
+    // drawEdges adds/drops the source's data edge.
     $(".tn-addsrc")?.addEventListener("change", (e) => { if (model.addToastSource(x.id, e.target.value)) { rebuildNode(n.id); drawEdges(); autosave(null); } });
     wireArmedRemove(div, ".tn-rmsrc", (val) => { model.removeToastSource(x.id, val); rebuildNode(n.id); drawEdges(); autosave(null); });
-    // token chips: click to COPY the source's {{token}} to the clipboard, ready to paste into any
-    // text block or image text line (the palette sits below the images, away from the fields).
-    div.querySelectorAll(".tn-rotoken").forEach((b) => b.addEventListener("click", async () => {
-        const token = `{{${b.dataset.token}}}`;
-        try { await navigator.clipboard.writeText(token); setStatus(`copied ${token}`); }
-        catch { setStatus(`copy failed — ${token}`); }
-    }));
+    // token picker: opens a rich popover of every wired source's {{token}} with a live value
+    // preview (resolved server-side, same engine the toast renderer uses) so it's obvious what
+    // each token actually provides. Picking one COPIES {{token}} to the clipboard, ready to paste
+    // into any text block or image text line (the button sits below the images, away from the fields).
+    $(".tn-tokbtn")?.addEventListener("click", async (e) => {
+        const anchor = e.currentTarget;
+        // the resolve round-trip can take a second or two — show a spinner over the label (the
+        // label span stays in the layout, just hidden, so the button never changes width).
+        anchor.disabled = true; anchor.classList.add("tn-loading");
+        const grps = tokenGroups(model, x);
+        const inners = grps.flatMap((g) => g.chips.map((c) => c.token));
+        let vals = {};
+        try { vals = (await api.resolveTokens(model.profile.name, inners)).values || {}; }
+        catch { /* preview is best-effort — the picker still works without it */ }
+        finally { anchor.disabled = false; anchor.classList.remove("tn-loading"); }
+        const fmt = (v) => (v == null || v === "" ? "" : String(v).slice(0, 48));
+        richPickerPop({
+            anchor,
+            groups: grps.map((g) => [grps.length > 1 ? g.head : null,
+                g.chips.map((c) => ({ value: c.token, label: `{{${c.label}}}`, meta: fmt(vals[c.token]) }))]),
+            current: null,
+            onPick: async (tok) => {
+                const token = `{{${tok}}}`;
+                try { await navigator.clipboard.writeText(token); setStatus(`copied ${token}`); }
+                catch { setStatus(`copy failed — ${token}`); }
+            },
+        });
+    });
     // slide toggles are native checkboxes now — read `.checked` on change
     $(".tn-muted")?.addEventListener("change", (e) => {
         model.setToastProp(x.id, "muted", e.currentTarget.checked); autosave(null);
@@ -547,7 +570,8 @@ function wireToastImage(sec, x, n) {
             insp.dataset.i = offNow ? 0 : j;
             const head = insp.querySelector(".tn-il-insp-h .muted"); if (head) head.textContent = offNow ? "no element selected" : `element ${j + 1}`;
             const setV = (cls, v) => { const el = insp.querySelector(cls); if (el && document.activeElement !== el) el.value = v; };
-            setV(".tn-il-content", e.content || ""); setV(".tn-il-size", e.size ?? 20);
+            setV(".tn-il-content", e.content || ""); insp.querySelector(".tn-il-content")?._autogrow?.();
+            setV(".tn-il-size", e.size ?? 20);
             setV(".tn-il-x", e.x ?? 0); setV(".tn-il-y", e.y ?? 0);
             setV(".tn-il-w", e.width || ""); setV(".tn-il-h", e.height || ""); setV(".tn-il-font", e.font_family || "");
             setV(".tn-il-z", e.z_index ?? 0);
@@ -615,6 +639,7 @@ function wireToastImage(sec, x, n) {
     // bg type flips which controls show (color2/angle) -> rebuild the node body, then repreview
     q(".tn-img-bgtype")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "bg_type", e.target.value); rebuildNode(n.id); autosave(null); });
     wireInspector();
+    autoGrow(sec.querySelector(".tn-il-content"));
     if (sel != null) setActive(true);   // a rebuild that kept a selection (add/clone element) shows its overlay
     afterBoot(refreshPreview);   // initial paint (also runs after a rebuild re-wires the section)
 }
