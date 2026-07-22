@@ -395,8 +395,10 @@
    manually resizes it — a manual resize's inline height then wins). The VTable fills the body via
    its own internal virtualized scroll (.vt-host owns overflow), so the body itself must NOT also
    scroll (that would double-scroll and clip the VTable's own scrollbar/header). */
-#nodelog:not(.collapsed) { height: 240px; }
-#nodelog .fw-body { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+#nodelog:not(.collapsed) { height: 480px; }
+/* :not(.collapsed) guard: an ID selector always outranks the plain-class .floatwin.collapsed
+   .fw-body{display:none} rule, so without this the body stayed visible (flex) when collapsed. */
+#nodelog:not(.collapsed) .fw-body { display: flex; flex-direction: column; padding: 0; overflow: hidden; margin: 6px; }
 .insp-empty { color: var(--muted); font-size: var(--fs-xs); }
 .insp-target { color: var(--text); font-size: var(--fs-xs); font-weight: 500; }
 .insp-tip { color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }

@@ -19,6 +19,7 @@ import * as hub from "../../hub.js";
 import { createFloatWin } from "../floatwin.js";
 import { VTable } from "../../vtable.js";
 import { fmtDateTimeMs } from "../../datefmt.js";
+import { $ } from "../state.js";
 
 const ROW_CAP = 200;   // a merged preview, not a data grid (rule 4)
 const COLS = ["when", "node", "kind", "detail"];
@@ -80,11 +81,12 @@ export function buildNodeLog(state) {
         id: "nodelog", title: "node log", state, span: "bottom", bothAxes: true, autoFit: false,
         resetW: 600,
         onShow: () => {
+            $("nodelogBtn")?.classList.toggle("active", true);
             if (!vt) vt = new VTable(win.body, "nodelog");
             unsub = hub.subscribe((s) => render(s));
             hub.kick();
         },
-        onHide: () => { unsub && unsub(); unsub = null; },
+        onHide: () => { $("nodelogBtn")?.classList.toggle("active", false); unsub && unsub(); unsub = null; },
     });
     return win;
 }
