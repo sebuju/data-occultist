@@ -2,9 +2,14 @@
 
 The teach UI's readout *history* satellite node shows the last few reads of a readout: WHEN it
 was read, the RAW OCR text, each rule's pass/skip/drop step, and the final resolved value — the
-same rule trace the readout node itself shows, laid out one row per read. Like the trigger-fire
-history ([[trigger_history]]), this is deliberately transient: a ring buffer in module memory,
-wiped on restart (a live debugging view, not an audit log — the user asked for no persistence).
+same rule trace the readout node itself shows, laid out one row per read. Like the trigger-/
+register-/process-history rings ([[trigger_history]] and siblings) this is deliberately transient:
+a ring buffer in module memory, wiped on restart (a live debugging view, not an audit log — the
+user asked for no persistence). The ring mechanics live in the shared
+:class:`oc.collect.history_ring.HistoryRing` primitive; this module only fixes the readout key +
+read-record shape — composite-keyed as ``"<window>:<readout>"`` (HistoryRing itself only knows
+``(game, id)``, so a readout's 3-part identity collapses to one id string, exactly the shape
+:func:`snapshot` already exposed).
 
 The collector calls :func:`record` for every evaluated readout read (every OCR-due tick), keyed by
 ``(game, window_id, readout_id)``. :func:`recent` is read by the live heartbeat (``live.status()``)
@@ -13,11 +18,13 @@ and delivered to the client, which paints it into an OPEN satellite (empty/no-op
 
 from __future__ import annotations
 
-from collections import deque
+from .history_ring import HistoryRing
 
-_CAP = 200
-# (game, window_id, readout_id) -> deque of newest-first read records
-_history: dict[tuple[str, str, str], deque] = {}
+_ring = HistoryRing(200)
+
+
+def _id(window_id: str, readout_id: str) -> str:
+    return f"{window_id}:{readout_id}"
 
 
 def record(game: str, window_id: str, readout_id: str, *, ts: str, raw, value,
@@ -27,12 +34,9 @@ def record(game: str, window_id: str, readout_id: str, *, ts: str, raw, value,
     (``{i, when, then, in, out, fired, ignored?}`` each), ``value`` the final resolved value,
     ``dropped`` whether a rule rejected the read, ``raw`` the pre-rules OCR text (``None`` for
     pip/symbol readouts that carry no OCR text)."""
-    key = (game, window_id, readout_id)
-    dq = _history.get(key)
-    if dq is None:
-        dq = _history[key] = deque(maxlen=_CAP)
-    dq.appendleft({"ts": ts, "raw": raw, "value": value, "dropped": dropped,
-                   "trace": list(trace or []), "conf": round(conf, 3)})
+    _ring.record((game, _id(window_id, readout_id)),
+                 {"ts": ts, "raw": raw, "value": value, "dropped": dropped,
+                  "trace": list(trace or []), "conf": round(conf, 3)})
 
 
 def record_reads(game: str, window_id: str, ro_trace: list, ts: str) -> None:
@@ -47,22 +51,23 @@ def record_reads(game: str, window_id: str, ro_trace: list, ts: str) -> None:
 
 def recent(game: str, window_id: str, readout_id: str) -> list[dict]:
     """This readout's recent reads, newest first (empty if it hasn't been read this session)."""
-    return list(_history.get((game, window_id, readout_id), ()))
+    return _ring.recent((game, _id(window_id, readout_id)))
 
 
 def snapshot(game: str) -> dict:
     """``{"<window>:<readout>": [recent reads]}`` for every readout of ``game`` with reads this
-    session. Module-level twin of the (now removed) per-session builder, so the activity heartbeat
-    can surface readout history WITHOUT a running live collector — the ring is fed by both live
-    collection and the teach-UI test feed (mirrors :func:`producer_history.snapshot`)."""
-    out: dict[str, list] = {}
-    for (g, win, rid), dq in _history.items():
-        if g == game and dq:
-            out[f"{win}:{rid}"] = list(dq)
-    return out
+    session. Module-level, so the activity heartbeat can surface readout history WITHOUT a running
+    live collector — the ring is fed by both live collection and the teach-UI test feed (mirrors
+    :func:`producer_history.snapshot`)."""
+    return _ring.snapshot(game)
 
 
 def clear(game: str, window_id: str | None = None) -> None:
     """Drop history for one window's readouts, or (``window_id=None``) every readout of ``game``."""
-    for key in [k for k in _history if k[0] == game and (window_id is None or k[1] == window_id)]:
-        _history.pop(key, None)
+    if window_id is None:
+        _ring.clear(game)
+        return
+    prefix = f"{window_id}:"
+    for comp_id in list(_ring.snapshot(game)):
+        if comp_id.startswith(prefix):
+            _ring.clear(game, comp_id)

@@ -210,13 +210,3 @@ def rename_process(game: str, process_id: str, body: _RegisterRename):
     if s is not None:
         s.rename_process(process_id, body.new_id)
     return {"ok": True}
-
-
-@router.get("/{game}/debug")
-def debug(game: str, after: int = 0):
-    """Incremental debug-log poll: entries newer than ``after`` (the last seq the client has).
-    Kept off the heartbeat so it costs nothing unless the panel's debug section is open."""
-    s = _sessions.get(game)
-    if s is None:
-        return {"running": False, "seq": 0, "entries": []}
-    return s.debug(after)

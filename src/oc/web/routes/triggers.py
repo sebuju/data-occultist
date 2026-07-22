@@ -127,7 +127,11 @@ def fire_trigger(game: str, trigger_id: str):
         record_fire(data_dir, game, trigger_id)   # stamp the sidecar so the fire countdown is right
         from datetime import datetime, timezone
 
+        from ...collect import sound_history
         from ...collect.trigger_history import record as record_hist
+        ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        for sid in sound_ids:
+            sound_history.record(game, sid, ts=ts, trigger=trigger_id)
         record_hist(game, trigger_id, why="manual", targets=list(trig.targets),
-                    throttled=False, ts=datetime.now(timezone.utc).isoformat(timespec="milliseconds"))
+                    throttled=False, ts=ts)
     return {"trigger": trigger_id, "started": started, "skipped": skipped}

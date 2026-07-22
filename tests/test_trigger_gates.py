@@ -7,9 +7,10 @@ against the runner's live caches — no game knowledge. See TriggerRunner._gates
 import tempfile
 
 from oc.collect.fields import _matches
-from oc.collect.triggers import TriggerRunner
+from oc.collect.triggers import TriggerRunner, fire_action
 from oc.profile.models import (
-    GameProfile, GateCond, GateDef, RouterBranch, RouterDef, RuleWhen, SoundDef, TriggerDef,
+    ActionDef, GameProfile, GateCond, GateDef, RouterBranch, RouterDef, RuleWhen, SoundDef,
+    TriggerDef,
 )
 
 
@@ -257,3 +258,72 @@ def test_emit_fire_bypasses_gates():
     tr.set_registers({"r": {"a": 99}})                    # gate would BLOCK (99 not < 3)
     assert tr._route_fire(prof.triggers[0], "auto", items=None) is False   # gated
     assert tr._emit_fire(prof.triggers[0], "manual", items=None) is True   # manual bypasses
+
+
+# ---- satellite-log rings: gate flip / router route-change / sound play / action run ------------
+
+def test_emit_gate_flow_writes_gate_history_on_flip():
+    from oc.collect import gate_history
+    g = _gate("gb", "register:reg#a", ("lt", "3"))
+    prof = GameProfile(name="test_gate_hist", gates=[g], triggers=[
+        TriggerDef(id="t", kind="on_register", register_watch=["reg"], gates=["gb"])])
+    gate_history.clear(prof.name)
+    tr = _runner(prof)
+    tr.set_registers({"reg": {"a": 5}})
+    tr.emit_gate_flow()                     # first sight -> seed, no log row
+    assert gate_history.recent(prof.name, "gb") == []
+    tr.set_registers({"reg": {"a": 2}})
+    tr.emit_gate_flow()                     # flip to pass -> one log row
+    rows = gate_history.recent(prof.name, "gb")
+    assert len(rows) == 1
+    assert rows[0]["holds"] is True
+    assert rows[0]["source"] == "register:reg#a"
+    assert rows[0]["conds"] == [{"when": "lt", "arg": "3", "hold": True}]
+
+
+def test_emit_router_flow_logs_only_on_branch_change():
+    from oc.collect import router_history
+    r = RouterDef(id="rt", source="register:reg#a", branches=[
+        RouterBranch(conds=[GateCond(when="lt", arg="3")], targets=["x"]),
+        RouterBranch(conds=[], targets=["y"])])   # else branch
+    prof = GameProfile(name="test_router_hist", routers=[r])
+    router_history.clear(prof.name)
+    tr = _runner(prof)
+    tr.set_registers({"reg": {"a": 99}})    # branch 0 misses -> else (branch 1) selected
+    tr.emit_router_flow()                   # first sight -> seed, no log row
+    assert router_history.recent(prof.name, "rt") == []
+    tr.emit_router_flow()                   # unchanged selection -> still no row
+    assert router_history.recent(prof.name, "rt") == []
+    tr.set_registers({"reg": {"a": 1}})      # branch 0 now matches -> selection changes
+    tr.emit_router_flow()
+    rows = router_history.recent(prof.name, "rt")
+    assert len(rows) == 1
+    assert rows[0]["selected"] == 0
+    assert rows[0]["targets"] == ["x"]
+
+
+def test_emit_fire_logs_sound_history():
+    from oc.collect import sound_history
+    snd = SoundDef(id="snd1", file="ding.wav")
+    prof = GameProfile(name="test_sound_hist", sounds=[snd], triggers=[
+        TriggerDef(id="t", kind="manual", targets=["snd1"])])
+    sound_history.clear(prof.name)
+    tr = _runner(prof)
+    assert tr._emit_fire(prof.triggers[0], "manual", items=None) is True
+    rows = sound_history.recent(prof.name, "snd1")
+    assert len(rows) == 1
+    assert rows[0]["trigger"] == "t"
+
+
+def test_fire_action_logs_action_history():
+    from oc.collect import action_history
+    act = ActionDef(id="a1", sources=["sound:snd1"])
+    snd = SoundDef(id="snd1", file="ding.wav")
+    prof = GameProfile(name="test_action_hist", actions=[act], sounds=[snd])
+    action_history.clear(prof.name)
+    ok = fire_action(prof.name, act, tempfile.gettempdir(), profile=prof, trigger_id="t")
+    assert ok is True
+    rows = action_history.recent(prof.name, "a1")
+    assert len(rows) == 1
+    assert rows[0]["trigger"] == "t"
+    assert rows[0]["sounds"] == ["snd1"]
