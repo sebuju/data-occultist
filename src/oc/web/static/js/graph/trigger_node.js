@@ -10,8 +10,9 @@
 // a specific item template in a watched WINDOW is detected/kept this tick; `on_window_detected`/
 // `on_window_undetected` fire on a watched window becoming/ceasing to be the recognized one;
 // `on_window_data_start`/`on_window_data_stop` fire on a watched window's dataset producing again
-// after a quiet spell / going quiet after producing; `manual` never auto-fires (the fire button
-// drives it). A throttle sets a minimum time between fires (leading edge); a settle waits for the
+// after a quiet spell / going quiet after producing; `on_scroll_top`/`on_scroll_bottom` fire when a
+// watched window's scrollbar thumb arrives at the top/bottom of its track; `manual` never
+// auto-fires (the fire button drives it). A throttle sets a minimum time between fires (leading edge); a settle waits for the
 // watched changes to stop and then fires once (trailing edge). Targets are wired by dragging the
 // out-port to a producer / file source / toast / sound / action, or picked from the "fires" row.
 // The dataset ACTION (clear/clone/move) is now its own node (action_node.js), fired via `targets`.
@@ -31,7 +32,8 @@ export const KIND_GROUPS = [
     ["window", [["on_item", "on item"], ["on_window_detected", "on window detected"],
                 ["on_window_undetected", "on window undetected"],
                 ["on_window_data_start", "on window data start"],
-                ["on_window_data_stop", "on window data stop"]]],
+                ["on_window_data_stop", "on window data stop"],
+                ["on_scroll_top", "on scroll top"], ["on_scroll_bottom", "on scroll bottom"]]],
     ["session", [["on_app_start", "on app start"], ["on_capture", "on capture start"],
                  ["on_live_start", "on live start"], ["on_live_stop", "on live stop"]]],
     ["input", [["on_input", "on input (live only)"]]],
@@ -54,6 +56,8 @@ export const KIND_DESC = {
     on_window_undetected: "fire when a watched window stops being the currently-recognized one",
     on_window_data_start: "fire the first time a watched window produces data again after a quiet spell",
     on_window_data_stop: "fire once a watched window has gone quiet (see settle below) after producing data",
+    on_scroll_top: "fire when a watched window's scrollbar thumb arrives at the TOP of its track",
+    on_scroll_bottom: "fire when a watched window's scrollbar thumb arrives at the BOTTOM of its track",
     on_app_start: "fire once when the web app boots",
     on_capture: "fire when a capture session starts, live or precapture",
     on_live_start: "fire when the server live-collection session starts",
@@ -64,7 +68,8 @@ export const KIND_DESC = {
 
 // window-scoped kinds: all watch window_watch (a window node); on_item ALSO sub-picks item_watch.
 const WINDOW_KINDS = ["on_item", "on_window_detected", "on_window_undetected",
-                       "on_window_data_start", "on_window_data_stop"];
+                       "on_window_data_start", "on_window_data_stop",
+                       "on_scroll_top", "on_scroll_bottom"];
 
 export function kindLabel(v) {
     for (const [, opts] of KIND_GROUPS) for (const [ov, lbl] of opts) if (ov === v) return lbl;
@@ -164,7 +169,9 @@ export function triggerParts(t, model) {
             : kind === "on_window_detected" ? "windows to watch for becoming the recognized one"
             : kind === "on_window_undetected" ? "windows to watch for no longer being the recognized one"
             : kind === "on_window_data_start" ? "windows to watch for producing data again after a quiet spell"
-            : "windows to watch for going quiet after producing data (see settle below)";
+            : kind === "on_window_data_stop" ? "windows to watch for going quiet after producing data (see settle below)"
+            : kind === "on_scroll_top" ? "windows to watch for their scrollbar reaching the top"
+            : "windows to watch for their scrollbar reaching the bottom";
         winWatch = srcRow("watch", hint,
             sourcesInput({
                 chips: (t.window_watch || []).map((w) => ({ value: w, node: model.refNode(w) })),
@@ -274,6 +281,7 @@ export function triggerParts(t, model) {
             kind === "on_register" && h("span", { class: "port pwatch", title: "drag to a register to watch its keys" }),
             kind === "on_item" && h("span", { class: "port pwatch", title: "drag to a window to watch — then pick the item template below" }),
             (kind === "on_window_detected" || kind === "on_window_undetected") && h("span", { class: "port pwatch", title: "drag to a window to watch its recognition state" }),
-            (kind === "on_window_data_start" || kind === "on_window_data_stop") && h("span", { class: "port pwatch", title: "drag to a window to watch its dataset's activity" })),
+            (kind === "on_window_data_start" || kind === "on_window_data_stop") && h("span", { class: "port pwatch", title: "drag to a window to watch its dataset's activity" }),
+            (kind === "on_scroll_top" || kind === "on_scroll_bottom") && h("span", { class: "port pwatch", title: "drag to a window to watch its scrollbar" })),
     };
 }

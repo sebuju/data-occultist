@@ -314,7 +314,7 @@ export class GraphModel {
         bareList(["gate"], this.profile.triggers, (t) => t.gates);
         bareList(["register"], this.profile.triggers, (t) => t.register_watch);
         bareList(["readout"], this.profile.triggers, (t) => t.readout_watch);
-        bareList(["window"], this.profile.triggers, (t) => t.window_watch);                                 // on_item/on_window_* watch
+        bareList(["window"], this.profile.triggers, (t) => t.window_watch);                                 // on_item/on_window_*/on_scroll_* watch
         bareList(["window"], [this.profile], () => this.profile.window_priority);                          // recognition order
 
         // object-field LIST refs (id lives in entry.dataset)
@@ -835,10 +835,12 @@ export class GraphModel {
             // input_rect, if set, is drawn as an overlay box on that window — see imaging.js)
             if (t.kind === "on_input" && t.input_window && this.window(t.input_window))
                 es.push({ from: `trigger:${t.id}`, to: `win:${t.input_window}`, kind: "watch" });
-            // on_item/on_window_detected/undetected/on_window_data_start/stop all WATCH window(s) —
-            // dashed line(s) to each watched window node, mirroring on_input's window bind above.
+            // on_item/on_window_detected/undetected/on_window_data_start/stop/on_scroll_top/bottom
+            // all WATCH window(s) — dashed line(s) to each watched window node, mirroring
+            // on_input's window bind above.
             if (["on_item", "on_window_detected", "on_window_undetected",
-                 "on_window_data_start", "on_window_data_stop"].includes(t.kind))
+                 "on_window_data_start", "on_window_data_stop",
+                 "on_scroll_top", "on_scroll_bottom"].includes(t.kind))
                 for (const wid of t.window_watch || [])
                     if (this.window(wid)) es.push({ from: `trigger:${t.id}`, to: `win:${wid}`, kind: "watch" });
             // on_item ALSO watches one specific item template within that window — a second dashed
@@ -848,6 +850,11 @@ export class GraphModel {
                 if (this.item(winId, t.item_watch))
                     es.push({ from: `trigger:${t.id}`, to: `item:${winId}:${t.item_watch}`, kind: "watch" });
             }
+            // on_scroll_top/bottom ALSO watch the window's scrollbar specifically — a second dashed
+            // line straight to the scrollbar node, mirroring on_item's line to its item node above.
+            if ((t.kind === "on_scroll_top" || t.kind === "on_scroll_bottom"))
+                for (const wid of t.window_watch || [])
+                    if (this.scrollbar(wid)) es.push({ from: `trigger:${t.id}`, to: `sb:${wid}:scrollbar`, kind: "watch" });
         }
         // a gate READS the live value it tests from a readout/register (source -> gate); the
         // trigger(s) it gates wire IN from above (trigger -> gate).
@@ -1125,7 +1132,7 @@ export class GraphModel {
         this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_register", "on_ready", "on_input", "on_item", "on_window_detected", "on_window_undetected", "on_window_data_start", "on_window_data_stop", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_register", "on_ready", "on_input", "on_item", "on_window_detected", "on_window_undetected", "on_window_data_start", "on_window_data_stop", "on_scroll_top", "on_scroll_bottom", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     // minimum ms between fires — empty/invalid clears it (null = no throttle).
     setTriggerThrottle(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.throttle_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }

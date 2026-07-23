@@ -158,10 +158,12 @@ function watchPortSpec(n) {
         target: ["register"],   // watch a register; a key sub-select narrows which keys fire
         onDrop: (id) => model.addTriggerRegisterWatch(n.ref.id, id),
     };
-    // on_item/on_window_detected/undetected/on_window_data_start/stop all watch a WINDOW; on_item's
-    // item sub-picker (which template within it) lives in the body, not on this port.
+    // on_item/on_window_detected/undetected/on_window_data_start/stop/on_scroll_top/bottom all
+    // watch a WINDOW; on_item's item sub-picker (which template within it) lives in the body, not
+    // on this port.
     if (["on_item", "on_window_detected", "on_window_undetected",
-         "on_window_data_start", "on_window_data_stop"].includes(n.ref.kind)) return {
+         "on_window_data_start", "on_window_data_stop",
+         "on_scroll_top", "on_scroll_bottom"].includes(n.ref.kind)) return {
         side: "L",
         target: ["window"],
         onDrop: (id) => model.addTriggerWindowWatch(n.ref.id, id),
