@@ -5046,14 +5046,15 @@ triggers:
   - 0.11481518518518524
   input_window: arsenal_warframe
   input_double_ms: 350.0
-- id: trigger
+- id: toast_top_relic
   kind: on_item
   interval_s: 300.0
   watch:
   - top_picks_for_relics
   readout_watch: []
   register_watch: []
-  gates: []
+  gates:
+  - gate
   targets:
   - toast_best_relic
   enabled: true
@@ -5168,6 +5169,12 @@ gates:
   conds:
   - when: gt
     arg: '2'
+  logic: or
+  negate: false
+  enabled: true
+- id: gate
+  source: ''
+  conds: []
   logic: or
   negate: false
   enabled: true
@@ -7973,16 +7980,6 @@ layout:
       custH: true
       softW: true
       softH: true
-    trigger:trigger:
-      x: -220.0
-      y: -9540.0
-      w: 360.0
-      h: 220.0
-      collapsed: false
-      custW: true
-      custH: false
-      softW: true
-      softH: true
     toast:toast_best_relic:
       x: 180.0
       y: -9680.0
@@ -8007,6 +8004,20 @@ layout:
       custH: true
       softW: true
       softH: false
+    gate:gate:
+      x: -200.0
+      y: -9260.0
+      collapsed: false
+    trigger:toast_top_relic:
+      x: -220.0
+      y: -9540.0
+      w: 360.0
+      h: 220.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: true
+      softH: true
   tables:
     warframe:ds:master:
       sorts:
@@ -9420,9 +9431,10 @@ layout:
     - sub:relics_owned_contents_priced
     - vt:sub:relics_owned_contents_priced
     - toast:toast_best_relic
-    - trigger:trigger
+    - trigger:toast_top_relic
     - sub:top_picks_for_relics
     - vt:sub:top_picks_for_relics
+    - gate:gate
     outline:
       color: '#e69a5a'
       style: none
