@@ -97,8 +97,34 @@ function haltStartup(msg) {
 // Until the initial load completes, a reconnect can't just "resume" — the graph was
 // never loaded. Reload to run boot cleanly. After boot, a reconnect simply lets the
 // gated pollers pick back up (conn.js hides the overlay), no reload needed.
+//
+// A slow/overloaded backend can flap offline<->online several times WHILE boot is still
+// running (each request timeout counts as a drop, each recovered health probe counts as a
+// reconnect) — reloading on every single one of those never lets boot actually finish, so
+// the page reload-loops forever instead of just waiting the one bad stretch out. Capped
+// with a per-tab attempt counter (sessionStorage survives the reload, not the tab close):
+// after RELOAD_CAP failed boot attempts in a row, stop reloading and show a halt overlay
+// with a manual retry instead of silently looping.
+const RELOAD_KEY = "occ-boot-reload-count";
+const RELOAD_CAP = 3;
 let booted = false;
-conn.onChange((up) => { if (up && !booted) location.reload(); });
+conn.onChange((up) => {
+    if (!up || booted) return;
+    const n = Number(sessionStorage.getItem(RELOAD_KEY) || "0");
+    if (n >= RELOAD_CAP) {
+        blockOverlay({
+            title: "Backend keeps dropping during boot",
+            lines: [
+                { text: `The server didn't stay reachable long enough to finish loading, after ${RELOAD_CAP} tries.` },
+                { text: "It may be overloaded or stuck — check the terminal running it.", muted: true },
+            ],
+            actions: [{ label: "retry", primary: true, run: () => { sessionStorage.removeItem(RELOAD_KEY); location.reload(); } }],
+        });
+        return;
+    }
+    sessionStorage.setItem(RELOAD_KEY, String(n + 1));
+    location.reload();
+});
 
 // On page load, kill any background OCR worker from a prior session and WAIT for it to
 // die. Do NOT load the graph until it's confirmed gone — a stray worker keeps hammering
@@ -152,6 +178,7 @@ async function killStrayOcrThenBoot() {
         log(String(e.message || e), "err");   // boot hiccup: show the page anyway
     }
     booted = true;
+    sessionStorage.removeItem(RELOAD_KEY);   // a real boot completed -> forget any earlier reload attempts
     api.onApiRequest(null);   // stop mirroring requests into the log bar (boot done)
     veil.drop();   // also slides the boot log down + collapses it once the crop finishes
 }
