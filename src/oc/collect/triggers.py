@@ -1255,12 +1255,30 @@ def toast_spec(toast, values: dict | None = None, *, data_dir=None, profile=None
     when a toast has no blocks the legacy ``title``/``message`` are rendered instead (the notifier
     falls back to them)."""
     from ..interfaces import ToastSpec, ToastText
-    from .templating import TokenContext, render
+    from .templating import TokenContext, render, token_blanks
     game = game or getattr(profile, "name", None)
     ctx = TokenContext(values, data_dir=data_dir, profile=profile, game=game)
-    texts = [ToastText(content=render(t.content, ctx), style=t.style, align=t.align,
-                       max_lines=t.max_lines)
-             for t in getattr(toast, "texts", None) or []]
+    # skip_mode: drop a block based on its OWN {{token}}s' blankness (not whether the fully
+    # rendered string happens to be blank — literal text around a token would mask that). "any"
+    # skips when at least one token used is blank; "all" only when every token is; a block with
+    # no tokens never skips either way.
+    texts = []
+    skipped = 0
+    for t in getattr(toast, "texts", None) or []:
+        content = render(t.content, ctx)
+        mode = getattr(t, "skip_mode", "none")
+        if mode in ("any", "all"):
+            blanks = token_blanks(t.content, ctx)
+            if blanks and (any(blanks) if mode == "any" else all(blanks)):
+                skipped += 1
+                continue
+        texts.append(ToastText(content=content, style=t.style, align=t.align))
+    # skip_mode drops are silent otherwise — a toast that renders with fewer/no blocks looks like a
+    # bug ("test does nothing") rather than the authored skip condition doing its job. Surface it on
+    # the log bar so a blank-token skip is visibly a decision, not a failure.
+    if skipped:
+        logev(f"toast {getattr(toast, 'id', '?')}: {skipped} block(s) skipped (blank token)",
+              level="info", game=game)
     hero, inline = _render_toast_images(toast, ctx, data_dir, game)
     # Replace-by-tag identity: a set (token-rendered) replace_key posts the toast under a stable
     # Windows tag so a later fire REPLACES the visible notification in place instead of stacking.
@@ -1279,14 +1297,12 @@ def toast_spec(toast, values: dict | None = None, *, data_dir=None, profile=None
         # jitter from firing more than once, so one screen = one pop.
         if getattr(toast, "accumulate", False) and data_dir is not None:
             from ..notify import toast_accum
-            blocks = [{"content": t.content, "style": t.style, "align": t.align,
-                       "max_lines": t.max_lines} for t in texts]
+            blocks = [{"content": t.content, "style": t.style, "align": t.align} for t in texts]
             flat_blocks, inline = toast_accum.append(
                 data_dir, game, rkey, blocks, inline,
                 int(getattr(toast, "accumulate_cap", 10) or 0))
             texts = [ToastText(content=b.get("content", ""), style=b.get("style", ""),
-                               align=b.get("align", ""), max_lines=b.get("max_lines", 0) or 0)
-                     for b in flat_blocks]
+                               align=b.get("align", "")) for b in flat_blocks]
     return ToastSpec(
         title=render(toast.title, ctx),
         message=render(toast.message, ctx),
