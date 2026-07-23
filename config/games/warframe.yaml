@@ -7945,7 +7945,7 @@ layout:
       softH: true
     toast:toast_best_relic:
       x: 180.0
-      y: -9640.0
+      y: -9620.0
       w: 640.0
       h: 560.0
       collapsed: false
