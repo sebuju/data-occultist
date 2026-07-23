@@ -120,6 +120,7 @@ class TickResult:
     dataset: str | None = None              # the dataset records were written to
     changed: list[dict] = field(default_factory=list)  # values added/updated this tick (for triggers)
     items_seen: list[str] = field(default_factory=list)  # ItemDef ids kept this frame (for on_item triggers)
+    thumb_pos: float | None = None      # scrollbar thumb pos (0..1) this frame, if the window has one (for on_scroll_top/bottom triggers)
     reads: list[dict] = field(default_factory=list)     # per-kept-record OCR detail (live debug log only)
     readout_reads: list[dict] = field(default_factory=list)  # per-readout OCR detail (live debug log only)
     readouts: dict = field(default_factory=dict)       # live ephemeral readout values read this tick (never stored)
@@ -573,6 +574,12 @@ class Collector:
 
         # (Live readouts were read above, before the motion/state gates — they surface even
         # on a blurred or state-invalid frame; the value flows on through to TickResult here.)
+        # Scrollbar thumb (for on_scroll_top/bottom triggers), read here so it lands on TickResult
+        # regardless of dataset/mirror status. Gated on an ACTUAL scrollbar box being configured —
+        # unlike the mirror block's `_thumb_pos` below, which falls back to 0.0 ("whole list
+        # visible") for a scrollless window — so a scrollless window never reports a fake "at top".
+        has_scrollbar = bool(window.scroll and window.scroll.enabled and window.scroll.scrollbar)
+        tick_thumb_pos = self._thumb_pos(frame, window) if has_scrollbar else None
         dataset = window.dataset_id
         # A window with no dataset produces nothing storable — discard its reads
         # (no confirmer, no store, no disk file). An explicit sink overrides this.
@@ -591,6 +598,7 @@ class Collector:
                 changed=[],
                 reads=reads,
                 items_seen=items_seen,
+                thumb_pos=tick_thumb_pos,
                 readouts=readouts_now,
                 readout_confs=readout_confs_now,
                 readouts_all=readouts_all_now,
@@ -806,6 +814,7 @@ class Collector:
             changed=changed,
             reads=reads,
             items_seen=items_seen,
+            thumb_pos=tick_thumb_pos,
             readout_reads=readout_reads,
             readouts=readouts_now,
             readout_confs=readout_confs_now,
@@ -889,6 +898,8 @@ class Collector:
                             triggers.note_window_data(result.window_id)
                         if result.items_seen:
                             triggers.note_items(result.window_id, set(result.items_seen))
+                        if result.thumb_pos is not None:
+                            triggers.note_scroll(result.window_id, result.thumb_pos)
                 # Sleep the FAST poll, not the OCR interval — so triggers fire and the OCR
                 # throttle is re-checked often, catching a worthy screen within ~gate_interval.
                 wait = gate_interval if gate_interval > 0 else interval

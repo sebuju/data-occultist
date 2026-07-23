@@ -35,6 +35,9 @@ Kinds:
   before-fire duration itself, not as a trailing debounce of an already-decided fire — so it
   fires via a direct gate-check + emit (:meth:`_fire_gate_ok`), bypassing :meth:`_route_fire`'s
   settle-defer branch (which would otherwise apply a SECOND quiet wait on top).
+* ``on_scroll_top``/``on_scroll_bottom`` — pulse when a ``window_watch`` window's scrollbar thumb
+  arrives at the top/bottom of its track (:meth:`note_scroll`), edge-triggered off the zone the
+  live thumb position falls into (re-arms once the thumb leaves the edge).
 * ``manual``       — never auto-fires (the sweep button drives it); declared only for wiring.
 
 A trigger ``target`` is a price-node id, a file-source id, a toast/sound id, OR an action id:
@@ -130,6 +133,12 @@ def write_subset_sigs(data_dir, game: str, sigs: dict) -> None:
 # "stopped producing" edge fires. Deliberately generous (a slow OCR confirm cadence between
 # genuinely-still-open reads must not misfire this as "stopped").
 DEFAULT_WINDOW_QUIET_MS = 2000.0
+
+# Edge band for on_scroll_top/on_scroll_bottom: a thumb pos this close to 0.0/1.0 counts as
+# "at the edge" (the reachable-track fraction reads exact 0/1 at a true stop, but a fixed band
+# tolerates the last fraction of a pixel of jitter). Fixed, not a per-trigger field — see the
+# scrollbar module for what `pos` means.
+SCROLL_EDGE_EPS = 0.02
 
 
 class TriggerRunner:
@@ -240,6 +249,10 @@ class TriggerRunner:
         # Monotonic time of each window's last note_window_data call — what the quiet check in
         # tick() measures elapsed time against.
         self._win_last_data: dict[str, float] = {}
+        # ---- on_scroll_top/on_scroll_bottom ----
+        # Which edge zone ("top"/"bottom"/"mid") each watched window's thumb last landed in, so
+        # note_scroll can tell a genuine arrival-at-the-edge from a repeat call still parked there.
+        self._scroll_zone: dict[str, str] = {}
 
     # ---- throttle + shared fire funnel -------------------------------------
 
@@ -408,7 +421,8 @@ class TriggerRunner:
                              f"producer:{node_id}", f"trigger:{t.id}", 1)
         return fired
 
-    # ---- window-scoped kinds: on_item / on_window_detected/undetected / on_window_data_* ---
+    # ---- window-scoped kinds: on_item / on_window_detected/undetected / on_window_data_* /
+    # on_scroll_top / on_scroll_bottom ---------------------------------------------------------
 
     def note_window(self, window_id: str | None) -> list[str]:
         """Called once per real (classified) tick with the currently-recognized window id (None =
@@ -477,6 +491,34 @@ class TriggerRunner:
                 fired.append(t.id)
                 dst = f"item:{window_id}:{t.item_watch}" if not any_item else f"win:{window_id}"
                 publish_flow(self._profile.name, "watch", dst, f"trigger:{t.id}", 1)
+        return fired
+
+    def note_scroll(self, window_id: str, pos: float) -> list[str]:
+        """Called once per real tick with ``window_id``'s scrollbar thumb position (0..1) — only
+        when that window has a scrollbar configured (see the collector's ``TickResult.thumb_pos``,
+        which is ``None`` otherwise and never reaches here). Classifies ``pos`` into a zone
+        (``"top"`` within :data:`SCROLL_EDGE_EPS` of 0.0, ``"bottom"`` within it of 1.0, else
+        ``"mid"``) and fires ``on_scroll_top``/``on_scroll_bottom`` triggers watching this window
+        on a genuine arrival at that edge only — mirrors :meth:`note_window`'s transition-only
+        shape, so a thumb left parked at the end doesn't re-fire every tick."""
+        zone = "top" if pos <= SCROLL_EDGE_EPS else "bottom" if pos >= 1.0 - SCROLL_EDGE_EPS else "mid"
+        if self._scroll_zone.get(window_id) == zone:
+            return []
+        self._scroll_zone[window_id] = zone
+        if zone == "mid":
+            return []
+        kind = "on_scroll_top" if zone == "top" else "on_scroll_bottom"
+        fired: list[str] = []
+        for t in self._profile.triggers:
+            if not t.enabled or t.kind != kind:
+                continue
+            if window_id not in (t.window_watch or []):
+                continue
+            why = f"{window_id} scrollbar at {zone}"
+            if self._route_fire(t, why, items=None):
+                fired.append(t.id)
+                publish_flow(self._profile.name, "watch",
+                             f"sb:{window_id}:scrollbar", f"trigger:{t.id}", 1)
         return fired
 
     def _check_window_data_stop(self, now: float) -> list[str]:

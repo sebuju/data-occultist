@@ -1181,6 +1181,12 @@ class TriggerDef(BaseModel):
       ``settle_ms`` (default when unset — see the runner) after producing data — the window
       stopped producing new data. Reuses ``settle_ms`` as the quiet-before-fire duration rather
       than a dedicated field, since that's already this trigger's "wait for quiet" knob.
+    * ``on_scroll_top``    — fire when a watched window's (``window_watch``) scrollbar thumb
+      reaches the TOP of its track (edge-triggered: fires once on arrival, re-arms once the thumb
+      leaves the edge). No value field — the kind itself is the edge; see ``on_scroll_bottom`` for
+      the mirror. Needs the window's :class:`ScrollDef` to have a ``scrollbar`` box configured.
+    * ``on_scroll_bottom`` — fire when a watched window's scrollbar thumb reaches the BOTTOM of its
+      track. The mirror edge of ``on_scroll_top``.
     * ``manual``         — never auto-fires; just declares the wiring (the sweep button drives it).
 
     A trigger's ``targets`` are producer ids (sweep/refresh), file-source ids (read), toast/sound
@@ -1197,7 +1203,7 @@ class TriggerDef(BaseModel):
     # interval | true_interval | on_change | on_any_change | on_new_batch | on_app_start |
     # on_capture | on_live_start | on_live_stop | on_readout | on_register | on_ready | on_input |
     # on_item | on_window_detected | on_window_undetected | on_window_data_start |
-    # on_window_data_stop | manual
+    # on_window_data_stop | on_scroll_top | on_scroll_bottom | manual
     kind: str = "interval"
     interval_s: float = 300.0               # for kind="interval"/"true_interval": seconds between fires
     watch: list[str] = Field(default_factory=list)    # for kind="on_change"/"on_any_change"/"on_new_batch": datasets to watch
@@ -1235,8 +1241,8 @@ class TriggerDef(BaseModel):
     ready_field: str = ""
 
     # ---- kind="on_item"/"on_window_detected"/"on_window_undetected"/"on_window_data_start"/
-    # "on_window_data_stop" ------------------------------------------------------------------
-    # window ids this trigger watches (chips + edges). All 5 window-scoped kinds read this list;
+    # "on_window_data_stop"/"on_scroll_top"/"on_scroll_bottom" ---------------------------------
+    # window ids this trigger watches (chips + edges). All 7 window-scoped kinds read this list;
     # on_item uses only its first entry (the window the watched item template lives in).
     window_watch: list[str] = Field(default_factory=list)
     # for kind="on_item": the ItemDef.id (within window_watch[0]) whose detection pulses the

@@ -70,6 +70,7 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
     readout_ids = {r.id for w in p.windows for r in w.readouts}
     window_ids = {w.id for w in p.windows}
     items_by_window: dict[str, set[str]] = {w.id: {it.id for it in w.items} for w in p.windows}
+    scrollbar_windows = {w.id for w in p.windows if w.scroll and w.scroll.scrollbar}
     registers_by_id: dict[str, RegisterDef] = {x.id: x for x in p.registers}
     processes_by_id: dict[str, ProcessDef] = {x.id: x for x in p.processes}
 
@@ -265,7 +266,8 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
                 err(node, "sets a rect but no bound window — a rect needs a window's client area")
             if t.input_rect and len(t.input_rect) != 4:
                 err(node, "rect must be [x, y, w, h]")
-        # on_item/on_window_detected/undetected/on_window_data_start/stop all watch windows.
+        # on_item/on_window_detected/undetected/on_window_data_start/stop/on_scroll_top/bottom
+        # all watch windows.
         for win_id in t.window_watch:
             if win_id not in window_ids:
                 err(node, f"watches missing window '{win_id}'")
@@ -276,6 +278,10 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
             # "*" is the "any item" wildcard — not a real item id, nothing to check it against.
             elif t.item_watch != "*" and win_id in items_by_window and t.item_watch not in items_by_window[win_id]:
                 err(node, f"watches missing item '{t.item_watch}' in window '{win_id}'")
+        if t.kind in ("on_scroll_top", "on_scroll_bottom"):
+            for win_id in t.window_watch:
+                if win_id in window_ids and win_id not in scrollbar_windows:
+                    err(node, f"watches window '{win_id}' for scroll but it has no scrollbar configured")
 
     # ---- toasts: wired sources (readout/dataset/subset) ----
     for to in p.toasts:
