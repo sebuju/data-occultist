@@ -20,6 +20,7 @@ import { wireProducerNode, mapRow } from "./producer_node.js";
 import { renderTriggerHistory } from "./history_node.js";
 import { renderInputLog } from "./input_log_node.js";
 import { refreshRegister, populateRegister, REG_AGGREGATES, AGG_DESC } from "./register_node.js";
+import { KIND_GROUPS, KIND_DESC } from "./trigger_node.js";
 import { richPickerPop } from "./rich_picker.js";
 import { renderProcessHistory } from "./process_history_node.js";
 import { wireSlotRows } from "./reg_slots.js";
@@ -217,9 +218,17 @@ function wireTrigger(div, n) {
             () => movePos(`trigger:${oldId}`, `trigger:${t.id}`),
             () => { render(); autosave(null); });
     });
-    // kind swaps the body (interval/watch blocks) AND the edges, so rebuild this node then re-render
-    div.querySelector(".tg-kind")?.addEventListener("change", (e) => {
-        model.setTriggerKind(t.id, e.target.value); rebuildNode(n.id); render(); autosave(null);
+    // kind swaps the body (interval/watch blocks) AND the edges, so rebuild this node then re-render.
+    // Grouped rich popover (rich_picker.js), same shape as the register aggregate fold — each kind's
+    // meaning shows as a meta line while browsing (native <option title> tooltips don't render
+    // cross-browser).
+    div.querySelector(".tg-kind-btn")?.addEventListener("click", (e) => {
+        richPickerPop({
+            anchor: e.currentTarget, current: t.kind,
+            groups: KIND_GROUPS.map(([grp, opts]) =>
+                [grp, opts.map(([v, lbl]) => ({ value: v, label: lbl, meta: KIND_DESC[v] || "" }))]),
+            onPick: (v) => { model.setTriggerKind(t.id, v); rebuildNode(n.id); render(); autosave(null); },
+        });
     });
     div.querySelector(".tg-interval")?.addEventListener("change", (e) => { model.setTriggerInterval(t.id, e.target.value); autosave(null); });
     // on_input: chord + window/rect bind. Event/window/double rebuild (their presence/value shows
@@ -300,6 +309,15 @@ function wireTrigger(div, n) {
     // on_register: watched registers (chips + edges). The fire test now lives on the wired gate(s).
     div.querySelector(".tg-addregwatch")?.addEventListener("change", (e) => { if (model.addTriggerRegisterWatch(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".tg-rmregwatch", (val) => { model.removeTriggerRegisterWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });
+    // on_item/on_window_detected/undetected/on_window_data_start/stop: watched window(s) (chips +
+    // edges). Adding/removing the window can change which item_watch is still valid (on_item), so
+    // rebuild the whole body, not just the edges.
+    div.querySelector(".tg-addwinwatch")?.addEventListener("change", (e) => { if (model.addTriggerWindowWatch(t.id, e.target.value)) { rebuildNode(n.id); rebuildNodeEdges(n.id); autosave(null); } });
+    wireArmedRemove(div, ".tg-rmwinwatch", (val) => { model.removeTriggerWindowWatch(t.id, val); rebuildNode(n.id); rebuildNodeEdges(n.id); autosave(null); });
+    // on_item: which item template (within the watched window) pulses the trigger.
+    div.querySelector(".tg-itemwatch")?.addEventListener("change", (e) => {
+        model.setTriggerItemWatch(t.id, e.target.value); rebuildNodeEdges(n.id); autosave(null);
+    });
     // gates have no trigger-side row: the gate node owns that editor (its picker / out-port drag).
     div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".tg-rmwatch", (val) => { model.removeTriggerWatch(t.id, val); rebuildNodeEdges(n.id); autosave(null); });

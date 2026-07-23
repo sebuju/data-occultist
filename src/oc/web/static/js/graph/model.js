@@ -314,6 +314,7 @@ export class GraphModel {
         bareList(["gate"], this.profile.triggers, (t) => t.gates);
         bareList(["register"], this.profile.triggers, (t) => t.register_watch);
         bareList(["readout"], this.profile.triggers, (t) => t.readout_watch);
+        bareList(["window"], this.profile.triggers, (t) => t.window_watch);                                 // on_item/on_window_* watch
         bareList(["window"], [this.profile], () => this.profile.window_priority);                          // recognition order
 
         // object-field LIST refs (id lives in entry.dataset)
@@ -731,6 +732,7 @@ export class GraphModel {
         }
         // bare id: try every kind a wired-source chip can point at, same precedence the edge
         // builder used inline before this was extracted.
+        if (this.window(ref)) return `win:${ref}`;   // trigger window_watch stores bare window ids
         if (this.subsetDef(ref)) return `sub:${ref}`;
         if (this.datasets().includes(ref)) return `ds:${ref}`;
         if (this.producerNode(ref)) return `producer:${ref}`;
@@ -833,6 +835,19 @@ export class GraphModel {
             // input_rect, if set, is drawn as an overlay box on that window — see imaging.js)
             if (t.kind === "on_input" && t.input_window && this.window(t.input_window))
                 es.push({ from: `trigger:${t.id}`, to: `win:${t.input_window}`, kind: "watch" });
+            // on_item/on_window_detected/undetected/on_window_data_start/stop all WATCH window(s) —
+            // dashed line(s) to each watched window node, mirroring on_input's window bind above.
+            if (["on_item", "on_window_detected", "on_window_undetected",
+                 "on_window_data_start", "on_window_data_stop"].includes(t.kind))
+                for (const wid of t.window_watch || [])
+                    if (this.window(wid)) es.push({ from: `trigger:${t.id}`, to: `win:${wid}`, kind: "watch" });
+            // on_item ALSO watches one specific item template within that window — a second dashed
+            // line straight to the item node, so which one is watched is visible without opening it.
+            if (t.kind === "on_item" && t.item_watch && (t.window_watch || [])[0]) {
+                const winId = t.window_watch[0];
+                if (this.item(winId, t.item_watch))
+                    es.push({ from: `trigger:${t.id}`, to: `item:${winId}:${t.item_watch}`, kind: "watch" });
+            }
         }
         // a gate READS the live value it tests from a readout/register (source -> gate); the
         // trigger(s) it gates wire IN from above (trigger -> gate).
@@ -1099,7 +1114,7 @@ export class GraphModel {
         this.profile.triggers = this.profile.triggers || [];
         let n = 1, id = "trigger";
         while (this.trigger(id)) id = `trigger_${++n}`;
-        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], register_watch: [], gates: [], throttle_ms: null, settle_ms: null, settle_max_ms: null, ready_field: "" });
+        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], register_watch: [], gates: [], throttle_ms: null, settle_ms: null, settle_max_ms: null, ready_field: "", window_watch: [], item_watch: "" });
         return id;
     }
     removeTrigger(id) { this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id); }
@@ -1110,7 +1125,7 @@ export class GraphModel {
         this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_register", "on_ready", "on_input", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_register", "on_ready", "on_input", "on_item", "on_window_detected", "on_window_undetected", "on_window_data_start", "on_window_data_stop", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     // minimum ms between fires — empty/invalid clears it (null = no throttle).
     setTriggerThrottle(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.throttle_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }
@@ -1179,6 +1194,36 @@ export class GraphModel {
         if (!t) return;
         t.register_watch = (t.register_watch || []).filter((r) => r !== reg);
     }
+
+    // ---- on_item / on_window_detected/undetected / on_window_data_start/stop: watch window(s) ----
+    // window_watch is a list (for consistency with the other watch fields) but on_item only ever
+    // uses its first entry — the window the sub-picked item_watch template lives in.
+    addTriggerWindowWatch(id, winId) {
+        const t = this.trigger(id);
+        if (!t || !winId || !this.window(winId)) return false;
+        t.window_watch = t.window_watch || [];
+        if (t.window_watch.includes(winId)) return false;
+        if (t.kind === "on_item") t.window_watch = [winId];   // on_item watches exactly one window
+        else t.window_watch.push(winId);
+        return true;
+    }
+    removeTriggerWindowWatch(id, winId) {
+        const t = this.trigger(id);
+        if (!t) return;
+        t.window_watch = (t.window_watch || []).filter((w) => w !== winId);
+        if (t.kind === "on_item" && !t.window_watch.includes(winId)) t.item_watch = "";
+    }
+    // for kind="on_item": which item template (within window_watch[0]) pulses the trigger.
+    // "*" is the "any item" wildcard (fires on ANY item detected in the window) — not a real
+    // item id, so it skips the this.item() existence check a real pick needs.
+    setTriggerItemWatch(id, itemId) {
+        const t = this.trigger(id);
+        if (!t) return;
+        if (itemId === "*") { t.item_watch = "*"; return; }
+        const win = (t.window_watch || [])[0];
+        t.item_watch = (win && this.item(win, itemId)) ? itemId : "";
+    }
+
     // ---- trigger gates: value guards that must ALL pass for the trigger to fire (see GateDef) ----
     addTriggerGate(id, gid) {
         const t = this.trigger(id);
@@ -2625,14 +2670,25 @@ export class GraphModel {
         // drop fields no longer used by any item field
         for (const f of (it && it.fields) || [])
             if (!this._fieldUsed(w, f.field)) w.fields = (w.fields || []).filter((x) => x.id !== f.field);
+        this._repointItemWatch(winId, id, "");   // an on_item trigger watching it must not dangle
     }
     renameItem(winId, id, newId) {
         const w = this.window(winId);
         const it = this.item(winId, id);
         if (!w || !it || !newId || w.items.some((x) => x.id === newId)) return false;
         it.id = newId;
+        this._repointItemWatch(winId, id, newId);
         this._emitRename("item", id, newId, winId);
         return true;
+    }
+    // Item ids are scoped to their OWNING window (not global, unlike dataset/producer/etc ids), so
+    // this can't ride the generic bareList registry (which has no window-scoping concept) — mirrors
+    // _repointField's same reasoning for field ids. The only cross-window-boundary consumer of an
+    // item id today is an on_item trigger's item_watch; a new one just needs a line added here.
+    _repointItemWatch(winId, oldItemId, newItemId) {
+        for (const t of this.profile.triggers || [])
+            if (t.kind === "on_item" && (t.window_watch || [])[0] === winId && t.item_watch === oldItemId)
+                t.item_watch = newItemId;
     }
     setItemBox(winId, id, box) { const it = this.item(winId, id); if (it) it.box = { x: box.x, y: box.y, w: box.w, h: box.h }; }
 

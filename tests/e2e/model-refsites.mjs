@@ -18,14 +18,16 @@ function build() {
     m.load({
         name: "t",
         windows: [{ id: "win1", dataset: "ds_a", fields: [{ id: "f1" }], detect: [], states: [], regions: [],
-            readouts: [{ id: "ro_x", field: "f1" }] }],
+            readouts: [{ id: "ro_x", field: "f1" }],
+            items: [{ id: "item1", box: { x: 0, y: 0, w: 0.1, h: 0.1 } }] }],
         datasets: [{ id: "ds_a" }, { id: "ds_b" }],
         subsets: [{ id: "sub1", sources: [{ dataset: "ds_a" }] }],
         producers: [{ id: "prod1", dataset: "ds_b", sources: [] }],
         file_sources: [{ id: "src1", dataset: "ds_a", match: [], fields: [] }],
         triggers: [{ id: "trg1", kind: "on_register", targets: ["prod1", "act1"],
             watch: ["ds_a", "sub1"], readout_watch: ["ro_x"],
-            register_watch: ["reg1"], gates: ["gate1"] }],
+            register_watch: ["reg1"], gates: ["gate1"], window_watch: ["win1"] },
+            { id: "trg_item", kind: "on_item", targets: [], window_watch: ["win1"], item_watch: "item1" }],
         gates: [{ id: "gate1", source: "register:reg1#ro_x", conds: [{ when: "lt", arg: "3" }] }],
         actions: [{ id: "act1", sources: ["dataset:ds_a", "register:reg1"], slots: { reg1: ["ro_x"] }, dest: "ds_b" }],
         registers: [{ id: "reg1", sources: ["readout:ro_x"], persist: "ds_a" }],
@@ -42,6 +44,7 @@ const P = (m) => m.profile;
 const act = (m) => P(m).actions[0], trg = (m) => P(m).triggers[0], sub = (m) => P(m).subsets[0];
 const reg = (m) => P(m).registers[0], toast = (m) => P(m).toasts[0], dict = (m) => P(m).dictionaries[0];
 const gate = (m) => P(m).gates[0];
+const trgItem = (m) => P(m).triggers[1];
 
 // ---- rename dataset: every dataset ref moves, nothing else ----
 {
@@ -134,6 +137,26 @@ const gate = (m) => P(m).gates[0];
     eq(trg(m).targets[1], "act9", "trigger target (action) repointed");
     ok(m.renameWindow("win1", "win9"), "renameWindow returns true");
     eq(P(m).window_priority, ["win9"], "window_priority repointed");
+    eq(trg(m).window_watch, ["win9"], "on_register trigger's window_watch repointed on window rename");
+    eq(trgItem(m).window_watch, ["win9"], "on_item trigger's window_watch repointed on window rename");
+    eq(trgItem(m).item_watch, "item1", "on_item's item_watch untouched by a WINDOW rename");
+}
+
+// ---- rename/delete item: on_item's item_watch tracks it (window-scoped, not the generic registry) ----
+{
+    const m = build();
+    ok(m.renameItem("win1", "item1", "item9"), "renameItem returns true");
+    eq(trgItem(m).item_watch, "item9", "on_item's item_watch repointed on item rename");
+    m.removeItem("win1", "item9");
+    eq(trgItem(m).item_watch, "", "on_item's item_watch cleared on item delete (no dangling ref)");
+}
+
+// ---- delete window: window_watch pruned (mirrors window_priority above) ----
+{
+    const m = build();
+    m.removeWindow("win1");
+    eq(trg(m).window_watch, [], "on_register trigger's window_watch pruned on window delete");
+    eq(trgItem(m).window_watch, [], "on_item trigger's window_watch pruned on window delete");
 }
 
 // ---- delete dataset: refs blanked+pruned, no ghost ----
