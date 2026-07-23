@@ -147,7 +147,7 @@
 }
 .act-cancel { background: var(--warn); color: var(--on-accent); }
 .act-fire { background: var(--ok); color: var(--on-accent); }
-.act-cancel:hover, .act-fire:hover { filter: brightness(1.12); }
+.act-cancel:hover, .act-fire:hover { filter: brightness(var(--hover-multiplier)); }
 .act-cancel:disabled, .act-fire:disabled { opacity: 0.5; cursor: default; }
 /* a disabled trigger's whole row dims (still actionable via its toggle/fire) */
 .act-row.act-off { opacity: 0.55; }
@@ -334,7 +334,7 @@
 .live-imgs { margin: 8px 0 0; }   /* the saved-images stat row, inside the sessions collapsible */
 .live-clear { flex: none; font-size: var(--fs-xs); padding: 4px 8px; min-height: unset; border: 0;
     background: var(--danger); color: var(--on-danger); }
-.live-clear:hover { filter: brightness(1.12); }
+.live-clear:hover { filter: brightness(var(--hover-multiplier)); }
 .live-clear[data-armed="1"] { background: var(--warn); color: var(--on-accent); }
 .live-clear:disabled { opacity: 0.4; cursor: default; }
 /* the per-window detection list — now inside the stats box, one stat-style line per window */
@@ -462,7 +462,7 @@
 /* delete (×) pinned to the right of the detail header */
 .pc-detail-del { width: 28px; height: 24px; padding: 0; flex: none; border: 0; line-height: 1;
     background: var(--danger); color: var(--on-danger); border-radius: 4px; cursor: pointer; }
-.pc-detail-del:hover { filter: brightness(1.12); }
+.pc-detail-del:hover { filter: brightness(var(--hover-multiplier)); }
 .pc-detail-del[disabled] { opacity: 0.5; cursor: default; }
 /* armed (first click): widen for the "delete?" label + warn colour until the 2nd click */
 .pc-detail-del.armed { width: auto; padding: 0 8px; font-size: var(--fs-xs);
@@ -492,7 +492,7 @@
 .pc-sess-foot[hidden], .pc-sess-rows[hidden] { display: none; }   /* no sessions -> collapse both */
 .pc-sess-clear { flex: none; height: 22px; padding: 0 8px; font-size: var(--fs-xs); border: 0; line-height: 1;
     background: var(--danger); color: var(--on-danger); border-radius: 4px; cursor: pointer; }
-.pc-sess-clear:hover { filter: brightness(1.12); }
+.pc-sess-clear:hover { filter: brightness(var(--hover-multiplier)); }
 .pc-sess-clear[disabled] { opacity: 0.5; cursor: default; }
 /* armed (first click): warn colour until the 2nd click confirms */
 .pc-sess-clear.armed { background: var(--warn); color: var(--on-accent); }

@@ -121,18 +121,17 @@ export function sourceParts(s) {
                 h("button", { class: "src-resolve", title: "inspect the file and propose extraction columns from its data" }, "auto-resolve"))));
 
     const body = frag(
-        h("div", { class: "lab-grid" },
-            labCell("format", "how the file is parsed"),
-            h("select", { class: "src-format" }, fmtOpts),
-            labCell("filename", "filename to auto-find — a glob, e.g. EE.log or *.cfg"),
-            h("input", { class: "src-filename", value: s.filename || "", placeholder: "EE.log" }),
-            labCell("path", "explicit file path (overrides auto-find)"),
-            h("div", { class: "src-pathrow" },
-                h("input", { class: "src-path", value: s.path || "", placeholder: "(auto-find by filename)" }),
-                h("button", { class: "src-find", title: "search common game/config locations for the filename" }, "⌕ auto-find")),
-            labCell("read", "when to read: a manual button, or whenever the file changes"),
-            h("select", { class: "src-watch" }, watchOpts),
-            throttle, tail, linePos, matchBlock, fields),
+        labCell("format", "how the file is parsed"),
+        h("select", { class: "src-format" }, fmtOpts),
+        labCell("filename", "filename to auto-find — a glob, e.g. EE.log or *.cfg"),
+        h("input", { class: "src-filename", value: s.filename || "", placeholder: "EE.log" }),
+        labCell("path", "explicit file path (overrides auto-find)"),
+        h("div", { class: "src-pathrow" },
+            h("input", { class: "src-path", value: s.path || "", placeholder: "(auto-find by filename)" }),
+            h("button", { class: "src-find", title: "search common game/config locations for the filename" }, "⌕ auto-find")),
+        labCell("read", "when to read: a manual button, or whenever the file changes"),
+        h("select", { class: "src-watch" }, watchOpts),
+        throttle, tail, linePos, matchBlock, fields,
         h("div", { class: "src-found muted" }));
 
     return {

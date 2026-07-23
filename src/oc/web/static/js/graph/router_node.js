@@ -67,7 +67,7 @@ export function routerParts(r, model) {
             addLabel: "+ trigger", addinCls: "sv-addin router-adddest", rmCls: "sv-rmin router-rmdest" }));
     return {
         title: h("input", { class: "gi gi-id router-rename", value: r.id, title: "rename router" }),
-        body: h("div", { class: "lab-grid" }, source, firedBy, ...branches, h("button", { class: "router-addbranch" }, "+ branch")),
+        body: frag(source, firedBy, ...branches, h("button", { class: "router-addbranch" }, "+ branch")),
         ports: frag(
             h("span", { class: "port in", title: "drag a readout or register here" }),
             h("span", { class: "port out", title: "drag to a producer / toast / sound / action for the current branch" })),

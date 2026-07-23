@@ -15,14 +15,13 @@
 // node, and the trailing "+" slot adds one. Those mutations are intents (bubbling CustomEvents)
 // the node's wiring (wireRegister in main.js) turns into model changes; rendering is here.
 import * as api from "../api.js";
-import { boot, model, nodeEls, readoutPreview } from "./state.js";
+import { boot, model, nodeEls } from "./state.js";
 import { sinceShort } from "../datefmt.js";
 import { confTier } from "./conf.js";
 import { panZoomTo } from "./camera.js";
 import { h, frag, kv, srcRow, observeResize } from "../dom.js";
 import { slideToggle } from "./node_parts.js";
 import { sourcesInput } from "./sources_input.js";
-import { liveCollecting } from "./panels/livewin.js";
 
 // The register's own ring-aggregate vocabulary (its exposed/persisted value = this fold over the
 // ring) — grouped for the select's <optgroup>s. Deliberately its OWN list (uses "avg", the user's
@@ -339,7 +338,7 @@ export function registerParts(x, model) {
         // held map (one per wired readout). .nodehost overflow:auto — a wheel scrolls when the list
         // overflows, else zooms the graph (camera.js scrollableUnder).
         body: frag(
-            h("div", { class: "lab-grid" },
+            h("div", { class: "gn-grid" },
                 sourcesRow,
                 kv("recent values", h("input", { class: "gi reg-cap", type: "number", min: "1", step: "1",
                     value: x.capacity ?? 1, title: "how many recent values to hold per key" })),
@@ -396,8 +395,9 @@ export function populateRegister(id) {
 // live session's held map accumulates keys and is only wiped by "clear data", so a readout that got
 // unwired or a process output key that got renamed lingers there. Showing only the scaffold keys
 // drops those stale slots (the renamed/old key vanishes) instead of piling them up. A scaffold key
-// with no matching server row shows ∅, borrowing the readout's /api/preview read when live mode is
-// OFF (process keys have no preview). A "readout-preview" event (imaging.js) repaints every register.
+// with no matching server row shows ∅ — a register holds a value ONLY once something genuinely
+// fed it (the live collector, or a test/feed tool writing feed=1); it must never borrow the wired
+// readout node's own /api/preview read, or a slot fills merely from toggling live off.
 export function refreshRegister(id) {
     const host = nodeEls.get(`register:${id}`)?.querySelector(".data-host");
     if (!host) return;
@@ -429,15 +429,14 @@ export function refreshRegister(id) {
                     conf: e.conf == null ? null : +e.conf,           // raw: classified into a tier in applyCell
                     seen: e.last_seen == null ? "preview" : sinceShort(e.last_seen * 1000),   // server sends epoch SECONDS
                 };
-                // no server row for this scaffold key -> ∅ slot, borrowing the /api/preview read for a
-                // readout key when live mode is off (process keys have no preview -> stay ∅).
-                const usePrev = !liveCollecting() && Object.prototype.hasOwnProperty.call(readoutPreview.all, k);
+                // no fed value for this scaffold key -> empty slot. A register shows a value ONLY
+                // when it was genuinely fed: the live collector, or a test/feed tool (feed=1)
+                // writing the held-map. Do NOT borrow the wired readout node's /api/preview read
+                // here — that filled slots merely from being live-off (e.g. on exiting live mode),
+                // reading as the register feeding itself.
                 return {
-                    key: k, value: usePrev ? readoutPreview.all[k] : null,
-                    values: [usePrev ? readoutPreview.all[k] : null], writes: null, cap,
-                    agg: null, aggMode, multi,
-                    conf: usePrev ? readoutPreview.allConfs[k] : null,
-                    seen: usePrev ? "preview" : "",
+                    key: k, value: null, values: [null], writes: null, cap,
+                    agg: null, aggMode, multi, conf: null, seen: "",
                 };
             });
             renderBank(id, host, rows);

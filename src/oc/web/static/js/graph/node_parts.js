@@ -1214,11 +1214,11 @@ export function nodeParts(n) {
     return {
         title: h("input", { class: "gi gi-id dsrename", value: ds, title: "dataset name" }),
         head: satToggleBtn(`vt:ds:${ds}`, "vttable"),
-        // ONE lab-grid for the whole body (sources row FIRST, like toast/action/register, then
-        // key/aggregate/batch/sync) — matches producer/action/toast/register/subset bodies. A
-        // separate lab-grid around just the sources row would size its label column
-        // independently of the kv() rows below, so "sources" wouldn't line up with them.
-        body: h("div", { class: "lab-grid" },
+        // ONE flat body (sources row FIRST, like toast/action/register, then key/aggregate/batch/
+        // sync) — matches producer/action/toast/register/subset bodies. A separate grid around
+        // just the sources row would size its label column independently of the kv() rows below,
+        // so "sources" wouldn't line up with them.
+        body: frag(
             srcRow("sources", "windows, producers, or file sources feeding this dataset",
                 sourcesInput({
                     chips: model.datasetSources(ds).map((s) => ({ value: s.ref, node: model.refNode(s.ref) })),
@@ -1266,7 +1266,7 @@ function dictFeedsEditor(dict) {
     const free = model.dictFeedable(dict.id);   // datasets not already feeding it
     if (!feeds.length && !free.length) return null;
     // flat column list across every wired dataset: one kv row per column — label "dataset:column"
-    // in col 1, checkbox in col 2 — same lab-grid every other node's fields use (rule 7).
+    // in col 1, checkbox in col 2 — same grid every other node's fields use (rule 7).
     const rows = feeds.flatMap((fd) => {
         const shown = [...new Set([...model.datasetFields(fd.dataset), ...(fd.columns || [])])];
         return shown.length
@@ -1276,7 +1276,7 @@ function dictFeedsEditor(dict) {
     });
     // laid out like the subset/producer "sources" row: a labelled sources-input widget, its
     // flat column list below.
-    return h("div", { class: "dict-feeds lab-grid" },
+    return h("div", { class: "dict-feeds gn-grid" },
         srcRow("source", "datasets whose column values become terms",
             sourcesInput({ chips: feeds.map((fd) => ({ value: fd.dataset, node: model.refNode(fd.dataset) })),
                 free: () => model.dictFeedable(dict.id),

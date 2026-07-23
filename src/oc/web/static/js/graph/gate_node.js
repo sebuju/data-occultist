@@ -66,7 +66,7 @@ export function gateParts(g, model) {
             addLabel: "+ trigger", addinCls: "sv-addin gate-adddest", rmCls: "sv-rmin gate-rmdest" }));
     return {
         title: h("input", { class: "gi gi-id gate-rename", value: g.id, title: "rename gate" }),
-        body: h("div", { class: "lab-grid" }, source, dest, logic, ifRow, negate),
+        body: frag(source, dest, logic, ifRow, negate),
         ports: frag(
             h("span", { class: "port in", title: "drag a readout or register here as the tested value" }),
             h("span", { class: "port out", title: "drag to a trigger this gate should gate" })),

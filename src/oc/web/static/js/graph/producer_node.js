@@ -37,7 +37,7 @@ const sel = (cls, opts, cur, title = "") => h("select", { class: cls, title: tit
 // checkbox WITH an inline text label (for list rows that have no labCell of their own)
 const chk = (cls, on, label) =>
     h("label", { class: "pr-chk", title: label }, h("input", { type: "checkbox", class: cls, checked: !!on }), label);
-// bare checkbox (for lab-grid rows whose labCell already names it — avoids a doubled label)
+// bare checkbox (for grid rows whose labCell already names it — avoids a doubled label)
 const chkBare = (cls, on, title) => h("input", { type: "checkbox", class: cls, checked: !!on, title });
 
 // A {k: v} map editor: committed rows (with delete) + one trailing empty add-row. `kind` is
@@ -57,7 +57,7 @@ const mapBlock = (kind, obj) => h("div", { class: "pr-rows", dataset: { mapkind:
     ...Object.entries(obj || {}).map(([k, v]) => mapRow(kind, k, v, true)));
 
 // The catalogue sub-panel (only when key_transform == "catalogue"): teaches the name->key
-// resolver. Returned as flat [label, control, ...] pairs to spread into the lab-grid.
+// resolver. Returned as flat [label, control, ...] pairs to spread into the body grid.
 const catalogueRows = (c) => [
     labCell("cat url", "catalogue list endpoint (fetched once per sweep)"),
     h("input", { class: "pr-cat-url", value: c.url || "", placeholder: "https://…/items" }),
@@ -183,37 +183,36 @@ export function producerParts(pn, cols = [], free = []) {
 
     const body = frag(
         h("div", { class: "enr-sum muted" }, "↻ refresh to fetch this data"),
-        h("div", { class: "lab-grid" },
-            labCell("backend", "which producer backend fetches this dataset"), typeSel(pn),
-            labCell("throttle", "seconds between requests during a sweep (per-item mode only)"),
-            h("input", { class: "pr-throttle", type: "number", step: "0.1", value: pn.throttle ?? 0.4, title: "seconds between requests during a sweep" }),
-            labCell("label", "status label only (no behaviour) — shown in progress copy"),
-            h("input", { class: "pr-mode", value: pn.mode || "", placeholder: "e.g. orders", title: "status label only (no behaviour)" }),
-            labCell("on new fire", "if fired again while this sweep is still running: drop = ignore; latest = run only the newest pending batch after; queue = run every pending batch in order"),
-            sel("pr-queuemode", ["drop", "latest", "queue"], pn.queue_mode || "drop", "what to do when fired while already sweeping"),
-            labCell("method", "HTTP method"), sel("pr-method", ["GET", "POST"], req.method || "GET", "HTTP method"),
-            labCell("url", isList ? "the URL fetched once (no {name}/{key} in list mode)" : "{name} = raw item name, {key} = transformed key"),
-            h("input", { class: "pr-url", value: req.url || "", placeholder: "https://…/{key}", title: "request URL; templates {name}/{key} in per-item mode" }),
-            labAdd("headers", "request headers", "pr-h-add", "add header", true), mapBlock("headers", req.headers),
-            labAdd("query", "query params appended to the URL", "pr-q-add", "add param", true), mapBlock("query", req.query),
-            labCell("timeout", "per-request timeout (seconds)"),
-            h("input", { class: "pr-timeout", type: "number", value: req.timeout ?? 30, title: "per-request timeout (seconds)" }),
-            labCell("html extract", "optional: the response is an HTML page, not bare JSON — id of a <script id=\"…\">…</script> tag whose CONTENTS are the JSON to map (e.g. Next.js's __NEXT_DATA__). Blank = parse the response body as JSON directly."),
-            h("input", { class: "pr-htmlextract", value: req.html_extract || "", placeholder: "blank = plain JSON response" }),
-            ...perItem,
-            labCell("root", "path applied to the response before every column path (and before explode)"),
-            h("input", { class: "pr-root", value: spec.root || "", placeholder: "e.g. data", title: "dotted path into the response applied before mapping" }),
-            labAdd("explode", "nested array paths to expand the response into one row each — with no sources wired, one fetch total (list mode); with sources wired, one fetch PER source item (blank = a single row per fetch, no expansion)", "pr-exp-add", "add level", true),
-            listBlock("pr-exp", spec.explode || [], "array path (e.g. relics)", "a nested array path, relative to the prior level"),
-            // runs BEFORE the column mapping — so it can test a raw field this producer never emits
-            labAdd("keep rows", "drop a source row before it is mapped unless it clears EVERY predicate (tests the raw element, so it may use a field no column emits)", "pr-ff-add", "add filter", true),
-            // wrap in ONE .pr-rows cell (like headers/query/explode) — filterList returns a bare
-            // frag, so dropping it straight into the lab-grid leaks 2 loose cells per filter and
-            // shifts every row below off the 2-col grid. The section add-button lives in the label.
-            h("div", { class: "pr-rows" }, filterList(spec.row_filter || [], null, false)),
-            labAdd("fields", "response → dataset columns", "pr-f-add", "add column", true), fieldsBlock(spec.fields || []),
-            labCell("status", "live sweep progress ('idle' when not running)"),
-            h("div", { class: "enr-prog livestats" })));
+        labCell("backend", "which producer backend fetches this dataset"), typeSel(pn),
+        labCell("throttle", "seconds between requests during a sweep (per-item mode only)"),
+        h("input", { class: "pr-throttle", type: "number", step: "0.1", value: pn.throttle ?? 0.4, title: "seconds between requests during a sweep" }),
+        labCell("label", "status label only (no behaviour) — shown in progress copy"),
+        h("input", { class: "pr-mode", value: pn.mode || "", placeholder: "e.g. orders", title: "status label only (no behaviour)" }),
+        labCell("on new fire", "if fired again while this sweep is still running: drop = ignore; latest = run only the newest pending batch after; queue = run every pending batch in order"),
+        sel("pr-queuemode", ["drop", "latest", "queue"], pn.queue_mode || "drop", "what to do when fired while already sweeping"),
+        labCell("method", "HTTP method"), sel("pr-method", ["GET", "POST"], req.method || "GET", "HTTP method"),
+        labCell("url", isList ? "the URL fetched once (no {name}/{key} in list mode)" : "{name} = raw item name, {key} = transformed key"),
+        h("input", { class: "pr-url", value: req.url || "", placeholder: "https://…/{key}", title: "request URL; templates {name}/{key} in per-item mode" }),
+        labAdd("headers", "request headers", "pr-h-add", "add header", true), mapBlock("headers", req.headers),
+        labAdd("query", "query params appended to the URL", "pr-q-add", "add param", true), mapBlock("query", req.query),
+        labCell("timeout", "per-request timeout (seconds)"),
+        h("input", { class: "pr-timeout", type: "number", value: req.timeout ?? 30, title: "per-request timeout (seconds)" }),
+        labCell("html extract", "optional: the response is an HTML page, not bare JSON — id of a <script id=\"…\">…</script> tag whose CONTENTS are the JSON to map (e.g. Next.js's __NEXT_DATA__). Blank = parse the response body as JSON directly."),
+        h("input", { class: "pr-htmlextract", value: req.html_extract || "", placeholder: "blank = plain JSON response" }),
+        ...perItem,
+        labCell("root", "path applied to the response before every column path (and before explode)"),
+        h("input", { class: "pr-root", value: spec.root || "", placeholder: "e.g. data", title: "dotted path into the response applied before mapping" }),
+        labAdd("explode", "nested array paths to expand the response into one row each — with no sources wired, one fetch total (list mode); with sources wired, one fetch PER source item (blank = a single row per fetch, no expansion)", "pr-exp-add", "add level", true),
+        listBlock("pr-exp", spec.explode || [], "array path (e.g. relics)", "a nested array path, relative to the prior level"),
+        // runs BEFORE the column mapping — so it can test a raw field this producer never emits
+        labAdd("keep rows", "drop a source row before it is mapped unless it clears EVERY predicate (tests the raw element, so it may use a field no column emits)", "pr-ff-add", "add filter", true),
+        // wrap in ONE .pr-rows cell (like headers/query/explode) — filterList returns a bare
+        // frag, so dropping it straight into the grid leaks 2 loose cells per filter and shifts
+        // every row below off the 2-col grid. The section add-button lives in the label.
+        h("div", { class: "pr-rows" }, filterList(spec.row_filter || [], null, false)),
+        labAdd("fields", "response → dataset columns", "pr-f-add", "add column", true), fieldsBlock(spec.fields || []),
+        labCell("status", "live sweep progress ('idle' when not running)"),
+        h("div", { class: "enr-prog livestats" }));
     // The fetch button doubles as cancel while running. The segmented meter lives INSIDE the button
     // and only shows while a sweep is fetching (built ONCE; reflectStatus() toggles each seg + the
     // label span in place, never rebuilt). The button is sized by the node, so showing/hiding the

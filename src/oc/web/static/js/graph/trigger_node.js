@@ -166,13 +166,12 @@ export function triggerParts(t, model) {
     return {
         title: h("input", { class: "gi gi-id tgrename", value: t.id, title: "rename trigger" }),
         body: frag(
-            h("div", { class: "lab-grid" },
-                targets,
-                labCell("kind", "how the trigger decides to fire"),
-                h("select", { class: "tg-kind" }, KINDS.map(kopt)),
-                interval, watch, varwatch, regwatch, inputCfg, throttle, settle,
-                labCell("progress", "what the trigger is doing (live countdown for timed kinds)"),
-                h("span", { class: "tg-prog muted" }, "idle"))),
+            labCell("kind", "how the trigger decides to fire"),
+            h("select", { class: "tg-kind" }, KINDS.map(kopt)),
+            targets,
+            interval, watch, varwatch, regwatch, inputCfg, throttle, settle,
+            labCell("progress", "what the trigger is doing (live countdown for timed kinds)"),
+            h("span", { class: "tg-prog muted" }, "idle")),
         foot: h("button", { class: "tg-fire" }, "↻ fire"),
         ports: frag(
             h("span", { class: "port out", title: "drag to a node this trigger should fire" }),

@@ -7,6 +7,8 @@
        autofill — all follow the browser's dark theme instead of a light widget on our dark UI */
     color-scheme: dark;
 
+    --hover-multiplier: 1.3;
+
     /* surfaces — blueprint: near-black canvas, flat gradient cards, cool thin lines */
     --bg: #0b0d12;            /* app background */
     --grid-dot: rgba(255,255,255,.06);  /* snap-grid polka dot on the canvas (camera.js sizes/positions it) */
@@ -93,6 +95,14 @@
     --fs-lg: 18px;
     --fs-xl: 20px;
     --fs-xxl: 22px;
+
+    /* colormixes */
+    --nd-mix-bg: 3%;
+    --nd-mix-h: 10%;
+    --nd-mix-btn: 5%;
+    --nd-mix-block: 5%;
+    --nd-mix-btn-brd: 50%;
+    --nd-mix-btn-act: 50%;
 }
 
 * { box-sizing: border-box; }

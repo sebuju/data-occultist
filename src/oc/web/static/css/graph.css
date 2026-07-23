@@ -242,7 +242,7 @@
    padding: 2px;
 }
 .gnode button.danger {
-   background: color-mix(in oklab, var(--danger, var(--accent)) 9%, transparent);
+   background: color-mix(in oklab, var(--danger, var(--accent)) var(--nd-mix-btn), transparent);
 }
 .gnode button.danger:hover:not(:disabled), .gnode .btn-trash:hover:not(:disabled) {
     /* background: var(--danger); color: var(--on-danger); filter: none; */
@@ -260,15 +260,51 @@
 /* the toast body: an ordered list of styled text blocks + an "add block" button */
 .tn-blocks { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; min-width: 0; }
 .tn-blocks-h { font-size: 10px; letter-spacing: .02em; }
-.tn-block { display: flex; flex-direction: column; gap: 4px; padding: 0px 6px;
-    border-left: 10px solid color-mix(in srgb, var(--nt) 15%, transparent); min-width: 0; }
+.tn-block { display: flex; flex-direction: column; gap: 4px; padding: 0px 6px 0px 6px; 
+    background: color-mix(in srgb, var(--nt) var(--nd-mix-block), transparent); min-width: 0; }
 .tn-block > textarea.tn-bk-content { width: 100%; box-sizing: border-box; resize: none; overflow-y: hidden;
     min-height: calc(2lh + 8px); font: inherit; border-color: var(--line); }
-.tn-bk-ctl { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.tn-bk-ctl { display: flex; flex-wrap: nowrap; gap: 4px; align-items: center; }
 .tn-bk-ctl select, .tn-bk-ctl input { font: inherit; font-size: 11px; min-width: 0; }
-.tn-bk-max { width: 4.5em; }
-.tn-bk-ctl button { font: inherit; font-size: 11px; cursor: pointer; padding: 1px 5px; }
-.tn-bk-ctl .tn-bk-del { margin-left: auto; }
+/* a <select>'s collapsed width otherwise fits its WIDEST option ("caption subtle", "skip if any
+   empty", ...) regardless of what's actually selected — pin each to a size that fits a realistic
+   selected value, ellipsis-ing anything longer rather than stretching the whole row. */
+.tn-bk-style, .tn-bk-align, .tn-bk-skip { text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+.tn-bk-style { width: 74px; }
+.tn-bk-align { width: 56px; }
+.tn-bk-skip { width: 92px; }
+.tn-bk-lbl { font-size: 10px; color: var(--muted); white-space: nowrap; line-height: 1; }
+.tn-bk-ctl .frule-btns { margin-left: auto; }
+/* the first two blocks' style+align picker is replaced by this static role label (see AUTO_ROLE
+   in toast_node.js) — Windows always renders them as its own title/subtitle, ignoring style/align */
+.tn-bk-auto { font-size: 11px; font-style: italic; white-space: nowrap; }
+/* combined-outcome preview: every block stacked in order, approximating the Fluent AdaptiveText
+   sizes Windows actually renders (see toast_node.js previewLine) so the assembled body reads
+   correctly without popping a real toast. Only shown once a block exists. */
+.tn-bk-preview { margin-top: 2px; padding: 8px 10px; border-radius: 4px; background: #1e1e1ee0;
+    color: #fff; display: flex; flex-direction: column; gap: 2px; min-width: 0;
+    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+.tn-bk-pv-line { min-width: 0; overflow-wrap: break-word; font-size: 15px; font-weight: 400; }
+.tn-bk-pv-caption { font-size: 12px; }
+.tn-bk-pv-captionsubtle { font-size: 12px; opacity: .7; }
+.tn-bk-pv-body { font-size: 15px; }
+.tn-bk-pv-basesubtle { font-size: 15px; font-weight: 600; opacity: .7; }
+.tn-bk-pv-base { font-size: 15px; font-weight: 600; }
+.tn-bk-pv-subtitle { font-size: 20px; }
+.tn-bk-pv-title { font-size: 24px; font-weight: 600; }
+.tn-bk-pv-subheader { font-size: 20px; font-weight: 600; }
+.tn-bk-pv-header { font-size: 34px; font-weight: 300; }
+/* the first two lines' forced look (see AUTO_ROLE) — approximates Windows' own default top-level
+   title/subtitle binding, NOT the block's stored (dead, for these two) style value */
+.tn-bk-pv-autotitle { font-size: 15px; font-weight: 600; }
+.tn-bk-pv-autosubtitle { font-size: 13px; font-weight: 400; opacity: .85; }
+/* attribution: the extra text Windows shows ALONGSIDE its own fixed identity/timestamp row (never
+   in place of it — that row isn't reproducible in this preview) — small, muted, no border/divider
+   (confirmed against a real fired toast, no line is drawn there). A real toast DOES leave a blank
+   line between attribution and the next body block below it (also confirmed) — margin-bottom, not
+   a border, reproduces that gap. */
+.tn-bk-pv-attr { font-size: 11px; opacity: .7; }
+.tn-bk-pv-attr:not(:last-child) { margin-bottom: 14px; }   /* only when a body block follows it */
 /* every <select> in the toast node carries the node colour at REST — a node-tinted border + a
    faint --nt wash — so the dropdowns read as this node's controls, not neutral grey fields (the
    generic .gnode rule only lit --nt on hover/focus, leaving a --line grey border at rest). The
@@ -280,17 +316,13 @@
     background: color-mix(in oklab, var(--nt) 8%, transparent);
 }
 
-/* the "add" / clone buttons carry the node colour so they read as this node's actions */
-.tn-bk-add, .tn-img-add {
-    align-self: start; font: inherit; font-size: 12px; line-height: 1; cursor: pointer; padding: 3px 9px;
-    border: none; color: var(--nt); border-radius: 4px;
-    background: color-mix(in srgb, var(--nt) 12%, transparent); }
-.tn-bk-add:hover, .tn-img-add:hover {
-    background: color-mix(in srgb, var(--nt) 22%, transparent); }
+/* "add text block" / "add image" are icon-only buttons riding the .frule-btns row beside the
+   "blocks" subheading — styled entirely by .frule-btns > button (same look as the rules
+   pipeline's +/copy/paste), no node-specific rule needed here. */
 /* generated images: a list of editors, each with a placement dropdown, live preview, bg/size/text */
 .tn-imgs { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; min-width: 0; }
 .tn-img { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 0px 6px;
-    background: color-mix(in srgb, var(--nt) 5%, transparent); min-width: 0; }
+    background: color-mix(in srgb, var(--nt) var(--nd-mix-block), transparent); min-width: 0; }
 .tn-img-place, .tn-img-unit { font: inherit; font-size: 11px; }
 .tn-img-del { position: absolute; top: 4px; right: 4px; z-index: 2; }
 /* preview + clickable box overlay share one positioned wrapper so the boxes line up over the img */
@@ -431,25 +463,28 @@
 .tn-il-empty { padding: 6px; font-size: 11px; }
 .tn-il-content { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; resize: none; overflow-y: hidden; min-height: calc(2lh + 8px); }
 .gnode .tn-il-content { border-color: var(--line) !important; padding: 1px 4px !important; color: var(--nt); }
-/* icon row: the show-icon toggle sits left of the icon path input */
+/* icon row: the show-icon toggle sits left of the icon's (read-only) name + browse button */
 .tn-icon-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.tn-icon-row .tn-icon { flex: 1; min-width: 0; }
-/* token picker in a toast node: one button opens a rich popover (rich_picker.js) of every wired
-   source's {{token}} with a live value preview; picking one copies {{token}} to the clipboard. A
-   small syntax legend (slice/aggregate/decimals) sits beneath the button. Both live inside a
-   bordered box (.tn-tokbox) below the images. */
-.tn-tokbox { margin-top: 4px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tn-icon-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tn-icon-browse { flex: none; min-height: unset; padding: 0; background: unset !important; }
+/* token picker in a toast node: rides the "blocks" subhead's .frule-btns row (icon-only add-text/
+   add-image buttons live there too) and opens a rich popover (rich_picker.js) of every wired
+   source's {{token}} with a live value preview; picking one copies {{token}} to the clipboard. The
+   syntax legend (slice/aggregate/decimals) lives inside that popover (.sv-combo-hint,
+   overlays.css), pinned below its scrollable list. */
 /* the label span stays laid out (visibility:hidden, not removed) while loading, so the spinner
    overlay never changes the button's width — reuses the shared `spin` keyframe (gn-hspin). */
-.tn-tokbtn { align-self: flex-start; cursor: pointer; position: relative; }
+/* pin to the exact same 12px box as its .frule-btns siblings (.tn-bk-add/.tn-img-add) — the
+   label span wraps an icon here (not bare, so the spinner can hide it in place), which without
+   this centred fixed-size box measures a hair wider than a bare svg child. */
+.tn-tokbtn { cursor: pointer; position: relative; width: 12px; display: inline-flex; align-items: center; justify-content: center; }
+.tn-tokbtn-lbl { display: inline-flex; align-items: center; justify-content: center; width: 100%; }
 .tn-tokbtn-spin { display: none; position: absolute; left: 50%; top: 50%; width: 11px; height: 11px;
     margin: -6px 0 0 -6px; border-radius: 50%; border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
     border-top-color: currentColor; pointer-events: none; }
 .tn-tokbtn.tn-loading { cursor: default; }
 .tn-tokbtn.tn-loading .tn-tokbtn-lbl { visibility: hidden; }
 .tn-tokbtn.tn-loading .tn-tokbtn-spin { display: block; animation: spin 0.7s linear infinite; }
-.tn-tokhint { font-size: 10px; line-height: 1.4; }
-.tn-tokhint code { font-size: 10px; padding: 0 2px; border-radius: 3px; background: color-mix(in srgb, currentColor 12%, transparent); }
 /* Nothing in the node canvas is text-selectable — kills the stray highlight that
    appears while dragging nodes around (user-select:none set on .graphcanvas above).
    Exceptions: form fields (so you can edit) and table cells (so you can copy rows). */
@@ -462,7 +497,7 @@
        card reads its type from the frame + header disc/tag, not from a bespoke per-type fill. A real
        border (not a box-shadow ring) so the header islands can sit INSIDE the card and still cover /
        interrupt the top border. box-sizing:border-box keeps the border inside the node's width. */
-    background: color-mix(in lab, var(--nt) 5%, var(--panel));
+    background: color-mix(in lab, var(--nt) var(--nd-mix-bg), var(--panel));
     border-radius: 6px; padding: 6px 8px; font-size: var(--fs-base);
     cursor: grab;                 /* whole card drags; the exceptions below override */
     user-select: none;            /* don't select text while dragging */
@@ -505,7 +540,12 @@
 .gnode .gn-body, .gnode .gn-foot { cursor: default; }
 .gnode input:not([type="checkbox"], [type="color"]), .gnode textarea, .gnode [contenteditable="true"] { cursor: text; }
 .gnode button, .gnode select, .gnode a, .gnode .collapse, .gnode .port, .gnode .gn-enable, input[type="checkbox"] { cursor: pointer; }
-.gnode button { color: var(--nt); background: color-mix(in srgb, var(--nt) 12%, transparent); }
+.gnode button { 
+   color: var(--nt); 
+   background: color-mix(in srgb, var(--nt) var(--nd-mix-btn), transparent);
+   border-color: color-mix(in srgb, var(--nt) var(--nd-mix-btn-brd), transparent);
+   outline-color: color-mix(in srgb, var(--nt) var(--nd-mix-btn-brd), transparent);
+}
 .gnode .scrollhost, .gnode .nodehost, .gnode .canvas-wrap, .gnode table { cursor: auto; }
 .glab { display: block; margin-top: 4px; font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; overflow: hidden; }
 .glab input { margin-top: 2px; }
@@ -518,7 +558,7 @@
 .gnode .gn-h { font-weight: 600; cursor: grab; flex: 0 0 auto;
     position: relative; z-index: 3; margin: -6px -8px 6px -8px; padding: 6px 8px 6px 8px;
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    overflow: visible; background: color-mix(in lab, var(--nt) 15%, var(--panel)); border: none; border-top-left-radius: 5px; border-top-right-radius: 5px; }
+    overflow: visible; background: color-mix(in lab, var(--nt) var(--nd-mix-h), var(--panel)); border: none; border-top-left-radius: 5px; border-top-right-radius: 5px; }
 .gn-hl, .gn-hr { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
 .gn-hl { flex: 0 1 auto; overflow: hidden; cursor: grab; }
 .gn-hr { flex: 0 0 auto; }
@@ -567,7 +607,7 @@
 .gnode .gn-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: nowrap; }
 .gnode input.gi { width: 100%; }
 .gnode input.gi-id { width: auto; flex: 0 1 auto; min-width: 0; max-width: 100%; field-sizing: content;
-    font-weight: 600; border: unset; background: transparent; padding: 0;
+    font-weight: normal; border: unset; background: transparent; padding: 0;
     cursor: inherit; color: var(--nt); }   /* field-sizing:content -> the input (and its island) shrink-wraps the id text; click-to-arm drag handle until the 2nd click focuses it */
 .gnode input.gi-id:focus { cursor: text; }
 input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
@@ -605,7 +645,17 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .gn-grid > input[type="checkbox"], .gn-grid > .gn-slide { justify-self: start; align-self: center; margin: 1px 0 0 4px; }
 /* any full-width child (block, subheading, multi-control row, pill list) spans both cols */
 .gn-grid > .gspan, .gspan { grid-column: 1 / -1; }
-.gn-grid > .sv-inputs { margin: 0; min-width: 0; }
+.gn-grid > :is(.sv-inputs, .sv-slotrow) { margin: 0px 0px 0px 4px; min-width: 0; }
+/* a pill-list row (sources): the label pins to the FIRST pill line — not the top of the wrapped
+   block (lab-top's job) nor the centre of all rows. `.sv-lab` is set by the srcRow primitive
+   (dom.js) on every label that precedes a .sv-inputs list — no :has() needed. */
+.gn-grid > .lab.sv-lab { align-self: start; padding-top: 0; display: inline-flex; align-items: center; }
+/* a subset source's heading = shared node subheading look (dashed top rule from the .sv-src-h
+   rule below); just add the section's top gap here */
+.gn-grid > .sv-src-h { margin-top: 8px; }
+/* closes the per-source section: a rule below the last source block so view-level rows (limit,
+   latest batch) read as separate, not part of that source */
+.gn-grid > .sv-sec-end { border-top: 1px dashed var(--line); margin-top: 8px; margin-bottom: 8px; }
 /* fill-host nodes (body is ONE scroll/table/textarea host, not k/v rows): a grid sits at
    content height, collapsing the host. Make the grid a flex-column that fills the flex body so
    the inner .nodehost (flex:1) grows to the node's size again. */
@@ -656,9 +706,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     .glyph-pending, .glyph-atlas, .detect-status, .ds-tabs, .dict-feeds, .dsconcat,
     .sb-cuts, .sb-cut-acts, .sb-calib, .sb-lock, .game-priority, .game-gate, .mp-canvas,
     .wd-verdict, .wd-collide, .prev-host, .pp-cols, .pp-result,
-    .frule, .frule-list, .frule-empty, .tn-blocks, .tn-imgs, .tn-tokbox, .il-tools,
+    .frule, .frule-list, .frule-empty, .tn-blocks, .tn-imgs, .il-tools,
     .wi-row, .wp-row, .wd-row, .ti-sum, .ti-row, .if-sum, .key-row, .pr-fields,
-    .enr-sum, .enr-meter, .src-matches, .src-fields, .sv-inputs, .pr-srcs, .frule-btns
+    .enr-sum, .enr-meter, .src-matches, .src-fields, .pr-srcs, .frule-btns
   ) { grid-column: 1 / -1; }
 /* Every trash button (trashBtn -> .btn-trash) arms via armConfirm: the first click sets
    [data-armed="1"] and turns it yellow, a second click fires (rule 2 — no confirm()). ONE rule
@@ -688,11 +738,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    Selector must out-specify the .gnode de-input rule (line ~178, 0,2,1) or the fill stays transparent. */
 .gnode .color-row input.color-collide { background: var(--danger); color: var(--on-danger); }
 
-/* TRANSITIONAL SCAFFOLD: legacy .flab / .lab-grid rows not yet decomposed span the whole
-   grid so an un-migrated builder still reads correctly. Deleted once every builder emits
-   flat kv() children. (Not the end state — see the no-shortcut rule in the plan.) */
-.gn-grid > .flab, .gn-grid > .lab-grid { grid-column: 1 / -1; }
-.flab { display: grid; grid-template-columns: 80px 1fr; align-items: start; gap: 3px 8px;   /* coherent row rhythm — same gap as .gn-grid / .lab-grid */
+/* TRANSITIONAL SCAFFOLD: legacy .flab rows not yet decomposed, and a nested .gn-grid (a real
+   grid embedded as one block among others — dict-feeds, toast's app-settings group, a repeated
+   per-item sub-grid), span the whole outer grid. */
+.gn-grid > .flab, .gn-grid > .gn-grid { grid-column: 1 / -1; }
+.flab { display: grid; grid-template-columns: 80px 1fr; align-items: start; gap: 3px 8px;   /* coherent row rhythm — same gap as .gn-grid */
     margin: 1px 0 0; font-size: var(--fs-sm); color: var(--muted);   /* kill the global label{margin-bottom:6px} — that was the loose row gap */
     /* hold every row to the de-chromed control height so slide-toggle rows line up with text/select
        rows (the toggle is shorter) — kept just above the input's own box so rows sit tight like the
@@ -714,7 +764,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .fgrp { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; }
 .fgrp:first-child { margin-top: 0; }
 .frule-btns { display: flex; gap: 4px; align-items: center; place-self: flex-end; }
-.frule-btns > button { min-height: unset; padding: 0px; background: unset; color: var(--nt, var(--accent)); }
+.frule-btns > button { min-height: unset; padding: 0px; background: unset; color: var(--nt, var(--accent)); width: 12px; }
+.frule-btns > button.btn-trash { padding: 0; }
 /* Keyed off the CONTAINER, not each button class: every sub-heading button pair (rules copy/paste/
    add, the sound forge's pitch/shape copy/paste) is a `.frule-btns > button`, so a new section's
    buttons inherit the look with no new selector (rule 7). */
@@ -743,11 +794,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .frule-head .rule-arrow { flex: 0 0 auto; }
 .frule-head .rule-fuzzy { flex: 0 0 6ch; }
 .frule-head .rule-del { flex: 0 0 auto; padding: 0; margin-left: auto; }
-/* always occupies one line so a row's height never changes as the trace fills in */
-.frule-trace { font-size: var(--fs-xs); font-family: var(--mono, monospace); padding-left: 2px;
-    min-height: 1.25em; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.frule-trace.frule-drop { color: var(--danger, #e06c6c); }
-.frule-trace:empty:after { content: "-"; }
 /* a rule that doesn't fit the field's type: greyed and ignored by the executor */
 .frule-invalid { opacity: .45; }
 .frule-empty { margin-top: 6px; font-size: var(--fs-sm); }
@@ -772,37 +818,6 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    select overlaid on the PLUS glyph (the mb-add overlay technique) so it opens the candidate list. */
 .frule-btns .pr-inadd { position: relative; display: inline-flex; align-items: center; line-height: 1; font-size: var(--fs-xs); color: var(--nt, var(--accent)); cursor: pointer; }
 .frule-btns .pr-inadd .pr-addin { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-/* shared labelled grid (triggers, price node, view config): every label cell sizes to its own
-   text in col 1 and the control fills col 2 — short labels (kind/source/join on/limit) no longer
-   eat half the row like a 1fr/1fr .flab does. Built from dom.js `labCell`; the cell AFTER each
-   .lab is its control. .lab-top pins a label to the top of a control that wraps to many lines. */
-.lab-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 3px 8px;
-   font-size: var(--fs-sm); color: var(--muted); }
-/* toast: app label + input row sits well clear of the images list above it */
-.tn-app-grid { margin-top: 16px; }
-.lab-grid > .lab { white-space: nowrap; }
-/* full-width controls EXCEPT checkboxes — a checkbox keeps its base 28px toggle-switch size
-   (base.css) and sits at the start of the control column instead of stretching. */
-.lab-grid > select, .lab-grid > input:not([type="checkbox"]), .lab-grid > textarea, .lab-grid > .tg-secs { width: 100%; min-width: 0; }
-/* the toast's message is a textarea (multi-line body text) — resize vertically only, sane min height */
-.lab-grid > textarea { box-sizing: border-box; resize: vertical; min-height: calc(2lh + 8px); font: inherit; }
-.lab-grid > input[type="checkbox"], .lab-grid > .gn-slide { justify-self: start; }
-.lab-grid > .tg-secs input { width: 100%; }
-.lab-grid > :is(.sv-inputs, .sv-slotrow) { margin: 0px 0px 0px 4px; min-width: 0; }
-/* a pill-list row (sources): the label pins to the FIRST pill line — not the top of the wrapped
-   block (lab-top's job, which sits a hair high) nor the centre of all rows. A 22px inline-flex box
-   (the pill's min-height) centres the label text on the pill text. `.sv-lab` is set by the srcRow
-   primitive (dom.js) on every label that precedes a .sv-inputs list — no :has() needed. */
-.lab-grid > .lab.sv-lab { align-self: start; padding-top: 0;
-    display: inline-flex; align-items: center; }
-/* full-width cells inside the grid (e.g. the price node's source-pill list) span both columns */
-.lab-grid > .gspan { grid-column: 1 / -1; }
-/* a subset source's heading = shared node subheading look (dashed top rule from the .sv-src-h rule
-   above); just add the section's top gap here */
-.lab-grid > .sv-src-h { margin-top: 8px; }
-/* closes the per-source section: a rule below the last source block so view-level rows (limit,
-   latest batch) read as separate, not part of that source */
-.lab-grid > .sv-sec-end { border-top: 1px dashed var(--line); margin-top: 8px; margin-bottom: 8px; }
 /* input + its unit suffix share ONE grid cell (else the "s" wraps to the next grid row) */
 .tg-secs { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .tg-secs input { width: 100%; }
@@ -859,7 +874,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    sv-add glyph, which only styles right inside a pill list) — full width, never overflowing. */
 .tg-addcond { width: 100%; min-width: 0; box-sizing: border-box; }
 
-/* status / readout TEXT cells (progress, last-fired, sweep stats) share a lab-grid control
+/* status / readout TEXT cells (progress, last-fired, sweep stats) share a body-grid control
    column with real inputs but aren't inputs, so they miss the input's horizontal padding and
    their text sits 4px left of the values above/below. Match it so the column lines up. */
 .gnode :is(.tg-prog, .tg-last, .enr-prog, .ro-live) { padding-inline: 4px; }
@@ -874,7 +889,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .hist-host .vt-row.hist-throttled { color: var(--muted); }
 .hist-host .vt-row.hist-throttled .vt-cell { color: var(--warn); }
 
-/* trigger node uses the same natural row sizing as every other lab-grid node — the specific
+/* trigger node uses the same natural row sizing as every other body-grid node — the specific
    .tg-secs / .tg-prog / .tg-last cells (above) are the only ones pinned to a control-row box. */
 /* checkboxes are slide-toggles now (base.css). Keep them at the start of their grid cell
    and never let a flex row stretch them — their size is fixed by the toggle. */
@@ -962,7 +977,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* concat-key editor (dataset) + dictionary feed pickers — compact checkbox groups */
 .mini { font-size: 11px; }
 .dsconcat { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
-.dict-feeds { margin-top: 8px; }   /* a lab-grid — sources row laid out like subset/producer */
+.dict-feeds { margin-top: 8px; }   /* a nested body grid — sources row laid out like subset/producer */
 .dsk-fields, .dsk-norm { display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .dsk-norm { border-top: 1px solid var(--muted); padding-top: 6px; }
 .chk { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; margin: 0; }
@@ -1020,11 +1035,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    left (13px + gap) the instant the spinner appears and snap back when it clears. */
 .gnode.busy .gn-h .gn-type { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
-/* lock while busy: block + subtly dim the BODY only. Grips/reset-dots/header-drag live on the
-   node FRAME (not .gn-body) and WASD move/resize is a document-level keydown on pos/nodeSizes
+/* lock while busy: block the BODY only, glow the whole card. Grips/reset-dots/header-drag live on
+   the node FRAME (not .gn-body) and WASD move/resize is a document-level keydown on pos/nodeSizes
    (main.js) — none of that touches .gn-body, so moving/resizing a busy node (or a busy node's
    in-image rect) still works; only its editable content locks. */
-.gnode.busy > .gn-body { pointer-events: none; opacity: .55; transition: opacity .15s ease; }
+.gnode.busy > .gn-body { pointer-events: none; }
+.gnode.busy { box-shadow: 0 0 0 2px var(--accent), 0 0 14px 2px var(--accent); transition: box-shadow .15s ease; }
 
 /* the image drawing surface lives INSIDE the window node (one DOM element) */
 .win-img, .glyph-img { width: auto; margin-top: 8px; }
@@ -1124,9 +1140,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* draw-mode buttons (the ones that paint a box onto a canvas): a dashed accent outline marks
    them as "draw a box" tools, distinct from the solid action buttons. The picked tool (.active)
    fills solid accent. Shared by the window image tools AND the item cutout tools. */
-.tool { background: transparent; color: var(--nt); border: 1px dashed var(--nt); padding: 3px 9px; }
-.tool:hover:not(:disabled) { background: var(--accent-bg); filter: none; color: var(--muted); }
-.tool.active { background: var(--accent); color: var(--on-accent); border-style: solid; }
+.tool {  color: var(--nt); border-width: 1px; border-style: dashed; padding: 3px 9px; }
+/* .tool:hover:not(:disabled) { background: var(--accent-bg); filter: none; color: var(--muted); } */
+.tool.active { background: color-mix(in srgb, var(--nt) var(--nd-mix-btn-act), transparent); color: white; border-style: solid; border-color: color-mix(in srgb, var(--nt) var(--nd-mix-btn-act), transparent); }
 /* item node: draw-mode button rows under the tells / cell-and-fields headers */
 .il-tools { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0px -4px 0px; }
 .il-tools .tool { font-size: var(--fs-xs); padding: 1px 7px; }
@@ -1526,7 +1542,7 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
 .subgroup-cog svg { display: block; vertical-align: middle; }
 
 /* ---- file-source node: rule builder + live preview ---- */
-.gnode.filesource .lab-grid > .src-matches { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
+.gnode.filesource .gn-grid > .src-matches { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; }
 .src-m { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; min-width: 0; }
 /* the op select sizes to its own short label ("contains" / "starts with"…). Without an explicit
    width it inherits the global `select { width: 100% }` (controls.css) as its flex-basis and eats
@@ -1536,7 +1552,7 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
 /* Each field row stacks two lines: `.src-frow` (id + method + type + remove, nowrap so they always
    share one row) and the method inputs below (`.src-finputs`, half-width each). Splitting the inputs
    onto their own line is what stopped the crush/clip — line 1 fits at any node width. */
-.gnode.filesource .lab-grid > .src-fields { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.gnode.filesource .gn-grid > .src-fields { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .src-f { display: flex; flex-direction: column; gap: 6px; }
 .src-frow { display: flex; align-items: center; gap: 6px; }    /* nowrap: id + method + type + remove on ONE row */
 .src-frow .src-fid { flex: 1 1 auto; min-width: 0; }           /* id takes the slack, shrinks (never clips a select) */
@@ -1573,8 +1589,8 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
 .find-modal { display: grid; grid-template-columns: minmax(280px, 38%) 1fr; gap: 10px; height: 100%; min-height: 0; padding: 12px; }
 .find-list { display: flex; flex-direction: column; gap: 2px; overflow: auto; min-height: 0; }
 .find-status { padding: 8px; }
-.find-item { display: flex; flex-direction: column; gap: 1px; text-align: left; background: var(--node-head);
-    border: 1px solid var(--border); border-radius: 5px; padding: 4px 8px; color: var(--text); cursor: pointer; }
+.find-item { display: flex; flex-direction: column; gap: 1px; text-align: left; background: unset; align-items: flex-start;
+    border: 1px solid var(--border); border-radius: 0px; padding: 4px 8px; color: var(--text); cursor: pointer; white-space: normal; min-height: unset; }
 .find-item:hover { border-color: var(--accent); }
 .find-item.sel { border-color: var(--accent); background: var(--node-head-sel, var(--node-head)); }
 .find-path { font-size: 11px; word-break: break-all; }
@@ -1584,6 +1600,23 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
 .find-vpath { flex: 1; font-size: 11px; word-break: break-all; color: var(--muted); }
 .find-use { white-space: nowrap; background: var(--accent); color: var(--bg); border: none; border-radius: 5px; padding: 3px 10px; cursor: pointer; }
 .find-pre { flex: 1; margin: 0; overflow: auto; padding: 8px; font-size: 11px; white-space: pre; }
+/* icon picker: a gallery of already-imported icons (not a filesystem search) + an upload row.
+   Each tile's backdrop is a neutral checker so a transparent-background icon stays legible either
+   theme. */
+.icon-picker { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; padding: 12px; }
+.icon-gallery { flex: 1; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 8px; align-content: start; }
+.icon-tile { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px;
+    background: var(--node-head); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.icon-tile:hover { border-color: var(--accent); }
+.icon-tile img { width: 48px; height: 48px; object-fit: contain;
+    background: repeating-conic-gradient(#8884 0% 25%, transparent 0% 50%) 0 0 / 12px 12px; }
+.icon-tile-name { font-size: 10px; word-break: break-all; text-align: center; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.icon-upload-row { border-top: 1px solid var(--border); padding-top: 10px; }
+.icon-upload-btn { display: inline-block; background: var(--accent); color: var(--bg); border-radius: 5px;
+    padding: 5px 12px; cursor: pointer; font-size: 12px; }
+.icon-upload-in { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
 /* parse-preview now lives in the source's data-table satellite (vt:src:<id>): count line + table */
 .src-prev-info { margin: 6px 8px 2px; font-size: 11px; }
 .src-ptab { border-collapse: collapse; font-size: 11px; width: 100%; }

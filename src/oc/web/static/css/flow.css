@@ -142,10 +142,10 @@ a.node.win:hover { border-color: var(--accent); }
 .gn-h:hover .ds-tabs { opacity: 1; }
 .gn-h:hover .ds-tabs { opacity: 1; }
 .lab-add { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--muted); justify-content: space-between; }
-/* filters/columns/sort/visible ride the node's ONE lab-grid: the label (with its + button) is a
+/* filters/columns/sort/visible ride the node's ONE body grid: the label (with its + button) is a
    col-1 cell, its rows/toggles fill col 2 — aligned with sources/limit/latest above them. */
-.lab-grid > .lab-add { margin-bottom: 0; align-self: start; }
-.lab-grid > .sub-rows, .lab-grid > .sv-hides, .lab-grid > .sv-distincts { min-width: 0; align-self: start; }
+.gn-grid > .lab-add { margin-bottom: 0; align-self: start; }
+.gn-grid > .sub-rows, .gn-grid > .sv-hides, .gn-grid > .sv-distincts { min-width: 0; align-self: start; }
 .sub-rows > .sub-row:first-child { margin-top: 0; }
 .sub-empty { font-size: var(--fs-sm); padding: 1px 2px; }
 /* + buttons sit inline after the section label — bare "+" glyph tinted the node colour (--nt),
@@ -160,9 +160,9 @@ a.node.win:hover { border-color: var(--accent); }
 .sv-norm-eg .eg-arrow { color: var(--nt, var(--accent)); }
 .sv-norm-eg.clickable { cursor: pointer; }
 /* "example" label centres on the worked-example's first line: match the control's 4px top offset */
-.lab-grid > .lab.eg-lab { align-self: start; }
+.gn-grid > .lab.eg-lab { align-self: start; }
 /* "visible" label centres on the FIRST toggle row (buttons are taller than the label's text line) */
-.lab-grid > .lab.vis-lab { align-self: start; }
+.gn-grid > .lab.vis-lab { align-self: start; }
 .sv-hides { display: flex; flex-wrap: wrap; gap: 4px; margin-left: 4px; }
 /* a joining subset groups its visible-toggles per source: the source's name breaks the flex row
    (full-basis) and captions the toggles under it. No dashed rule — the margin does the separating. */
@@ -189,7 +189,7 @@ a.node.win:hover { border-color: var(--accent); }
 /* sort row has no free-text input to grow, so the column select fills instead — the row
    spans the full node width (asc/desc + trash stay fixed at the right). */
 .sub-row .ss-field { flex: 1 1 0; max-width: none; }
-/* the view's sources/join-on/limit/many-> rows now build on the shared `.lab-grid` primitive
+/* the view's sources/join-on/limit/many-> rows now build on the shared `.gn-grid` primitive
    (graph.css) instead of a per-row `.sub-row .flab` — labels line up in col 1, inputs fill col 2. */
 .sub-row button.danger, .sub-row .btn-trash { flex: 0 0 auto; padding: 0; }
 .sub-row > span.muted { align-self: center; }
@@ -300,9 +300,10 @@ a.node.win:hover { border-color: var(--accent); }
 .gnode.node-disabled { filter: grayscale(1); }
 /* 'gated off' — a trigger currently BLOCKED by its gates while live is running (see activity.js).
    Deliberately NOT grayscale (that is reserved for node-disabled): the node keeps its colour, dims
-   a little, and gains a dashed warn ring so it reads as "temporarily silenced", not "turned off".
+   a little, and gains a dashed ring so it reads as "temporarily silenced", not "turned off". Uses
+   --danger to match the gate -> trigger line tint's blocked colour (routing.js gateStateColor).
    Uses outline (selection uses border-color + box-shadow, so the two never clash). */
-.gnode.node-gated { opacity: .55; outline: 2px dashed color-mix(in oklab, var(--warn) 70%, transparent); outline-offset: 2px; }
+.gnode.node-gated { opacity: .55; outline: 2px dashed color-mix(in oklab, var(--danger) 70%, transparent); outline-offset: 2px; }
 
 /* item-template preview diagnostics */
 .tc-ok { color: var(--ok); }
@@ -376,7 +377,7 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 /* one-line, ellipsised — a long line must never wrap */
 .enr-sum { font-size: var(--fs-sm); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
 .enr-sum strong { color: var(--text); font-variant-numeric: tabular-nums; }
-/* the producer node's backend/source/price-by rows now build on `.lab-grid` (graph.css). */
+/* the producer node's backend/source/price-by rows build on the node's `.gn-grid` (graph.css). */
 .gnode.producer .gn-foot { flex-wrap: nowrap; align-items: center; flex: none; }
 /* stretch the button to the node's full width; lay out its label span + in-button meter as one
    centered row (the meter is hidden until a sweep is fetching, so idle shows just the label). */
@@ -385,7 +386,7 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 .gnode.producer .enr-refresh .enr-meter { flex: 0 0 auto; }
 /* the cancel button's busy spinner is the canonical `button.reading::after` (controls.css). */
 .enr-prog { font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    min-width: 0; }   /* a labelled 'status' row in the lab-grid, ABOVE the button */
+    min-width: 0; }   /* a labelled 'status' row in the body grid, ABOVE the button */
 .enr-of { margin-bottom: 6px; }
 
 /* generic http producer editor: plain stacked rows (NOT the accent `.sv-input` chip pill).
