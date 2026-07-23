@@ -430,15 +430,27 @@ def locate_item_cells(frame: Frame, window: WindowDef, lines_frac, templates=Non
             if _cell_in_bounds(it, cx, cy, da, giw, gih, clip_x=True):
                 out.append(_emit(it, ri, ci, cx, cy, giw, gih))
 
-    # Visual locators carry no text to cluster: tile the data area geometrically and let the
-    # reader's pip/diamond validation keep the real cells (the old static-grid behaviour).
+    # Visual locators carry no text to cluster, so they can't derive their OWN grid. Place them on
+    # the lattice the TEXT items already established (col_line/row_line) whenever one exists: on a
+    # SCROLLING window the geometric tiling below is anchored at the data-area corner and is blind
+    # to the scroll phase, so a visual guard's tell box (e.g. the unowned-relic "eye" corner) lands
+    # ~a fraction of a cell off the real tile and its template never matches. The text lattice DOES
+    # track the scroll (it's clustered from the on-screen names), and the guard tiles sit at the
+    # same slots as the named tiles (an unowned relic still has a name), so borrowing it lands the
+    # tell box dead on. Emit at every (row, col) of that lattice and let valid_cell's template tell
+    # keep only the real ones. Fall back to the geometric tiling only when there's NO text lattice
+    # (a pure static_grid pip/diamond window with nothing to cluster) — that path is unchanged.
     visual_items = [it for it in items if it.id in info and info[it.id][1]]
     if visual_items:
-        xs = static_grid_origins(da.x, giw, da.x, da.x + da.w)
-        ys = static_grid_origins(da.y, gih, da.y, da.y + da.h)
+        if col_line and row_line:
+            cols = [(ci, col_line[ci]) for ci in sorted(col_line)]
+            rows = [(ri, row_line[ri]) for ri in sorted(row_line)]
+        else:
+            cols = list(enumerate(static_grid_origins(da.x, giw, da.x, da.x + da.w)))
+            rows = list(enumerate(static_grid_origins(da.y, gih, da.y, da.y + da.h)))
         for it in visual_items:
-            for ri, cy in enumerate(ys):
-                for ci, cx in enumerate(xs):
+            for ri, cy in rows:
+                for ci, cx in cols:
                     if _cell_in_bounds(it, cx, cy, da, giw, gih, clip_x=True):
                         out.append(_emit(it, ri, ci, cx, cy, giw, gih))
     return out

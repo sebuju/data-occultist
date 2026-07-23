@@ -133,6 +133,35 @@ def test_grid_drift_zero_when_cells_land_on_content():
     assert d["x"]["max"] < 0.02 and d["y"]["max"] < 0.02   # cells land dead-on -> x & y drift ~0
 
 
+def test_visual_guard_lands_on_content_grid_not_geometric():
+    # A visual guard (a fieldless template/tell item, e.g. the unowned-relic terminator) has no text
+    # of its own to cluster, so it must borrow the lattice the TEXT item established from the on-screen
+    # names — which tracks the scroll. The OLD path tiled it geometrically from the data-area corner,
+    # so on a scrolled window its tell box landed off the real tile. Here the content columns (0.35,
+    # 0.60) do NOT coincide with the geometric tiling from da.x (0.2 + k*0.2 = 0.2, 0.4, 0.6): the
+    # guard must land on the content columns, proving it followed the text lattice.
+    relic = ItemDef(id="relic", box=Box(x=0.0, y=0.0, w=0.2, h=0.25), align="bottom", align_x="left",
+                    priority=0,
+                    fields=[RegionDef(id="name", box=Box(x=0.0, y=0.6, w=0.9, h=0.3), field="name", tell=True)])
+    guard = ItemDef(id="guard", box=Box(x=0.0, y=0.0, w=0.2, h=0.25), priority=1,
+                    tells=[Tell(id="mark", box=Box(x=0.1, y=0.05, w=0.5, h=0.4),
+                                kind=TellKind.filled, threshold=0.2, locate=True)])
+    win = WindowDef(id="w", fields=[FieldDef(id="name")], static_grid=False,
+                    data_area=Box(x=0.2, y=0.0, w=0.7, h=1.0), items=[relic, guard])
+    lines = []
+    for cy in (0.25, 0.55):
+        lines.append((0.40, cy, 0.05, "Alpha Relic", 0.95, 0.35, 0.10))
+        lines.append((0.65, cy, 0.05, "Bravo Relic", 0.95, 0.60, 0.10))
+    frame = Frame(image=np.zeros((1000, 1000, 3), dtype=np.uint8), client=PixelBox(0, 0, 1000, 1000))
+    cells = locate_item_cells(frame, win, lines)
+    guard_xs = sorted({round(ic.ox, 2) for ic in cells if ic.item.id == "guard"})
+    assert guard_xs == [0.35, 0.60]                     # on the text lattice, NOT [0.2, 0.4, 0.6]
+    # and the guard shares the text item's rows too (same oy set)
+    relic_ys = sorted({round(ic.oy, 3) for ic in cells if ic.item.id == "relic"})
+    guard_ys = sorted({round(ic.oy, 3) for ic in cells if ic.item.id == "guard"})
+    assert guard_ys == relic_ys
+
+
 def _ic(prio, ntells, ox=0.0):
     item = ItemDef(id=f"p{prio}", box=Box(x=0, y=0, w=0.2, h=0.2), priority=prio,
                    tells=[Tell(id=f"t{i}", box=Box(x=0, y=0, w=0.1, h=0.1)) for i in range(ntells)])
