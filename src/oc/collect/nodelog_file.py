@@ -16,60 +16,34 @@ means one file per real session. Keep-last-10, same as every other rotating stor
 from __future__ import annotations
 
 import os
-import threading
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter
 
-from .. import backup
+from ..logfile import LineLog
 
 router = APIRouter(prefix="/api/nodelog", tags=["nodelog"])
 
 _LOG_DIR = Path("logs")
-_EXT = "log"
 _PREFIX = "nodelog-"
-_KEEP = 10
 
-_lock = threading.Lock()
-_current: Path | None = None
-
-
-def _new_path(now: datetime) -> Path:
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = now.strftime("%Y%m%d-%H%M%S")
-    path = _LOG_DIR / f"{_PREFIX}{stamp}.{_EXT}"
-    n = 1
-    while path.exists():
-        path = _LOG_DIR / f"{_PREFIX}{stamp}-{n}.{_EXT}"
-        n += 1
-    return path
+# prefix-scoped: logs/ is SHARED with routes/logbar.py's logbar-*.log under the same
+# extension — an unscoped glob would sort/cap both kinds' stems together (a keep-last-10
+# across the mix, not per kind). See oc.logfile.LineLog for the background-writer rationale.
+_log = LineLog(_PREFIX, log_dir=_LOG_DIR)
 
 
 @router.post("/session")
 def start_session() -> dict:
-    """Fresh front-end boot: open a new file and prune to the last 10.
-
-    ``prefix=_PREFIX`` scopes the prune to this module's own ``nodelog-*.log`` files —
-    ``logs/`` is SHARED with ``routes/logbar.py``'s ``logbar-*.log`` under the same
-    extension, and an unscoped glob would sort/cap both kinds' stems together (a
-    keep-last-10 across the mix, not per kind).
+    """Fresh front-end boot: rotate to a new file and prune to the last 10.
 
     No-ops under pytest (``PYTEST_CURRENT_TEST``): a route test can hit this route or
     trigger a ``HistoryRing`` write, and without the guard that would rotate/populate a
     real file in the user's ``logs/`` with test-fixture noise."""
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return {"file": None}
-    global _current
-    try:
-        with _lock:
-            _current = _new_path(datetime.now())
-            _current.touch()
-            stamps = [p.stem for p in backup.list_snapshots(_LOG_DIR, _EXT, prefix=_PREFIX)]
-            backup.prune(_LOG_DIR, _EXT, backup.keep_last_n(stamps, _KEEP), prefix=_PREFIX)
-        return {"file": _current.name}
-    except OSError:
-        return {"file": None}
+    return {"file": _log.rotate()}
 
 
 def _fmt_entry(entry: dict) -> str:
@@ -77,20 +51,12 @@ def _fmt_entry(entry: dict) -> str:
 
 
 def write(kind: str, game: str, node_id: str, entry: dict) -> None:
-    """Append one history-ring record. Lazily opens a file if ``start_session`` was missed
-    (e.g. a ring recorded before app startup ran). Never raises. No-ops under pytest — see
-    ``start_session``."""
+    """Hand one history-ring record to the background writer. Lazily opens a file if
+    ``start_session`` was missed (e.g. a ring recorded before app startup ran). Never
+    blocks, never raises. No-ops under pytest — see ``start_session``."""
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return
-    global _current
-    try:
-        with _lock:
-            if _current is None:
-                _current = _new_path(datetime.now())
-            now = datetime.now()
-            line = (f"{now:%d/%m/%y %H:%M:%S}.{now.microsecond // 1000:03d} "
-                    f"[{kind}] {game}:{node_id} {_fmt_entry(entry)}\n")
-            with open(_current, "a", encoding="utf-8") as f:
-                f.write(line)
-    except OSError:
-        pass
+    now = datetime.now()
+    line = (f"{now:%d/%m/%y %H:%M:%S}.{now.microsecond // 1000:03d} "
+            f"[{kind}] {game}:{node_id} {_fmt_entry(entry)}\n")
+    _log.write(line)

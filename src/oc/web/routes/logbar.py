@@ -30,45 +30,25 @@ launch" from "the reload worker restarted again" and reuse the existing file for
 from __future__ import annotations
 
 import os
-import threading
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter
 
-from ... import backup, eventlog
+from ... import eventlog
+from ...logfile import LineLog
 
 router = APIRouter(prefix="/api/logbar", tags=["logbar"])
 
 _LOG_DIR = Path("logs")
-_EXT = "log"
 _PREFIX = "logbar-"
-_KEEP = 10
 _BOOT_MARKER = _LOG_DIR / ".logbar_boot"
 
-_lock = threading.Lock()
-_current: Path | None = None
-
-
-def _new_path(now: datetime) -> Path:
-    """A fresh ``logbar-<stamp>.log`` path, bumping a suffix on a same-second collision."""
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = now.strftime("%Y%m%d-%H%M%S")
-    path = _LOG_DIR / f"{_PREFIX}{stamp}.{_EXT}"
-    n = 1
-    while path.exists():
-        path = _LOG_DIR / f"{_PREFIX}{stamp}-{n}.{_EXT}"
-        n += 1
-    return path
-
-
-def _prune() -> None:
-    # prefix-scoped: logs/ is SHARED with nodelog_file.py's nodelog-*.log — an unscoped
-    # glob would sort/cap both kinds' stems together, and nodelog rotating far more often
-    # (still tied to a client boot ping, incl. every reload) would evict every logbar file.
-    stamps = [p.stem for p in backup.list_snapshots(_LOG_DIR, _EXT, prefix=_PREFIX)]
-    keep = backup.keep_last_n(stamps, _KEEP)
-    backup.prune(_LOG_DIR, _EXT, keep, prefix=_PREFIX)
+# prefix-scoped: logs/ is SHARED with nodelog_file.py's nodelog-*.log — an unscoped glob
+# would sort/cap both kinds' stems together, and nodelog rotating far more often (still tied
+# to a client boot ping, incl. every reload) would evict every logbar file. See LineLog for
+# why writes go through a background queue rather than an open/write/close per line.
+_log = LineLog(_PREFIX, log_dir=_LOG_DIR)
 
 
 def start_session() -> dict:
@@ -83,22 +63,17 @@ def start_session() -> dict:
     rotate a real file into the user's ``logs/`` and fill it with test-fixture noise."""
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return {"file": None}
-    global _current
     boot_id = os.environ.get("OCC_BOOT_ID")
     try:
-        with _lock:
-            if boot_id and _BOOT_MARKER.exists() and _BOOT_MARKER.read_text().strip() == boot_id:
-                existing = sorted(_LOG_DIR.glob(f"{_PREFIX}*.{_EXT}"))
-                if existing:
-                    _current = existing[-1]
-                    return {"file": _current.name}
-            _current = _new_path(datetime.now())
-            _current.touch()
-            _prune()
-            if boot_id:
-                _LOG_DIR.mkdir(parents=True, exist_ok=True)
-                _BOOT_MARKER.write_text(boot_id)
-        return {"file": _current.name}
+        if boot_id and _BOOT_MARKER.exists() and _BOOT_MARKER.read_text().strip() == boot_id:
+            existing = _log.existing_files()
+            if existing:
+                return {"file": _log.attach(existing[-1])}
+        name = _log.rotate()
+        if boot_id and name:
+            _LOG_DIR.mkdir(parents=True, exist_ok=True)
+            _BOOT_MARKER.write_text(boot_id)
+        return {"file": name}
     except OSError:
         return {"file": None}
 
@@ -118,26 +93,13 @@ def emit(body: dict) -> dict:
     return {"ok": True}
 
 
-def _write_line(level: str, msg: str) -> None:
-    """Append one server-stamped line to the current file, lazily opening one if
-    ``start_session`` hasn't run yet. Never lets a write throw — logging must not be able
-    to break whatever published the event. No-ops under pytest — see ``start_session``."""
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return
-    try:
-        with _lock:
-            global _current
-            if _current is None:
-                _current = _new_path(datetime.now())
-            with open(_current, "a", encoding="utf-8") as f:
-                now = datetime.now()
-                f.write(f"{now:%d/%m/%y %H:%M:%S}.{now.microsecond // 1000:03d} [{level}] {msg}\n")
-    except OSError:
-        pass
-
-
 def _on_event(ev: dict) -> None:
-    _write_line(str(ev.get("level", "info")), str(ev.get("msg", "")))
+    """Format one server-stamped line and hand it to the background writer — never lets a
+    write throw or block the publishing thread. See :class:`~oc.logfile.LineLog`."""
+    now = datetime.now()
+    level = str(ev.get("level", "info"))
+    msg = str(ev.get("msg", ""))
+    _log.write(f"{now:%d/%m/%y %H:%M:%S}.{now.microsecond // 1000:03d} [{level}] {msg}\n")
 
 
 # Subscribed once at import time (this module loads at app startup via app.py) so every
