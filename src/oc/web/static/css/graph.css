@@ -492,6 +492,7 @@
 .graphcanvas table, .graphcanvas table * { user-select: text; }
 
 .gnode {
+   transition: box-shadow 750ms;
     position: absolute; width: 220px; pointer-events: auto;   /* re-enable on the card (the #gnodes layer is none) */
     /* box-panel card: a FLAT surface with a crisp 1px frame TINTED by the type token (--nt) — every
        card reads its type from the frame + header disc/tag, not from a bespoke per-type fill. A real
