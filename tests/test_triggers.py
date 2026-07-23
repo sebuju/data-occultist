@@ -829,3 +829,58 @@ def test_on_item_ignores_empty_item_set(tmp_path):
     p = _window_profile(kind="on_item", window_watch=["equipment"], item_watch="*")
     tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
     assert tr.note_items("equipment", set()) == []
+
+
+# ---- window-scoped kinds: on_scroll_top / on_scroll_bottom ----------------------------------
+
+def test_on_scroll_top_fires_on_arrival_and_rearms_after_leaving(tmp_path):
+    p = _window_profile(kind="on_scroll_top", window_watch=["equipment"])
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.note_scroll("equipment", 0.5) == []          # mid-track -> no fire
+    assert tr.note_scroll("equipment", 0.0) == ["t"]       # arrives at top -> fires
+    assert tr.note_scroll("equipment", 0.01) == []          # still within the edge band -> no re-fire
+    assert tr.note_scroll("equipment", 0.5) == []           # leaves the edge -> no fire (that's the mirror kind)
+    assert tr.note_scroll("equipment", 0.0) == ["t"]       # back at top -> fires again
+    assert calls == ["sink", "sink"]
+
+
+def test_on_scroll_bottom_fires_on_arrival_and_rearms_after_leaving(tmp_path):
+    p = _window_profile(kind="on_scroll_bottom", window_watch=["equipment"])
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.note_scroll("equipment", 0.5) == []
+    assert tr.note_scroll("equipment", 1.0) == ["t"]
+    assert tr.note_scroll("equipment", 0.99) == []
+    assert tr.note_scroll("equipment", 0.5) == []
+    assert tr.note_scroll("equipment", 1.0) == ["t"]
+    assert calls == ["sink", "sink"]
+
+
+def test_on_scroll_top_ignores_an_unwatched_window(tmp_path):
+    p = _window_profile(kind="on_scroll_top", window_watch=["equipment"])
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.note_scroll("arsenal", 0.0) == []
+
+
+def test_on_scroll_top_and_bottom_are_independent_kinds(tmp_path):
+    # a bottom-arrival must not fire a top-watching trigger and vice versa.
+    p = GameProfile(
+        name="g",
+        producers=[ProducerDef(id="sink", dataset="out", mode="orders", sources=["inv"])],
+        triggers=[
+            TriggerDef(id="top", kind="on_scroll_top", window_watch=["equipment"], targets=["sink"]),
+            TriggerDef(id="bottom", kind="on_scroll_bottom", window_watch=["equipment"], targets=["sink"]),
+        ],
+    )
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.note_scroll("equipment", 0.0) == ["top"]
+    assert tr.note_scroll("equipment", 0.5) == []
+    assert tr.note_scroll("equipment", 1.0) == ["bottom"]
+
+
+def test_on_scroll_top_ignores_disabled(tmp_path):
+    p = _window_profile(kind="on_scroll_top", window_watch=["equipment"])
+    p.triggers[0].enabled = False
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.note_scroll("equipment", 0.0) == []

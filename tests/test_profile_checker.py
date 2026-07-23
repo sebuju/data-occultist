@@ -18,6 +18,7 @@ from oc.profile.models import (
     RegisterDef,
     RuleThen,
     RuleWhen,
+    ScrollDef,
     TriggerDef,
     WindowDef,
 )
@@ -171,3 +172,32 @@ def test_on_item_watch_any_item_wildcard_is_clean():
         triggers=[TriggerDef(id="t1", kind="on_item", window_watch=["equip"], item_watch="*")],
     )
     assert check_profile(p) == []
+
+
+# ---- on_scroll_top/on_scroll_bottom: watched window must have a scrollbar configured --------
+
+def test_on_scroll_top_watching_a_scrollbarless_window_is_flagged():
+    p = _prof(
+        windows=[WindowDef(id="equip")],
+        triggers=[TriggerDef(id="t1", kind="on_scroll_top", window_watch=["equip"])],
+    )
+    issues = check_profile(p)
+    assert any("no scrollbar configured" in i.msg for i in issues)
+
+
+def test_on_scroll_bottom_watching_a_scrollbar_window_is_clean():
+    p = _prof(
+        windows=[WindowDef(
+            id="equip", scroll=ScrollDef(scrollbar=Box(x=0.95, y=0.1, w=0.02, h=0.8)))],
+        triggers=[TriggerDef(id="t1", kind="on_scroll_bottom", window_watch=["equip"])],
+    )
+    assert check_profile(p) == []
+
+
+def test_on_scroll_top_dangling_window_reports_missing_window_not_scrollbar():
+    # a nonexistent window is caught by the generic window_watch check (checker.py:270), not the
+    # scrollbar-specific one -- don't double-report or crash on a window that isn't in window_ids.
+    p = _prof(triggers=[TriggerDef(id="t1", kind="on_scroll_top", window_watch=["ghost_win"])])
+    issues = check_profile(p)
+    assert any("ghost_win" in i.msg for i in issues)
+    assert not any("no scrollbar configured" in i.msg for i in issues)
