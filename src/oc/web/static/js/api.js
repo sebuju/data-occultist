@@ -246,22 +246,6 @@ export async function preview(profile, game, capture, preferCache = false, feed 
     return r.json();
 }
 
-// Debug the window's rule pipelines: read every field off the current canvas and trace each
-// value through its rules in ONE OCR pass. Field nodes coalesce into this single batch so the
-// whole trace fleet costs one window read. Returns
-// { fields: { [fieldId]: { trace:[{i,when,then,in,out,fired}], value, dropped, raw } } }.
-export async function ruleTrace(profile, game, capture) {
-    let url = "/api/rule_trace";
-    if (game && capture) url += `?game=${encodeURIComponent(game)}&capture=${encodeURIComponent(capture)}`;
-    const r = await tfetchOcr(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(profile),
-    }, OCR_MS);
-    if (!r.ok) throw new Error(`rule_trace: ${r.status} ${await r.text()}`);
-    return r.json();
-}
-
 // Re-read the current layout and COMMIT the keyable cells into the window's dataset
 // store (one revertable batch). Returns { dataset, written, skipped, cells }.
 export async function previewCommit(profile, game, capture) {
