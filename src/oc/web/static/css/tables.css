@@ -118,6 +118,10 @@
 .vt-th.vt-num { text-align: right; }
 .vt-cell.vt-num { text-align: right; color: var(--muted); }
 .vt-sort { position: absolute; top: -2px; right: 2px; color: var(--accent); font-size: 8px; line-height: 1; pointer-events: none; }
+/* fixed-order satellite tables (e.g. history "when"): caret always shown, dimmed, non-clickable */
+.vt-sort-fixed { opacity: .5; }
+.vt-th-fixed { cursor: default; }
+.vt-th-fixed:hover { color: var(--dim); }
 .vt-grip { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 1; }
 .vt-grip::after { content: ""; position: absolute; top: 0; right: 3px; width: 1px; height: 100%; background: var(--line); }
 .vt-grip:hover::after { width: 2px; background: var(--accent); }

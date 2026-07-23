@@ -11,7 +11,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 
 const COLS = ["when", "key", "value", "ring", "overwritten"];
 const VOID = "∅";   // ∅ — a null/empty value or nothing overwritten
@@ -31,5 +31,5 @@ export function renderRegisterHistory(registerId, history) {
         ring: e.ring_index == null ? "" : String(e.ring_index),
         overwritten: e.overwritten == null || e.overwritten === "" ? VOID : String(e.overwritten),
     }));
-    satVT(`reghist:${registerId}`, host).setData(COLS, rows);
+    satVTData(`reghist:${registerId}`, host, COLS, rows);
 }

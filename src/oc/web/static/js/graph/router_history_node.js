@@ -12,7 +12,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 import { unionIndexColumns } from "./readout_history_node.js";
 
 const branchLabel = (b) => `branch ${b.i}`;
@@ -43,7 +43,7 @@ export function renderRouterHistory(id, history) {
         }
         return row;
     });
-    satVT(`routhist:${id}`, host).setData(COLS, rows, {
+    satVTData(`routhist:${id}`, host, COLS, rows, {
         rowClass: (row) => (row._unmatched ? "hist-throttled" : ""),
     });
 }

@@ -13,7 +13,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 
 const COLS = ["when", "event", "button", "mods", "pos", "result"];
 // dispositions that mean "this event did NOT fire" — tinted like a throttled fire-history row.
@@ -43,7 +43,7 @@ export function renderInputLog(triggerId, log, _retried = false) {
         pos: `${e.x ?? ""},${e.y ?? ""}`,
         result: e.result || "",
     }));
-    satVT(`inlog:${triggerId}`, host).setData(COLS, rows, {
+    satVTData(`inlog:${triggerId}`, host, COLS, rows, {
         rowClass: (row) => (_MISS.has(row.result) ? "hist-throttled" : ""),
     });
 }

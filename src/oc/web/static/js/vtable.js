@@ -92,6 +92,7 @@ export class VTable {
         this.rowClass = null;
         this.sortCol = null;     // sorted column index, or null
         this.sortDir = 1;        // 1 asc, -1 desc
+        this.fixedSort = null;   // {col, dir} when the row order is fixed by the caller — disables click-to-sort
         this._numCols = new Set();// column names whose every non-empty cell is numeric -> right-aligned
         this.expander = null;    // async fn(values) -> detail node; when set, a row click expands inline
         this.expandedRow = null; // the row record (in this.rows) whose detail is open, or null
@@ -244,6 +245,7 @@ export class VTable {
         this.expander = opts.expander || null;
         this._cell = opts.cell || ((row, c) => { const v = row[c]; return v == null ? "" : String(v); });
         this._rowKey = opts.rowKey || ((v) => (v && (v.key != null ? v.key : v._seq)));   // stable expander id
+        this.fixedSort = opts.fixedSort || null;
         this._collapse();
         this.rows = [];                                  // never the full set in server mode
         this._q = this.search.value || "";
@@ -253,7 +255,7 @@ export class VTable {
         this.serverTotal = (seed && seed.total) || 0;
         this.filtered = this._mapRows((seed && seed.rows) || []);
         this._computeNumCols();
-        this._applySort();
+        if (!this.fixedSort) this._applySort();
         this._renderHead();
         this._applyHeight();     // -> _render
         this._renderMeta();
@@ -343,13 +345,14 @@ export class VTable {
         this.expander = opts.expander || null;   // async fn(values) -> detail node (inline row drill-down)
         const cell = opts.cell || ((row, c) => { const v = row[c]; return v == null ? "" : String(v); });
         this._cell = cell;
+        this.fixedSort = opts.fixedSort || null;   // {col, dir}: row order is fixed by the caller, no click-to-sort
         this._collapse();         // new data invalidates any open detail
         this.rows = (rows || []).map((row) => ({
             values: row,
             text: this.columns.map((c) => cell(row, c)).join("  ").toLowerCase(),
         }));
         this._computeNumCols();   // which columns are all-numeric -> right-aligned + muted (blueprint look)
-        this._applySort();        // restore the persisted sort against the (possibly new) columns
+        if (!this.fixedSort) this._applySort();   // restore the persisted sort against the (possibly new) columns
         this._renderHead();
         this._filter();           // builds this.filtered + renders
         this._renderMeta();       // line count follows the new data (batch count, if any, persists)
@@ -402,7 +405,8 @@ export class VTable {
         this.head.textContent = "";
         this.columns.forEach((c, i) => {
             const h = document.createElement("span");
-            h.className = "vt-cell vt-th" + (this._numCols.has(c) ? " vt-num" : "");
+            const fixed = this.fixedSort && this.fixedSort.col === c;
+            h.className = "vt-cell vt-th" + (this._numCols.has(c) ? " vt-num" : "") + (fixed ? " vt-th-fixed" : "");
             h.dataset.c = i;
             h.textContent = c;
             h.title = c;
@@ -410,10 +414,10 @@ export class VTable {
                 if (e.button !== 0 || e.target.classList.contains("vt-grip")) return;
                 this._startReorder(e, i);
             });
-            if (this.sortCol === i) {
+            if (fixed || this.sortCol === i) {
                 const s = document.createElement("span");
-                s.className = "vt-sort";
-                s.textContent = this.sortDir === 1 ? "▲" : "▼";
+                s.className = "vt-sort" + (fixed ? " vt-sort-fixed" : "");
+                s.textContent = (fixed ? this.fixedSort.dir : this.sortDir) === 1 ? "▲" : "▼";
                 h.appendChild(s);
             }
             // a lone column always spans the whole table — no width to set, so no resize grip
@@ -677,6 +681,7 @@ export class VTable {
     // click a header: asc -> desc -> unsorted. Server mode refetches from the top; array mode re-sorts
     // the in-memory rows.
     _onHeader(i) {
+        if (this.fixedSort) return;   // row order is fixed by the caller — not user-sortable
         if (this.sortCol === i) {
             if (this.sortDir === 1) this.sortDir = -1;
             else { this.sortCol = null; this.sortDir = 1; }

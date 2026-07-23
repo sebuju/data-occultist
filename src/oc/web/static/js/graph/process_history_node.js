@@ -15,7 +15,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 import { ruleColumns, cellFor } from "./readout_history_node.js";
 
 // Render a process's history into its (open) satellite. No-op when the satellite is hidden (no host
@@ -44,7 +44,7 @@ export function renderProcessHistory(id, history) {
         }
         return row;
     });
-    satVT(`prochist:${id}`, host).setData(COLS, rows, {
+    satVTData(`prochist:${id}`, host, COLS, rows, {
         rowClass: (row) => (row._dropped ? "hist-throttled" : ""),
     });
 }

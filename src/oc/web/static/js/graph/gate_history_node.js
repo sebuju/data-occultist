@@ -11,7 +11,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 import { unionIndexColumns } from "./readout_history_node.js";
 
 function condLabel(c) {
@@ -48,7 +48,7 @@ export function renderGateHistory(id, history) {
         }
         return row;
     });
-    satVT(`gatehist:${id}`, host).setData(COLS, rows, {
+    satVTData(`gatehist:${id}`, host, COLS, rows, {
         rowClass: (row) => (row._blocked ? "hist-throttled" : ""),
     });
 }

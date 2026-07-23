@@ -15,3 +15,14 @@ export function satVT(key, host) {
     _vts.set(key, vt);
     return vt;
 }
+
+// Every history satellite's rows arrive newest-first by "when" — the one shared convention, so
+// it's defined once here instead of copied into each caller (rule 7).
+const HIST_FIXED_SORT = { col: "when", dir: -1 };
+
+// satVT + setData with the standard history fixedSort baked in — the call every history
+// satellite should use instead of the bare setData (which would need the caret/no-click-sort
+// convention copied into its own opts).
+export function satVTData(key, host, COLS, rows, opts = {}) {
+    return satVT(key, host).setData(COLS, rows, { fixedSort: HIST_FIXED_SORT, ...opts });
+}

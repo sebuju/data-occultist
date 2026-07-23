@@ -15,7 +15,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 
 const COLS = ["when", "node", "value", "why", "fires", "throttled"];
 
@@ -36,7 +36,7 @@ export function renderTriggerHistory(triggerId, history) {
         fires: (e.targets || []).join(", ") || "-",
         throttled: e.throttled ? "yes" : "",
     }));
-    satVT(`hist:${triggerId}`, host).setData(COLS, rows, {
+    satVTData(`hist:${triggerId}`, host, COLS, rows, {
         rowClass: (row) => (row.throttled ? "hist-throttled" : ""),
     });
 }

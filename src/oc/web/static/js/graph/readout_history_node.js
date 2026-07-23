@@ -4,8 +4,9 @@
 //
 // One row per evaluated read (newest first). Columns: WHEN, RAW (the OCR text), then ONE COLUMN
 // PER RULE STEP showing that rule's outcome (its `out` value / `·` no-op / `drop` / `—` ignored),
-// then the final VALUE — the same rule trace the readout NODE shows (paintRuleTrace), split into
-// columns. Rule columns are derived from the reads' own traces, so they track the field's pipeline.
+// then the final VALUE — the per-rule trace split into columns (the sole place this now renders,
+// since inline field-node tracing was retired). Rule columns are derived from the reads' own
+// traces, so they track the field's pipeline.
 //
 // Data rides the activity heartbeat TOP-LEVEL: each beat carries `readout_history["<win>:<ro>"]`
 // (build_activity, fed by live collection AND the teach-UI test feed). Painted on satellite open
@@ -13,7 +14,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 
 // Compact label for a rule step, e.g. "empty→drop", "above→drop", "always→extract".
 function ruleLabel(s) {
@@ -91,7 +92,7 @@ export function renderReadoutHistory(win, vid, history) {
         }
         return row;
     });
-    satVT(`rohist:${win}:${vid}`, host).setData(COLS, rows, {
+    satVTData(`rohist:${win}:${vid}`, host, COLS, rows, {
         rowClass: (row) => (row._dropped ? "hist-throttled" : ""),
     });
 }

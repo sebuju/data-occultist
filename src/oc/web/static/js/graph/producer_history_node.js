@@ -10,7 +10,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 
 const COLS = ["when", "dataset", "fetched", "failed", "total", "rows"];
 
@@ -31,7 +31,7 @@ export function renderProducerHistory(producerId, history) {
         rows: e.rows == null ? "" : String(e.rows),
         _failed: !!e.failed,
     }));
-    satVT(`prodhist:${producerId}`, host).setData(COLS, rows, {
+    satVTData(`prodhist:${producerId}`, host, COLS, rows, {
         rowClass: (row) => (row._failed ? "hist-throttled" : ""),   // dim a run that had failures
     });
 }

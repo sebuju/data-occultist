@@ -17,7 +17,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtTimeSec } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 
 const COLS = ["when", "window", "image", "delta", "writes", "reads", "readouts"];
 
@@ -57,5 +57,5 @@ export function renderGameHistory(history) {
             readouts: (e.readout_reads || []).map(readSummary).join(" · "),
         };
     });
-    satVT("gamehist", host).setData(COLS, rows);
+    satVTData("gamehist", host, COLS, rows);
 }

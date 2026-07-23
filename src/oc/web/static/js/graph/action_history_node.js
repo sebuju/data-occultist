@@ -11,7 +11,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 
 const COLS = ["when", "by", "ran", "sounds", "chained"];
 
@@ -31,7 +31,7 @@ export function renderActionHistory(id, history) {
         chained: (e.chained || []).join(", ") || "-",
         _idle: !e.ran,
     }));
-    satVT(`acthist:${id}`, host).setData(COLS, rows, {
+    satVTData(`acthist:${id}`, host, COLS, rows, {
         rowClass: (row) => (row._idle ? "hist-throttled" : ""),
     });
 }

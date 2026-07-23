@@ -346,7 +346,7 @@ function subConfigNode(s) {
     const addLbl = (text, title, addCls, addTitle) => labAdd(text, title, addCls, addTitle);
     // ONE grid for the whole config: sources, per-source join, limit/latest, then filters/columns/
     // sort/visible — every label in col 1, its control(s) in col 2.
-    return h("div", { class: "lab-grid" },
+    return h("div", { class: "gn-grid" },
         srcRow("sources", "datasets or subsets; each joins on its own field",
             sourcesInput({ chips: inputs.map((ds) => ({ value: ds, node: model.refNode(ds) })), free,
                 addLabel: "+ join source", rmTitle: "remove input" })),
@@ -424,7 +424,13 @@ async function _refreshSubsetNode(id, pre, { superseded } = {}) {
             const vt = vtableFor(`view:${id}`, host);
             // dragging a column in the table re-orders the visible/hide buttons to match, live
             vt.onReorder = () => renderHideToggles(nodeEls.get(`sub:${id}`), s);
+            // an authored sort (s.sort) is the view's own fixed order — the table shouldn't let a
+            // header click override it, so it's surfaced as a non-interactive caret instead.
+            const primarySort = s && s.sort && s.sort.length ? s.sort[0] : null;
+            const fixedSort = primarySort ? { col: primarySort.field, dir: primarySort.desc ? -1 : 1 } : null;
             if (vt.server) {                                  // already server-backed -> refetch window in place
+                vt.fixedSort = fixedSort;   // keep the caret in sync with a live sort edit (no rebuild)
+                vt._renderHead();
                 await vt.refreshWindow();
                 cols = vt.columns;
             } else {
@@ -437,6 +443,7 @@ async function _refreshSubsetNode(id, pre, { superseded } = {}) {
                 vt.setServerSource(seed, fetchWindow, {
                     expander: (row) => expandSubsetRow(id, row),
                     rowKey: (v) => (v.key != null ? v.key : JSON.stringify(v)),
+                    fixedSort,
                 });
                 cols = seed.columns;
             }

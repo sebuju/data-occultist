@@ -11,7 +11,7 @@
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
-import { satVT } from "./sat_vtable.js";
+import { satVTData } from "./sat_vtable.js";
 
 const COLS = ["when", "by"];
 
@@ -27,5 +27,5 @@ export function renderSoundHistory(id, history) {
         when: fmtDateTimeMs(e.ts),
         by: e.trigger || "",
     }));
-    satVT(`sndhist:${id}`, host).setData(COLS, rows);
+    satVTData(`sndhist:${id}`, host, COLS, rows);
 }
