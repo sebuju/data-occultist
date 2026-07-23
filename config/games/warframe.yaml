@@ -8063,13 +8063,13 @@ layout:
       - col: _pos
         dir: -1
       widths:
-        name: 125
-        count: 100
-        _item: 138
-        _count: 100
-        _seq: 100
-        _batch: 100
-        _pos: 112
+        name: 124
+        count: 99
+        _item: 137
+        _count: 99
+        _seq: 99
+        _batch: 99
+        _pos: 118
       order: []
     view:relics_refinement_view:
       widths:
@@ -8434,6 +8434,15 @@ layout:
         rarity: 186
         item: 261
         relic: 186
+      sorts: []
+      order:
+      - relic
+      - name
+      - price_min
+      - price_median
+      - volume
+      - count
+      - rarity
     view:relics_owned_with_contents:
       widths:
         key: 134
