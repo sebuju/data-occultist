@@ -198,9 +198,10 @@ a.node.win:hover { border-color: var(--accent); }
 .sv-inputs { display: flex; flex-wrap: wrap; align-items: center; column-gap: 1ch }
 .sv-input { position: relative; display: inline-flex; align-items: center; gap: 0px; box-sizing: border-box;
     color: var(--nt);
-    font-size: var(--fs-sm); word-break: break-all;}
+    font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
 .sv-input:before { content:"{"; }
 .sv-input:after { content:"}"; }
+.sv-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* the remove button lives INSIDE the pill — the pill supplies the outline, so the button is a
    borderless glyph (no box-shadow ring, no border), even though it carries .btn-trash. The .gnode
@@ -303,7 +304,7 @@ a.node.win:hover { border-color: var(--accent); }
    a little, and gains a dashed ring so it reads as "temporarily silenced", not "turned off". Uses
    --danger to match the gate -> trigger line tint's blocked colour (routing.js gateStateColor).
    Uses outline (selection uses border-color + box-shadow, so the two never clash). */
-.gnode.node-gated { opacity: .55; outline: 2px dashed color-mix(in oklab, var(--danger) 70%, transparent); outline-offset: 2px; }
+.gnode.node-gated { outline: 2px dashed var(--danger) 70%, transparent; outline-offset: 2px; }
 
 /* item-template preview diagnostics */
 .tc-ok { color: var(--ok); }

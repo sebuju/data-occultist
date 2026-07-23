@@ -24,7 +24,8 @@ export function processParts(x, model) {
         const inKey = s.kind === "register" ? (s.key || s.id) : s.id;
         const desc = `${s.kind}: ${s.id}${s.key ? ` · ${s.key}` : ""}`;
         return h("div", { class: "pr-maprow" },
-            h("span", { class: "sv-input pr-inkey", dataset: s.node ? { node: s.node } : null, title: `input key from ${desc}` }, inKey),
+            h("span", { class: "sv-input pr-inkey", dataset: s.node ? { node: s.node } : null, title: `input key from ${desc}` },
+                h("span", { class: "sv-value" }, inKey)),
             h("span", { class: "rule-arrow muted" }, "→"),
             h("input", { class: "pr-out", dataset: { ref: s.ref }, value: s.out || "", placeholder: inKey, title: "output key — blank keeps the input key" }),
             trashBtn({ cls: "pr-rmin", dataset: { val: s.ref }, title: "remove input" }));

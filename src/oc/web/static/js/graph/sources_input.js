@@ -31,7 +31,7 @@ import { comboPopover } from "./combo_popover.js";
 
 export function sourcesInput({ chips, free, addLabel = "+ source", rmCls = "sv-rmin", addinCls = "sv-addin", rmTitle = "remove input" }) {
     const pills = (chips || []).map((c) => h("span", { class: "sv-input", dataset: c.node ? { node: c.node } : null },
-        c.label ?? c.value,
+        h("span", { class: "sv-value" }, c.label ?? c.value),
         trashBtn({ cls: rmCls, dataset: { val: c.value }, title: rmTitle })));
     // The add control is a readonly "+" trigger that carries addinCls (so every caller's delegated
     // `change` handler still finds it, unchanged). Clicking opens the searchable combo popover; on
