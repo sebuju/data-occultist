@@ -1,5 +1,6 @@
-// Gate node: a boolean guard on a trigger. It TESTS a single live value (a readout, or a register
-// slot) against an ordered list of conditions combined by and/or, optionally negated. A trigger
+// Gate node: a boolean guard on a trigger. It TESTS a single live value (a readout, a register
+// slot, or a dataset/subset's content-hash signature — meant for the `changed` op) against an
+// ordered list of conditions combined by and/or, optionally negated. A trigger
 // lists the gates it must satisfy before it fires — the gate never fires anything itself, it only
 // permits/blocks the trigger(s) wired to its out-port. See GateDef (backend). Rendering only —
 // wiring lives in io_wire.js (wireGate), like every other node body.
@@ -35,7 +36,7 @@ export function condRow(cls, ci, c) {
 export function gateParts(g, model) {
     const conds = g.conds || [];
     const andOn = (g.logic || "or") === "and";
-    // source picker: the single readout / register slot the gate tests. Shown as a chip once set.
+    // source picker: the single readout / register slot / dataset / subset the gate tests. Shown as a chip once set.
     const source = srcRow("source", "the live value this gate tests",
         sourcesInput({
             chips: g.source ? [{ value: g.source, node: model.refNode(g.source) }] : [],

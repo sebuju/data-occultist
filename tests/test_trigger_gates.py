@@ -9,9 +9,10 @@ import tempfile
 from oc.collect.fields import _matches
 from oc.collect.triggers import TriggerRunner, fire_action
 from oc.profile.models import (
-    ActionDef, GameProfile, GateCond, GateDef, RouterBranch, RouterDef, RuleWhen, SoundDef,
-    TriggerDef,
+    ActionDef, DatasetDef, GameProfile, GateCond, GateDef, JoinSource, RouterBranch, RouterDef,
+    RuleWhen, SoundDef, SubsetDef, TriggerDef,
 )
+from oc.store.dataset_store import DatasetStore
 
 
 def _runner(profile):
@@ -313,6 +314,60 @@ def test_emit_fire_logs_sound_history():
     rows = sound_history.recent(prof.name, "snd1")
     assert len(rows) == 1
     assert rows[0]["trigger"] == "t"
+
+
+# ---- dataset content-signature source: `changed` gate dedups a re-firing trigger -----------------
+
+def test_dataset_sig_stable_across_bookkeeping_only_writes(tmp_path):
+    # Re-recording the SAME authored values must not move the signature, even though the store's
+    # plumbing (last_seen/_count/_batch) changes on every write -- that's the whole point of
+    # stripping _PLUMBING before hashing.
+    ds = DatasetStore(tmp_path, "g", "items")
+    ds.begin_batch(); ds.record_seen({"name": "Soma Prime"}); ds.save()
+    tr = TriggerRunner(GameProfile(name="g", datasets=[DatasetDef(id="items")]), tmp_path,
+                       clock=lambda: 0.0)
+    sig1 = tr._dataset_sig("items")
+    assert sig1 is not None
+    ds.begin_batch(); ds.record_seen({"name": "Soma Prime"}); ds.save()   # identical re-observation
+    assert tr._dataset_sig("items") == sig1
+    ds.begin_batch(); ds.record_seen({"name": "Volt Prime"}); ds.save()   # new row -> content differs
+    assert tr._dataset_sig("items") != sig1
+
+
+def test_dataset_gate_changed_blocks_until_content_moves(tmp_path):
+    ds = DatasetStore(tmp_path, "g", "items")
+    ds.begin_batch(); ds.record_seen({"name": "Soma Prime"}); ds.save()
+    g = _gate("gd", "dataset:items", ("changed", ""))
+    prof = GameProfile(name="g", datasets=[DatasetDef(id="items")], gates=[g],
+                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"],
+                                            gates=["gd"])])
+    tr = TriggerRunner(prof, tmp_path, clock=lambda: 0.0)
+    # first evaluation: no baseline yet -> "changed" holds (None -> hash) -> fires, baseline set.
+    assert tr._route_fire(prof.triggers[0], "auto", items=None) is True
+    # unchanged dataset -> the gate now blocks a second attempt.
+    assert tr._route_fire(prof.triggers[0], "auto", items=None) is False
+    # dataset content changes -> the gate passes again.
+    ds.begin_batch(); ds.record_seen({"name": "Volt Prime"}); ds.save()
+    assert tr._route_fire(prof.triggers[0], "auto", items=None) is True
+
+
+def test_subset_gate_changed_blocks_until_visible_output_moves(tmp_path):
+    ds = DatasetStore(tmp_path, "g", "items")
+    ds.begin_batch(); ds.record_seen({"name": "Soma Prime", "updated": "t1"}); ds.save()
+    sub = SubsetDef(id="view", sources=[JoinSource(dataset="items")], hidden_columns=["updated"])
+    g = _gate("gd", "subset:view", ("changed", ""))
+    prof = GameProfile(name="g", datasets=[DatasetDef(id="items")], subsets=[sub], gates=[g],
+                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"],
+                                            gates=["gd"])])
+    tr = TriggerRunner(prof, tmp_path, clock=lambda: 0.0)
+    # first evaluation: no baseline yet -> fires, baseline set.
+    assert tr._route_fire(prof.triggers[0], "auto", items=None) is True
+    # only the HIDDEN `updated` timestamp changes -> visible output is identical -> blocked.
+    ds.begin_batch(); ds.record_seen({"name": "Soma Prime", "updated": "t2"}); ds.save()
+    assert tr._route_fire(prof.triggers[0], "auto", items=None) is False
+    # a visible field changes -> the gate passes again.
+    ds.begin_batch(); ds.record_seen({"name": "Volt Prime", "updated": "t2"}); ds.save()
+    assert tr._route_fire(prof.triggers[0], "auto", items=None) is True
 
 
 def test_fire_action_logs_action_history():

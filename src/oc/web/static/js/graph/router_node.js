@@ -1,4 +1,5 @@
-// Router node: branches a single live value (a readout, or a register slot) to different targets.
+// Router node: branches a single live value (a readout, a register slot, or a dataset/subset's
+// content-hash signature) to different targets.
 // Each branch carries its own condition list (and/or) + target list; the FIRST branch whose conds
 // match fires that branch's targets (producers/toasts/sounds/actions). See RouterDef (backend).
 // Rendering only — wiring lives in io_wire.js (wireRouter), like every other node body. The cond
@@ -9,7 +10,7 @@ import { slideToggle } from "./node_parts.js";
 import { condRow } from "./gate_node.js";
 
 export function routerParts(r, model) {
-    // source picker: the single readout / register slot every branch tests. Shown as a chip once set.
+    // source picker: the single readout / register slot / dataset / subset every branch tests. Shown as a chip once set.
     const source = srcRow("source", "the live value this router tests",
         sourcesInput({
             chips: r.source ? [{ value: r.source, node: model.refNode(r.source) }] : [],

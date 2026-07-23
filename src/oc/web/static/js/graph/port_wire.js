@@ -26,24 +26,31 @@ function outPortSpec(n) {
         };
         case "dataset": return {
             // a dataset feeds a SUBSET (join), a PRODUCER node (price only these items), a
-            // DICTIONARY (push its column values in as terms), or a TOAST ({{dataset:id}} tokens)
-            target: ["subset", "producer", "dictionary", "toast"],
+            // DICTIONARY (push its column values in as terms), a TOAST ({{dataset:id}} tokens), or a
+            // GATE / ROUTER that tests its content-hash signature (meant for the `changed` op) as
+            // their tested source
+            target: ["subset", "producer", "dictionary", "toast", "gate", "router"],
             onDrop: (id, ttype) => {
                 if (ttype === "producer") model.addProducerSource(id, n.ref);
                 else if (ttype === "dictionary") model.addDictFeed(id, n.ref);
                 else if (ttype === "toast") model.addToastSource(id, `dataset:${n.ref}`);
+                else if (ttype === "gate") model.setGateSource(id, `dataset:${n.ref}`);
+                else if (ttype === "router") model.setRouterSource(id, `dataset:${n.ref}`);
                 else model.addSubsetInput(id, n.ref);
             },
             onEmpty: (pt) => { const id = model.addSubset(n.ref); placeAt(`sub:${id}`, pt); return `sub:${id}`; },
         };
         case "subset": return {
-            // a subset feeds another SUBSET, a PRODUCER node (price the rows it returns), or a
-            // TOAST ({{subset:id}} tokens)
-            target: ["subset", "producer", "toast"],
+            // a subset feeds another SUBSET, a PRODUCER node (price the rows it returns), a TOAST
+            // ({{subset:id}} tokens), or a GATE / ROUTER that tests its visible-output content-hash
+            // signature (meant for the `changed` op) as their tested source
+            target: ["subset", "producer", "toast", "gate", "router"],
             selfId: n.ref.id,
             onDrop: (id, ttype) => {
                 if (ttype === "producer") model.addProducerSource(id, n.ref.id);
                 else if (ttype === "toast") model.addToastSource(id, `subset:${n.ref.id}`);
+                else if (ttype === "gate") model.setGateSource(id, `subset:${n.ref.id}`);
+                else if (ttype === "router") model.setRouterSource(id, `subset:${n.ref.id}`);
                 else model.addSubsetInput(id, n.ref.id);
             },
             onEmpty: (pt) => { const id = model.addSubset(n.ref.id); placeAt(`sub:${id}`, pt); return `sub:${id}`; },

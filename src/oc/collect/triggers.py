@@ -164,11 +164,15 @@ class TriggerRunner:
         # (set_register_rings), so a COUNT-facet source (register:<id>#<key>@count|@nonblank|@distinct)
         # can count over a key's ring of recent values instead of testing its single exposed value.
         self._reg_rings: dict = {}
-        # Previous NUMERIC value per source ref ("readout:<id>" / "register:<reg>#<key>") — the one
-        # store the gate edge ops (crosses_up/crosses_down/changed) and the on_readout move-pulse
-        # compare against. Updated at the end of on_readout / on_register (mirrors the old
-        # _readout_prev / _register_prev, unified by source string).
-        self._source_prev: dict[str, float] = {}
+        # Previous value per source ref ("readout:<id>" / "register:<reg>#<key>" / "dataset:<id>" /
+        # "subset:<id>") — the one store the gate edge ops (crosses_up/crosses_down/changed) and the
+        # on_readout move-pulse compare against. Numeric for readout/register (updated at the end of
+        # on_readout / on_register, mirrors the old _readout_prev / _register_prev, unified by source
+        # string); a dataset/subset source's value is a content-hash STRING instead (see
+        # _dataset_sig/_subset_sig), refreshed only when a trigger referencing it actually fires
+        # (_emit_fire) — a dataset/subset has no per-tick pulse the way a readout/register does, so
+        # "changed" here means "changed since the last fire", not "changed this tick".
+        self._source_prev: dict[str, float | str] = {}
         # Previous pass/block result per gate id — so emit_gate_flow animates a blob only when a
         # gate's decision FLIPS (a steady value never spams the flow layer). Seeded on first sight.
         self._gate_prev: dict[str, bool] = {}
@@ -265,6 +269,7 @@ class TriggerRunner:
             return False
         logev(f"trigger {t.id} fired ({why})", level="run", game=self._profile.name)
         slog(f"trigger {t.id} fired ({why})", game=self._profile.name)
+        self._advance_content_gate_baselines(t)
         # Resolve targets THROUGH any router (fan-out by a live value): server targets fire here,
         # the chosen sound ids ride the fire cue (sounds are client-played).
         fire_ids, sound_ids = self._resolve_fire(t)
@@ -788,8 +793,11 @@ class TriggerRunner:
 
     def _source_value(self, source: str):
         """The current live value a gate/router ``source`` ref points at, or None. ``readout:<id>``
-        reads the cached readouts; ``register:<id>#<key>`` reads the cached register snapshot; a bare
-        id is treated as a readout (mirrors LiveSession._resolve_source's grammar)."""
+        reads the cached readouts; ``register:<id>#<key>`` reads the cached register snapshot;
+        ``dataset:<id>`` / ``subset:<id>`` read a content-hash signature of the dataset's current
+        rows / the subset's visible output (see _dataset_sig / _subset_sig — meant for the
+        ``changed`` op, not level comparisons); a bare id is treated as a readout (mirrors
+        LiveSession._resolve_source's grammar)."""
         if not source:
             return None
         kind, _, rest = source.partition(":")
@@ -803,7 +811,40 @@ class TriggerRunner:
             if facet:   # a count over the key's ring of recent values, not its exposed value
                 return self._facet_count((self._reg_rings.get(reg) or {}).get(key), facet)
             return (self._reg_latest.get(reg) or {}).get(key)
+        if kind == "dataset":
+            return self._dataset_sig(rest)
+        if kind == "subset":
+            return self._subset_sig(rest)
         return self._readouts_latest.get(source)
+
+    def _dataset_sig(self, ds_id: str) -> str | None:
+        """Content signature of dataset ``ds_id``'s current (``latest``, present-only) rows — the
+        value a ``dataset:<id>`` gate/router source tests, meant for the ``changed`` op ("has this
+        dataset's content changed since the last fire?"). ``None`` on any compute error.
+
+        Strips the store's bookkeeping/plumbing keys (``_PLUMBING`` — key/present/first_seen/
+        last_seen/_count/_seq/_batch/_pos) before hashing: a ``latest`` row is exactly those plumbing
+        keys plus the authored value columns (see DatasetStore._current_records), and every volatile
+        key (last_seen, _count, _batch, _pos, present flips) is plumbing — so stripping it leaves a
+        hash over only the stable authored content, immune to re-observation timestamps bumping on
+        every read. Mirrors _subset_sig's "hash the stable view, not the raw row" approach, but a
+        bare dataset has no view/columns to project to, so the plumbing tuple stands in for that.
+
+        Caveat: if ``ds_id`` is itself a price/producer dataset, a volatile AUTHORED value column
+        (its own per-sweep ``updated``/median field) lives inside the value columns and is
+        indistinguishable from real content here — it will still churn the hash. Gate on the
+        upstream item dataset instead in that case; datasets have no per-column hide today."""
+        from ..store import rows_at, store_for
+        from ..store.dataset_store import _PLUMBING
+        try:
+            rows = rows_at(store_for(self._data_dir, self._profile.name, ds_id,
+                                      profile=self._profile, aggregate="latest"),
+                            "latest", present_only=True)
+            stripped = [{k: v for k, v in r.items() if k not in _PLUMBING} for r in rows]
+            blob = json.dumps(stripped, sort_keys=True, default=str).encode("utf-8")
+            return hashlib.sha256(blob).hexdigest()
+        except Exception:  # noqa: BLE001 - a bad compute must never crash the runner
+            return None
 
     def _cond_holds(self, cond, value, prev) -> bool:
         """Does one :class:`~oc.profile.models.GateCond` hold for ``value`` (``prev`` = its previous
@@ -815,7 +856,10 @@ class TriggerRunner:
             return True
         if when == "changed":
             v = self._num(value)
-            return v is not None and v != self._num(prev)
+            if v is not None:
+                return v != self._num(prev)
+            # non-numeric value (e.g. a dataset:<id> content-hash signature) -> raw compare
+            return value is not None and value != prev
         if when == "between":
             v = self._num(value)
             nums = [n for n in (self._num(x) for x in arg.split(",")) if n is not None]
@@ -876,10 +920,31 @@ class TriggerRunner:
                 return False
         return True
 
+    def _advance_content_gate_baselines(self, t) -> None:
+        """After ``t`` actually fires, advance the ``_source_prev`` baseline for every wired gate
+        whose source is a ``dataset:<id>``/``subset:<id>`` content-hash — so a ``changed`` gate over
+        one reads "changed since the last FIRE", not "changed this tick" (a dataset/subset has no
+        per-tick pulse the way a readout/register does, so the on_readout/on_register pulse-detectors
+        that normally refresh _source_prev never see it). Only advances on a real, unblocked fire; a
+        gate-blocked or throttled attempt must not move the baseline.
+
+        Known limitation: _source_prev is keyed by source ref, so two triggers gated on the SAME
+        dataset/subset share one baseline — one firing advances the other's too. Fine for the common
+        one-gate/one-trigger toast-dedup case this was built for."""
+        gate_ids = getattr(t, "gates", None)
+        if not gate_ids:
+            return
+        by_gate = {g.id: g for g in getattr(self._profile, "gates", [])}
+        for gid in gate_ids:
+            g = by_gate.get(gid)
+            if g is not None and g.source.startswith(("dataset:", "subset:")):
+                self._source_prev[g.source] = self._source_value(g.source)
+
     def _source_node(self, source: str) -> str | None:
         """The GRAPH NODE id a gate/router ``source`` ref points at (for the flow animation), mirroring
         the front-end model.refNode: ``readout:<id>`` -> ``ro:<win>:<id>``; ``register:<id>#<key>``
-        -> ``register:<id>``. None if unresolvable."""
+        -> ``register:<id>``; ``dataset:<id>`` -> ``ds:<id>``; ``subset:<id>`` -> ``sub:<id>``. None
+        if unresolvable."""
         if not source:
             return None
         kind, _, rest = source.partition(":")
@@ -888,6 +953,10 @@ class TriggerRunner:
             return f"ro:{win}:{rest}" if win else None
         if kind == "register":
             return f"register:{rest.split('#')[0]}"
+        if kind == "dataset":
+            return f"ds:{rest}"
+        if kind == "subset":
+            return f"sub:{rest}"
         return None
 
     def emit_gate_flow(self) -> None:
@@ -1489,7 +1558,15 @@ def fire_toast(game: str, toast, notifier, *, trigger_id: str, values: dict | No
     if toast is None or not getattr(toast, "enabled", True) or notifier is None:
         return False
     try:
-        notifier.notify(toast_spec(toast, values, data_dir=data_dir, profile=profile, game=game))
+        # Building the spec (token/dataset resolution + PIL image render) runs on THIS thread —
+        # the collector loop / scheduler tick / request handler — so a slow build both delays the
+        # toast and steals GIL time from everything else. Surface it when it's material.
+        t0 = time.monotonic()
+        spec = toast_spec(toast, values, data_dir=data_dir, profile=profile, game=game)
+        build_s = time.monotonic() - t0
+        if build_s > 1.0:
+            logev(f"toast spec build slow ({build_s:.1f}s): {toast.id}", "warn", game=str(game))
+        notifier.notify(spec)
     except Exception:   # noqa: BLE001 - a misbehaving notifier must never crash the loop / a request
         return False
     publish_flow(game, "trigger", f"trigger:{trigger_id}", f"toast:{toast.id}", 1)

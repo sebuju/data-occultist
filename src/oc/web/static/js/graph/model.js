@@ -1433,8 +1433,8 @@ export class GraphModel {
         register: ["readout", "process"],
         process: ["readout", "register_key"],
         toast: ["readout", "dataset", "subset"],
-        gate: ["readout", "register_key", "register_count"],
-        router: ["readout", "register_key", "register_count"],
+        gate: ["readout", "register_key", "register_count", "dataset", "subset"],
+        router: ["readout", "register_key", "register_count", "dataset", "subset"],
     };
     // The count-facet suffixes a `register_count` source offers per key: each counts over the key's
     // ring of recent values (register:<id>#<key>@<facet>) so a numeric gate op tests HOW MANY values

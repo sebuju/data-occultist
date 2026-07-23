@@ -142,9 +142,9 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
                 err(node, f"rule references missing dictionary '{r.dict_id}'")
 
     def check_source_ref(node: str, ref: str) -> None:
-        """``"readout:<id>"`` / ``"register:<id>#<key>"`` — the grammar gates, routers,
-        and process inputs all source live values through. When a register slot is
-        named, the KEY is checked too (not just the register id) — a register only
+        """``"readout:<id>"`` / ``"register:<id>#<key>"`` / ``"dataset:<id>"`` / ``"subset:<id>"`` —
+        the grammar gates, routers, and process inputs all source live values through. When a
+        register slot is named, the KEY is checked too (not just the register id) — a register only
         exposes the keys its wired sources actually emit."""
         parsed = _parse_ref(ref)
         if parsed is None:
@@ -160,6 +160,12 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
                 exposed = register_keys(rid, set())
                 if exposed and key not in exposed:
                     err(node, f"references missing key '{key}' on register '{rid}'")
+        elif kind == "dataset":
+            if rid not in dataset_ids:
+                err(node, f"references missing dataset '{rid}'")
+        elif kind == "subset":
+            if rid not in subset_ids:
+                err(node, f"references missing subset '{rid}'")
         else:
             warn(node, f"unrecognised source kind '{kind}:{rid}'")
 

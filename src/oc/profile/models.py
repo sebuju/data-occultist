@@ -1079,14 +1079,19 @@ class GateDef(BaseModel):
     passes (AND across gates), so a gate is an upstream allow/block on the fire.
 
     ``source`` is a ref to the live value the gate tests — ``readout:<id>`` or
-    ``register:<id>#<key>`` (the same grammar registers/processes source from). ``conds`` are the
+    ``register:<id>#<key>`` (the same grammar registers/processes source from), or
+    ``dataset:<id>`` / ``subset:<id>`` — a content-hash signature of the dataset's current rows /
+    the subset's visible output, meant for the ``changed`` op (fires only when the content differs
+    from the last time this gate's trigger fired; see
+    :meth:`~oc.collect.triggers.TriggerRunner._dataset_sig` /
+    :meth:`~oc.collect.triggers.TriggerRunner._subset_sig`). ``conds`` are the
     conditions; ``logic`` (``or`` = any holds | ``and`` = all hold) combines them; ``negate`` flips
     the result (a block-list: pass when the conds do NOT hold), so a short list can exclude a few
     values rather than enumerate the rest. Evaluated server-side against the runner's live caches —
     game-dumb, no capture knowledge. Reusable: one gate can gate many triggers."""
 
     id: str
-    source: str = ""                          # readout:<id> | register:<id>#<key>
+    source: str = ""      # readout:<id> | register:<id>#<key> | dataset:<id> | subset:<id>
     conds: list[GateCond] = Field(default_factory=list)
     logic: str = "or"                         # or (any holds) | and (all hold)
     negate: bool = False                      # flip the combined result (block-list)
