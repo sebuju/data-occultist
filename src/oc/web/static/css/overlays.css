@@ -29,6 +29,12 @@
     overflow: hidden; text-overflow: ellipsis; }
 .sv-combo-opt:hover, .sv-combo-opt.hl { background: var(--accent-bg); }
 .sv-combo-empty { padding: 5px 8px; color: var(--muted); font-style: italic; }
+/* a fixed area below the scrollable option list (richPickerPop's optional `hint`) — stays pinned
+   while the list above it scrolls, e.g. a syntax legend for the toast token picker. */
+.sv-combo-hint { padding: 5px 8px 3px; border-top: 1px solid var(--float-line); font-size: 10px;
+    line-height: 1.4; color: var(--muted); }
+.sv-combo-hint code { font-size: 10px; padding: 0 2px; border-radius: 3px;
+    background: color-mix(in srgb, currentColor 12%, transparent); }
 /* the rich picker (js/graph/rich_picker.js) — a fixed, no-search browse list built on the
    sv-combo-* shell above, used by the register aggregate fold and the live feed-session dropdown.
    Wider than the add-combo (meta lines run long) and its rows wrap to two lines (label + meta)
@@ -171,7 +177,7 @@
 .lw-kill { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap;
     background: var(--danger); color: var(--on-danger); border: 0; border-radius: 4px;
     height: 16px; min-height: 0; padding: 0 6px; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1; }
-.lw-kill:hover { filter: brightness(1.12); }
+.lw-kill:hover { filter: brightness(var(--hover-multiplier)); }
 
 /* boot veil: covers everything from first paint until the boot sequence settles, so
    the user can't poke a half-loaded, laggy UI. main.js removes it once boot quiesces

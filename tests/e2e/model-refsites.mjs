@@ -30,7 +30,9 @@ function build() {
         actions: [{ id: "act1", sources: ["dataset:ds_a", "register:reg1"], slots: { reg1: ["ro_x"] }, dest: "ds_b" }],
         registers: [{ id: "reg1", sources: ["readout:ro_x"], persist: "ds_a" }],
         toasts: [{ id: "toast1", sources: ["dataset:ds_a", "subset:sub1", "readout:ro_x"],
-            texts: [{ content: "{{readout:ro_x}}", style: "", align: "", max_lines: 0 }] }],
+            title: "{{dataset:ds_a.f1|sum}} / {{dataset:ds_b}}",
+            message: "{{subset:sub1[0:2]|join:\", \"}} {{readout:ro_x}}",
+            texts: [{ content: "{{readout:ro_x}}", style: "", align: "" }] }],
         dictionaries: [{ id: "dict1", feeds: [{ dataset: "ds_a" }] }],
         window_priority: ["win1"],
     });
@@ -53,6 +55,8 @@ const gate = (m) => P(m).gates[0];
     eq(act(m).sources, ["dataset:ds_z", "register:reg1"], "action dataset source repointed, register source untouched");
     eq(reg(m).persist, "ds_z", "register persist repointed");
     eq(toast(m).sources[0], "dataset:ds_z", "toast dataset source repointed");
+    eq(toast(m).title, "{{dataset:ds_z.f1|sum}} / {{dataset:ds_b}}",
+        "toast dataset token repointed (.field|agg suffix kept, ds_b untouched)");
     eq(dict(m).feeds[0].dataset, "ds_z", "dict feed repointed");
     eq(act(m).dest, "ds_b", "action dest (ds_b) untouched");
     ok(m.datasets().includes("ds_z") && !m.datasets().includes("ds_a"), "datasets() shows new id, not old");
@@ -78,6 +82,8 @@ const gate = (m) => P(m).gates[0];
     eq(sub(m).id, "sub9", "subset def id renamed");
     eq(trg(m).watch, ["ds_a", "sub9"], "trigger watch subset ref repointed");
     eq(toast(m).sources[1], "subset:sub9", "toast subset source repointed");
+    eq(toast(m).message, "{{subset:sub9[0:2]|join:\", \"}} {{readout:ro_x}}",
+        "toast subset token repointed ([slice]|join suffix kept, readout token untouched)");
     eq(act(m).sources, ["dataset:ds_a", "register:reg1"], "action sources untouched by subset rename");
 }
 
@@ -137,6 +143,14 @@ const gate = (m) => P(m).gates[0];
     eq(P(m).producers[0].dataset, "", "producer feeder blanked");
     eq(act(m).dest, "", "action dest blanked");
     ok(!m.datasets().includes("ds_b"), "datasets() no longer lists ds_b");
+    eq(toast(m).title, "{{dataset:ds_a.f1|sum}} / ", "toast ds_b token stripped, ds_a token untouched");
+}
+
+// ---- delete subset: toast token stripped ----
+{
+    const m = build();
+    m.removeSubset("sub1");
+    eq(toast(m).message, " {{readout:ro_x}}", "toast subset token stripped, readout token untouched");
 }
 
 // ---- delete register: source dropped, slot + watch + conds cleared, no 'register:' ghost ----

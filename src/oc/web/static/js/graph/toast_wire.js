@@ -5,15 +5,17 @@
 // the shared rect transaction (edit_txn.js) so a drag/nudge batch is one save + one server render.
 import * as api from "../api.js";
 import * as rectTxn from "./edit_txn.js";
-import { model, setStatus, afterBoot } from "./state.js";
-import { h, svg, autoGrow } from "../dom.js";
+import { model, setStatus } from "./state.js";
+import { whenVisible } from "./visible.js";
+import { h, svg, autoGrow, restripeSelect } from "../dom.js";
 import { renameNode, movePos } from "./node_lifecycle.js";
 import { drawEdges } from "./routing.js";
 import { persist } from "./persist.js";
 import { beginDrag } from "./dragresize.js";
 import { onGlobal } from "../inputbus.js";
 import { richPickerPop } from "./rich_picker.js";
-import { tokenGroups } from "./toast_node.js";
+import { tokenGroups, blockPreviewLook } from "./toast_node.js";
+import { openIconPickerModal } from "./icon_picker.js";
 import { render, autosave, rebuildNode, wireArmedRemove, NUDGE, armConfirm } from "./main.js";
 
 function wireToast(div, n) {
@@ -27,17 +29,68 @@ function wireToast(div, n) {
             () => { render(); autosave(null); });
     });
     $(".tn-app")?.addEventListener("change", (e) => { model.setToastProp(x.id, "app_name", e.target.value); autosave(null); });
-    $(".tn-duration")?.addEventListener("change", (e) => { model.setToastProp(x.id, "duration", e.target.value); autosave(null); });
-    $(".tn-icon")?.addEventListener("change", (e) => { model.setToastProp(x.id, "icon", e.target.value); autosave(null); });
-    $(".tn-attr")?.addEventListener("change", (e) => { model.setToastProp(x.id, "attribution", e.target.value); autosave(null); });
+    $(".tn-duration")?.addEventListener("change", (e) => { model.setToastProp(x.id, "duration", e.target.value); restripeSelect(e.target); autosave(null); });
+    // browse-for-an-icon: the field itself is read-only display (iconName in toast_node.js), so
+    // picking via the modal is the only way to set it.
+    $(".tn-icon-browse")?.addEventListener("click", () => {
+        openIconPickerModal((path) => {
+            const nameEl = $(".tn-icon-browse")?.previousElementSibling;
+            if (nameEl) nameEl.textContent = path ? path.split(/[\\/]/).pop() : "(none)";
+            model.setToastProp(x.id, "icon", path); autosave(null);
+        });
+    });
+    const attrLine = () => div.querySelector(".tn-bk-pv-attr");
+    $(".tn-attr")?.addEventListener("input", (e) => { const el = attrLine(); if (el) el.textContent = e.target.value; });
+    $(".tn-attr")?.addEventListener("change", (e) => {
+        model.setToastProp(x.id, "attribution", e.target.value); autosave(null);
+        // the preview box only exists once a block or an attribution has ever been present
+        // (blocksPreview in toast_node.js) — the first attribution on an otherwise-empty toast
+        // needs a rebuild to create it; every other edit just patches the existing line in place.
+        if (attrLine()) refreshBlocksPreview(); else rebuildNode(n.id);
+    });
     $(".tn-replacekey")?.addEventListener("change", (e) => { model.setToastProp(x.id, "replace_key", e.target.value); autosave(null); });
     $(".tn-accumcap")?.addEventListener("change", (e) => { model.setToastProp(x.id, "accumulate_cap", Math.max(1, +e.target.value || 1)); autosave(null); });
-    // rich-text blocks: content + per-block style/align/max-lines edits persist in place; add /
-    // remove / reorder rebuild the node body (the block list + its indices change).
-    div.querySelectorAll(".tn-bk-content").forEach((el) => { el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "content", e.target.value); autosave(null); }); autoGrow(el); });
-    div.querySelectorAll(".tn-bk-style").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "style", e.target.value); autosave(null); }));
-    div.querySelectorAll(".tn-bk-align").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "align", e.target.value); autosave(null); }));
-    div.querySelectorAll(".tn-bk-max").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "max_lines", e.target.value); autosave(null); }));
+    // rich-text blocks: content + per-block style/align edits persist in place; add / remove /
+    // reorder rebuild the node body (the block list + its indices change). Each edit also patches
+    // the matching line of the combined-outcome preview (.tn-bk-preview) in place — no rebuild, so
+    // focus/scroll/undo state is never disturbed by typing.
+    const pvLine = (i) => div.querySelector(`.tn-bk-preview [data-i="${i}"]`);
+    const refreshPvLine = (i) => {
+        const b = (x.texts || [])[i], el = pvLine(i);
+        if (!b || !el) return;
+        const { cls, align } = blockPreviewLook(b, i);
+        el.className = "tn-bk-pv-line " + cls;
+        el.style.textAlign = align;
+    };
+    // resolve every block's (+ the attribution's) {{token}}s through the real render engine (same
+    // slice/aggregate/fallback/decimal handling a fired toast gets — not a raw-string echo) and
+    // patch each preview line's text. Best-effort: a failed/offline round trip just leaves the
+    // prior text. Attribution rides the SAME batch as the last entry (rule 7 — one round trip, not
+    // a second one just for it).
+    const refreshBlocksPreview = () => {
+        const texts = (x.texts || []).map((b) => b.content || "");
+        const all = [...texts, x.attribution || ""];
+        // nothing holds a {{token} -> render() would just echo the raw text back (templating.py's
+        // own "{{" not in text short-circuit), so skip the round trip entirely: the raw lines already
+        // painted (build time / the input handlers below) are already the final text.
+        if (!all.some((t) => t.includes("{{"))) return;
+        api.toasts.previewText(model.profile.name, all).then((rendered) => {
+            (rendered || []).forEach((r, i) => {
+                const el = i < texts.length ? pvLine(i) : attrLine();
+                if (el) el.textContent = r;
+            });
+        });
+    };
+    div.querySelectorAll(".tn-bk-content").forEach((el) => {
+        // live as-you-type RAW text in the preview (cheap DOM write, no round trip) — replaced by
+        // the resolved render once the edit commits (change) and the batch round-trips.
+        el.addEventListener("input", () => { const pv = pvLine(+el.dataset.i); if (pv) pv.textContent = el.value; });
+        el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "content", e.target.value); autosave(null); refreshBlocksPreview(); });
+        autoGrow(el);
+    });
+    div.querySelectorAll(".tn-bk-style").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "style", e.target.value); restripeSelect(e.target); autosave(null); refreshPvLine(+el.dataset.i); }));
+    div.querySelectorAll(".tn-bk-align").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "align", e.target.value); restripeSelect(e.target); autosave(null); refreshPvLine(+el.dataset.i); }));
+    div.querySelectorAll(".tn-bk-skip").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "skip_mode", e.target.value); restripeSelect(e.target); autosave(null); }));
     $(".tn-bk-add")?.addEventListener("click", () => { model.addToastText(x.id); rebuildNode(n.id); autosave(null); });
     div.querySelectorAll(".tn-bk-del").forEach((b) => armConfirm(b, () => { model.removeToastText(x.id, +b.dataset.i); rebuildNode(n.id); autosave(null); }, { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".tn-bk-up").forEach((b) => b.addEventListener("click", () => { if (model.moveToastText(x.id, +b.dataset.i, -1)) { rebuildNode(n.id); autosave(null); } }));
@@ -76,6 +129,12 @@ function wireToast(div, n) {
                 try { await navigator.clipboard.writeText(token); setStatus(`copied ${token}`); }
                 catch { setStatus(`copy failed — ${token}`); }
             },
+            hint: h("div", { class: "muted" },
+                "refine: ", h("code", {}, "[i]"), " / ", h("code", {}, "[a:b]"), " slice · ",
+                h("code", {}, "|sum"), " mean min max count first latest · ",
+                h("code", {}, "|join"), " / ", h("code", {}, "|join:\", \""), " · ",
+                h("code", {}, "|round:N"), " decimals (0 = none) · ",
+                h("code", {}, "?? -"), " fallback when empty"),
         });
     });
     // slide toggles are native checkboxes now — read `.checked` on change
@@ -86,20 +145,24 @@ function wireToast(div, n) {
         model.setToastProp(x.id, "show_icon", e.currentTarget.checked); autosave(null);
     });
     $(".tn-accum")?.addEventListener("change", (e) => {
-        model.setToastProp(x.id, "accumulate", e.currentTarget.checked); autosave(null);
+        model.setToastProp(x.id, "accumulate", e.currentTarget.checked); rebuildNode(n.id); autosave(null);
     });
     // test button: pop the toast now with its current config (mirrors the trigger's ↻ fire). The
     // server reads the toast from the SAVED profile, so commit the live field values + FLUSH the
     // pending save first — no need to defocus an input before clicking test.
     $(".tn-test")?.addEventListener("click", async () => {
         div.querySelectorAll(".tn-bk-content").forEach((el) => model.setToastText(x.id, +el.dataset.i, "content", el.value));
-        for (const [sel, key] of [[".tn-app", "app_name"], [".tn-icon", "icon"], [".tn-attr", "attribution"]]) {
+        // icon fields commit immediately from the picker (no editable input to flush here anymore)
+        for (const [sel, key] of [[".tn-app", "app_name"], [".tn-attr", "attribution"]]) {
             const el = $(sel); if (el) model.setToastProp(x.id, key, el.value);
         }
         autosave(null);
         try { await persist.flush(); await api.toasts.test(model.profile.name, x.id); }
         catch (err) { setStatus(`toast test failed: ${err.message || err}`); }
     });
+    // initial paint (also runs after add/remove/reorder rebuilds) — deferred until the node actually
+    // scrolls into view, so a graph with several toast nodes doesn't fire every preview at boot.
+    whenVisible(div, refreshBlocksPreview);
 }
 
 // Wire ONE generated-image editor section. `sec` is the `.tn-img` element (data-i = image index).
@@ -626,7 +689,7 @@ function wireToastImage(sec, x, n) {
     // element picker dropdown — jump to an element, or "(none)" to deselect
     q(".tn-il-pick")?.addEventListener("change", (e) => selectLine(e.target.value === "" ? null : +e.target.value));
     // placement (hero/inline/none) — no layout change, just persist + (nothing to repreview)
-    q(".tn-img-place")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "placement", e.target.value); autosave(null); });
+    q(".tn-img-place")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "placement", e.target.value); restripeSelect(e.target); autosave(null); });
     // unit toggle (px / % of image) — convert stored coords so the on-screen design is preserved
     q(".tn-img-unit")?.addEventListener("change", (e) => { model.convertToastImageUnit(x.id, idx, e.target.value); rebuildNode(n.id); autosave(null); });
     armConfirm(q(".tn-img-del"), () => { model.removeToastImage(x.id, idx); rebuildNode(n.id); autosave(null); }, { silent: true, resetOnOutside: true });
@@ -641,6 +704,8 @@ function wireToastImage(sec, x, n) {
     wireInspector();
     autoGrow(sec.querySelector(".tn-il-content"));
     if (sel != null) setActive(true);   // a rebuild that kept a selection (add/clone element) shows its overlay
-    afterBoot(refreshPreview);   // initial paint (also runs after a rebuild re-wires the section)
+    // initial paint (also runs after a rebuild re-wires the section) — deferred until this image
+    // section scrolls into view (the PNG render is the slower of the two toast previews).
+    whenVisible(sec, refreshPreview);
 }
 export { wireToast };

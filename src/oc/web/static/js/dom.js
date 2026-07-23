@@ -164,6 +164,17 @@ export const REC = () =>
     svg("svg", { class: "ic-rec", viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" },
         svg("circle", { cx: "12", cy: "12", r: "8", fill: "currentColor" }));
 
+// Re-label a `<${label}>`-wraps-the-current-value <select> (the convention every node's opt()
+// helper bakes in at build time) after a plain `change` event, which doesn't rebuild the DOM: without
+// this the bracket stays stuck on whatever was selected at last render instead of following the
+// user's new pick. Strips any existing wrap, then re-wraps whichever option now matches el.value.
+export const restripeSelect = (el) => {
+    for (const o of el.options) {
+        const bare = o.textContent.replace(/^<|>$/g, "");
+        o.textContent = o.value === el.value ? `<${bare}>` : bare;
+    }
+};
+
 // One labelled control row inside the node body grid (`.gn-grid`, graph.css): a label cell
 // that sizes to its own text (grid col 1) followed by whatever control the caller emits next
 // (col 2). The ONE label-cell primitive -- EVERY node's k/v rows build on it so labels line up
@@ -269,3 +280,5 @@ export const CHECK = _ic("M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z");
 export const XMARK = _ic("M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z");
 export const PASTE = _ic("M19 2h-4.18C14.4.84 13.3 0 12 0S9.6.84 9.18 2H5c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm7 18H5V4h2v3h10V4h2v16z");
 export const UNDO = _ic("M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z");
+export const TEXTLINE = _ic("M4 4h16v2H4V4zm0 5h16v2H4V9zm0 5h10v2H4v-2z");
+export const TOKEN = _ic("M8 3c-1.1 0-2 .9-2 2v4a2 2 0 0 1-2 2H3v2h1a2 2 0 0 1 2 2v4c0 1.1.9 2 2 2h2v-2H8v-5a2 2 0 0 0-1-1.73A2 2 0 0 0 8 9V5h2V3H8zM16 3c1.1 0 2 .9 2 2v4a2 2 0 0 0 2 2H21v2h-1a2 2 0 0 0-2 2v4c0 1.1-.9 2-2 2h-2v-2H16v-5a2 2 0 0 1 1-1.73A2 2 0 0 1 16 9V5h-2V3H16z");

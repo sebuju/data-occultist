@@ -1236,16 +1236,19 @@ class TriggerDef(BaseModel):
 
 
 class ToastTextDef(BaseModel):
-    """One styled text block on a toast node (a Windows ``AdaptiveText`` line). ``content``
-    supports ``{{token}}`` interpolation like the legacy title/message. ``style`` is a font
-    preset (``""`` = default, else ``caption|body|base|subtitle|title|subheader|header`` +
-    ``*subtle``/``*numeral`` variants); ``align`` is ``""|left|center|right``; ``max_lines``
-    (0 = unset) truncates a long block instead of letting it grow."""
+    """One styled text block on a toast node (a Windows ``AdaptiveText`` line, always unlimited
+    lines). ``content`` supports ``{{token}}`` interpolation like the legacy title/message. ``style``
+    is a font preset (``""`` = default, else ``caption|body|base|subtitle|title|subheader|header`` +
+    ``*subtle``/``*numeral`` variants); ``align`` is ``""|left|center|right``."""
 
     content: str = ""
     style: str = ""
     align: str = ""
-    max_lines: int = 0
+    # skip this block (drop it from the toast body) based on its {{token}}s' blankness — a token is
+    # blank when it resolves to nothing AND has no authored `?? fallback` (a fallback always shows
+    # something, so it never counts). "none" = never skip; "any" = skip if at least one token used
+    # is blank; "all" = skip only when every token used is blank. A block with no tokens never skips.
+    skip_mode: str = "none"  # none | any | all
 
 
 class ToastBorderSide(BaseModel):

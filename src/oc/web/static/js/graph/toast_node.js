@@ -5,7 +5,7 @@
 // alignment + max-lines; the server renders them as a toast's stacked AdaptiveText lines. Every
 // field maps to the ToastSpec the toasted-backed notifier renders. Rendering only — wiring is in
 // main.js (wireToast). Config persists in the profile YAML like any other node.
-import { h, svg, frag, labCell, srcRow, kv, subhead, gspan, trashBtn, PLUS, COPY } from "../dom.js";
+import { h, svg, frag, labCell, srcRow, kv, subhead, gspan, trashBtn, PLUS, COPY, TEXTLINE, CAMERA, TOKEN } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
 import { slideToggle } from "./node_parts.js";
 import { iconFor } from "./node_icons.js";
@@ -18,7 +18,14 @@ const STYLES = [["", "default"], ["caption", "caption"], ["captionsubtle", "capt
     ["body", "body"], ["basesubtle", "base subtle"], ["base", "base"], ["subtitle", "subtitle"],
     ["title", "title"], ["subheader", "subheader"], ["header", "header"]];
 const ALIGNS = [["", "auto"], ["left", "left"], ["center", "center"], ["right", "right"]];
+// a block's skip_mode: whether to drop it from the toast body based on its {{token}}s' blankness
+// (a token counts as blank only when it has no authored `?? fallback`) — "none" never skips,
+// "any" skips if at least one token used is blank, "all" only when every token is.
+const SKIP_MODES = [["none", "none"], ["any", "skip if any empty"], ["all", "skip if all empty"]];
 const IMG_UNITS = [["px", "px"], ["pct", "% of image"]];
+// display name for an icon field: the stored value is always a full path (picked via the icon
+// picker modal, occasionally hand-set in YAML) — show just its basename, not the whole path.
+const iconName = (path) => (path ? path.split(/[\\/]/).pop() : "(none)");
 
 // Editor for one generated image (hero banner / inline body image): an enable toggle, a live
 // server-rendered preview, background (solid/gradient) + canvas size, and a list of positioned
@@ -116,7 +123,7 @@ function imageEditor(im, idx, sel) {
         // floating remove — top-right, reveals on hover of this image (shared trashBtn look)
         trashBtn({ cls: "tn-img-del", title: "remove this image" }),
         // image settings (labelled) above the preview — placement/units/size/background + delete
-        h("div", { class: "lab-grid" },
+        h("div", { class: "gn-grid" },
             labCell("placement", "where this image sits — none temporarily disables it"),
             h("select", { class: "tn-img-place" }, IMG_PLACE.map(opt(im.placement || "inline"))),
             labCell("units", "how element x/y/w/h read: px or % of the image size"),
@@ -182,21 +189,82 @@ export function tokenGroups(model, x) {
     return groups;
 }
 
-// One editable text block: a content textarea + its style/align/max-lines controls + reorder /
-// remove. `i` is its index (carried on every control as data-i for the wiring).
+// Windows always binds the first TWO surviving text blocks to the toast's own built-in title +
+// subtitle lines (top-level AdaptiveText, outside the styled group) — hint-style/hint-align only
+// take effect on text INSIDE a group/subgroup (see _toast_child.py), so a style/align picker on
+// these two would be a lie. `i` here is the block's position in the editor list (0/1), which is
+// also how _toast_child.py pairs them up (first two surviving blocks after skip_mode drops).
+const AUTO_ROLE = ["title", "subtitle"];   // block 0 -> title, block 1 -> subtitle
+
+// One editable text block: style/align/skip-mode controls + reorder/remove, then the content
+// textarea. `i` is its index (carried on every control as data-i for the wiring).
 function blockRow(b, i, n) {
     const opt = (cur) => ([v, l]) => h("option", { value: v, selected: v === (cur || "") }, v === (cur || "") ? `<${l}>` : l);
+    const role = AUTO_ROLE[i];   // set for i 0/1 only
     return h("div", { class: "tn-block", dataset: { i } },
-        h("textarea", { class: "tn-bk-content", dataset: { i }, rows: "2",
-            placeholder: "text — supports {{token}}" }, b.content || ""),
         h("div", { class: "tn-bk-ctl" },
-            h("select", { class: "tn-bk-style", dataset: { i }, title: "font style" }, STYLES.map(opt(b.style))),
-            h("select", { class: "tn-bk-align", dataset: { i }, title: "text alignment" }, ALIGNS.map(opt(b.align))),
-            h("input", { class: "tn-bk-max", dataset: { i }, type: "number", min: "0",
-                value: b.max_lines || "", placeholder: "lines", title: "max lines (blank / 0 = unlimited)" }),
-            h("button", { class: "tn-bk-up", dataset: { i }, title: "move up", disabled: i === 0 }, "▲"),
-            h("button", { class: "tn-bk-dn", dataset: { i }, title: "move down", disabled: i === n - 1 }, "▼"),
-            trashBtn({ cls: "tn-bk-del", dataset: { i }, title: "remove block" })));
+            role
+                ? h("span", { class: "tn-bk-auto muted",
+                    title: `Windows renders this block as the toast's own ${role} line — always its own default size/weight and left alignment, no custom style or align here` },
+                    role, " (auto)")
+                : frag(
+                    h("span", { class: "tn-bk-lbl" }, "style"),
+                    h("select", { class: "tn-bk-style", dataset: { i }, title: "font style" }, STYLES.map(opt(b.style))),
+                    h("span", { class: "tn-bk-lbl" }, "align"),
+                    h("select", { class: "tn-bk-align", dataset: { i }, title: "text alignment" }, ALIGNS.map(opt(b.align)))),
+            h("span", { class: "tn-bk-lbl" }, "skip"),
+            h("select", { class: "tn-bk-skip", dataset: { i },
+                title: "drop this block based on its {{token}}s' blankness (a token counts as blank only when it has no authored `?? fallback`)" },
+                SKIP_MODES.map(opt(b.skip_mode))),
+            h("div", { class: "frule-btns" },
+                h("button", { class: "tn-bk-up", dataset: { i }, title: "move up", disabled: i === 0 }, "▲"),
+                h("button", { class: "tn-bk-dn", dataset: { i }, title: "move down", disabled: i === n - 1 }, "▼"),
+                trashBtn({ cls: "tn-bk-del", dataset: { i }, title: "remove block" }))),
+        h("textarea", { class: "tn-bk-content", dataset: { i }, rows: "2",
+            placeholder: "text — supports {{token}}" }, b.content || ""));
+}
+
+// The class + alignment a preview line should carry for block `b` at position `i` — shared by the
+// initial build (previewLine) and toast_wire.js's in-place patch on a style/align edit (rule 7: one
+// computation, not two that can drift). The first two positions are the auto title/subtitle (see
+// AUTO_ROLE): Windows ignores their style/align, so the preview forces the same fixed look + left
+// alignment Windows actually renders there, not the stored (dead) values.
+export function blockPreviewLook(b, i) {
+    const role = AUTO_ROLE[i];
+    return { cls: role ? "tn-bk-pv-auto" + role : "tn-bk-pv-" + (b.style || "default"),
+              align: role ? "left" : (b.align || "left") };
+}
+
+// One line of the combined-outcome preview: mirrors a block's style/align client-side
+// (approximating the Fluent AdaptiveText sizes Windows actually renders — see .tn-bk-pv-* in
+// graph.css) so the stacked body reads correctly without popping a real toast. `data-i` lets
+// toast_wire.js patch a single line in place on a content/style/align edit. Blocks are always
+// unlimited lines (no max-lines truncation).
+function previewLine(b, i) {
+    const { cls, align } = blockPreviewLook(b, i);
+    return h("div", { class: "tn-bk-pv-line " + cls, dataset: { i }, style: { textAlign: align } },
+        b.content || "");
+}
+
+// The attribution line: Windows always shows a bottom row (app identity + timestamp) on every
+// toast — the `attribution` field just adds text ALONGSIDE that fixed row, never replaces it. The
+// preview can't reproduce the fixed row itself, only the extra text, styled small/muted to read as
+// the secondary line it is. `data-attr` lets toast_wire.js patch it in place on an edit.
+// Renders right after the auto title/subtitle and BEFORE the styled body blocks — confirmed from a
+// real fired toast, Windows slots attribution there, not after the whole body.
+function attrPreviewLine(attribution) {
+    return h("div", { class: "tn-bk-pv-attr muted", dataset: { attr: "" } }, attribution || "");
+}
+
+// The combined preview: the auto title/subtitle lines, then the attribution line, then every
+// remaining styled body block (matches the real fired order) — shown once at least one block or
+// an attribution exists (nothing to preview otherwise).
+function blocksPreview(blocks, attribution) {
+    if (!blocks.length && !attribution) return null;
+    return h("div", { class: "tn-bk-preview" },
+        blocks.slice(0, 2).map((b, i) => previewLine(b, i)),
+        attrPreviewLine(attribution),
+        blocks.slice(2).map((b, i) => previewLine(b, i + 2)));
 }
 
 export function toastParts(x, model) {
@@ -215,61 +283,57 @@ export function toastParts(x, model) {
         sourcesInput({
             chips: wired.map((s) => ({ value: s.ref, node: model && model.refNode(s.ref) })),
             free: avail, addinCls: "sv-addin tn-addsrc", rmCls: "sv-rmin tn-rmsrc" }));
-    // the rich-text body: an ordered, styled block list + an "add block" button
+    // token picker trigger, riding the "blocks" subhead row alongside add-text/add-image (below).
+    // Opens a rich popover listing every wired source's {{token}} with a live value preview and a
+    // syntax legend pinned below the list (toast_wire.js) — picking a token copies {{token}} to
+    // the clipboard, ready to paste into any text block or image text line.
+    const tokBtn = groups.length ? h("button", { class: "tn-tokbtn gi", type: "button",
+        title: "browse the wired sources' {{tokens}} with a live value preview" },
+        // label stays in flow (visibility:hidden while loading, not removed) so the button's
+        // width never changes when the spinner shows/hides — only the spinner overlays it.
+        h("span", { class: "tn-tokbtn-lbl" }, TOKEN()),
+        h("span", { class: "tn-tokbtn-spin" })) : null;
+    // the rich-text body: an ordered, styled block list; the subhead row also carries the
+    // icon-only "add text block" / "add image" buttons (frule-btns, matches the rules pipeline)
+    // plus the token picker.
     const blocks = (x.texts || []);
     const blocksSection = h("div", { class: "tn-blocks" },
-        subhead("blocks", null, "the toast body — one styled line per block; the first is the bold title line"),
+        subhead("blocks", h("div", { class: "frule-btns" },
+            tokBtn,
+            h("button", { class: "tn-bk-add", title: "add a text block" }, TEXTLINE()),
+            h("button", { class: "tn-img-add", title: "add an image" }, CAMERA())),
+            "the toast body — one styled line per block; the first two are the bold title/subtitle line"),
         blocks.map((b, i) => blockRow(b, i, blocks.length)),
-        h("button", { class: "tn-bk-add", title: "add another text block" }, "+ text"));
-    // token picker trigger + a small syntax legend (rendered below the images, inside a
-    // .tn-tokbox). The button opens a rich popover listing every wired source's {{token}} with a
-    // live value preview (toast_wire.js) — picking one copies {{token}} to the clipboard, ready to
-    // paste into any text block or image text line.
-    const hint = groups.length ? frag(
-        h("button", { class: "tn-tokbtn gi", type: "button",
-            title: "browse the wired sources' {{tokens}} with a live value preview" },
-            // label stays in flow (visibility:hidden while loading, not removed) so the button's
-            // width never changes when the spinner shows/hides — only the spinner overlays it.
-            h("span", { class: "tn-tokbtn-lbl" }, "+ token"),
-            h("span", { class: "tn-tokbtn-spin" })),
-        h("div", { class: "tn-tokhint muted" },
-            "refine: ", h("code", {}, "[i]"), " / ", h("code", {}, "[a:b]"), " slice · ",
-            h("code", {}, "|sum"), " mean min max count first latest · ",
-            h("code", {}, "|join"), " / ", h("code", {}, "|join:\", \""), " · ",
-            h("code", {}, "|round:N"), " decimals (0 = none) · ",
-            h("code", {}, "?? -"), " fallback when empty")) : null;
+        blocksPreview(blocks, x.attribution));
     return {
         title: h("input", { class: "gi gi-id toastrename", value: x.id, title: "rename toast" }),
         body: frag(
-            h("div", { class: "lab-grid" }, sourcesRow),
-            // token picker sits directly UNDER sources (its tokens feed both text blocks and image
-            // text lines).
-            groups.length ? h("div", { class: "tn-tokbox" }, hint) : null,
+            sourcesRow,
+            labCell("duration", "how long the toast lingers before auto-dismissing"),
+            h("select", { class: "tn-duration" }, DURATIONS.map(durOpt)),
+            labCell("icon", "app-logo image shown on the toast — pick a raster file (png/jpg/gif); blank = the data-occultist logo. Toggle off to show no logo."),
+            h("div", { class: "tn-icon-row" },
+                slideToggle({ on: x.show_icon !== false, cls: "tn-showicon", title: "show the app-logo icon on the toast" }),
+                h("span", { class: "tn-icon-name muted" }, iconName(x.icon)),
+                h("button", { class: "tn-icon-browse", type: "button", title: "pick an icon…" }, "…")),
+            labCell("muted", "silence the toast's notification sound"),
+            slideToggle({ on: !!x.muted, cls: "tn-muted", title: "silence the toast sound" }),
+            labCell("replace", "a stable key (supports {{token}}) that lets this toast REPLACE its own last notification in place instead of stacking a new one each fire. Blank = every fire is its own toast."),
+            h("input", { class: "tn-replacekey", value: x.replace_key || "", placeholder: "(stack each fire)" }),
+            labCell("accumulate", "grow the toast: each fire ADDS its body to a running tally (kept newest-wins, capped) instead of wiping to the latest — so a relic toast lists every screen seen. Needs a replace key; cleared when live collection starts."),
+            h("div", { class: "tn-accum-row" },
+                slideToggle({ on: !!x.accumulate, cls: "tn-accum", title: "accumulate the toast body across fires" }),
+                x.accumulate ? h("input", { class: "tn-accumcap", type: "number", min: "1", value: x.accumulate_cap ?? 10, title: "max retained entries" }) : null),
+            labCell("app", "the notification's source label (its AppUserModelID)"),
+            h("input", { class: "tn-app", value: x.app_name || "", placeholder: titleDefault }),
+            labCell("attribution", "small attribution line under the body — supports {{token}}"),
+            h("input", { class: "tn-attr", value: x.attribution || "", placeholder: "(none)" }),
             blocksSection,
             // generated images (drawn on the fly, message text painted on) — a list, each with its
-            // own placement (hero / inline / none); "+ image" appends another.
+            // own placement (hero / inline / none); the camera icon on the "blocks" subhead row
+            // appends another.
             h("div", { class: "tn-imgs" },
-                model ? model.toastImages(x.id).map((im, idx) => imageEditor(im, idx, model.toastImageSel(x.id, idx))) : null,
-                h("button", { class: "tn-img-add" }, "+ image")),
-            h("div", { class: "lab-grid tn-app-grid" },
-                labCell("app", "the notification's source label (its AppUserModelID)"),
-                h("input", { class: "tn-app", value: x.app_name || "", placeholder: titleDefault }),
-                labCell("duration", "how long the toast lingers before auto-dismissing"),
-                h("select", { class: "tn-duration" }, DURATIONS.map(durOpt)),
-                labCell("icon", "app-logo image path/URL shown on the toast — a raster file (png/jpg/gif) or http(s) URL; leave blank to use the data-occultist logo. Toggle off to show no logo."),
-                h("div", { class: "tn-icon-row" },
-                    slideToggle({ on: x.show_icon !== false, cls: "tn-showicon", title: "show the app-logo icon on the toast" }),
-                    h("input", { class: "tn-icon", value: x.icon || "", placeholder: "(data-occultist logo)" })),
-                labCell("attribution", "small attribution line under the body — supports {{token}}"),
-                h("input", { class: "tn-attr", value: x.attribution || "", placeholder: "(none)" }),
-                labCell("muted", "silence the toast's notification sound"),
-                slideToggle({ on: !!x.muted, cls: "tn-muted", title: "silence the toast sound" }),
-                labCell("replace", "a stable key (supports {{token}}) that lets this toast REPLACE its own last notification in place instead of stacking a new one each fire. Blank = every fire is its own toast."),
-                h("input", { class: "tn-replacekey", value: x.replace_key || "", placeholder: "(stack each fire)" }),
-                labCell("accumulate", "grow the toast: each fire ADDS its body to a running tally (kept newest-wins, capped) instead of wiping to the latest — so a relic toast lists every screen seen. Needs a replace key; cleared when live collection starts."),
-                h("div", { class: "tn-accum-row" },
-                    slideToggle({ on: !!x.accumulate, cls: "tn-accum", title: "accumulate the toast body across fires" }),
-                    h("input", { class: "tn-accumcap", type: "number", min: "1", value: x.accumulate_cap ?? 10, title: "max retained entries" })))),
+                model ? model.toastImages(x.id).map((im, idx) => imageEditor(im, idx, model.toastImageSel(x.id, idx))) : null)),
         // monochrome bell from the ONE icon source (not a colour emoji) + label
         foot: h("button", { class: "tn-test", title: "pop this toast now" }, iconFor("toast"), "test"),
         // drop a readout / dataset / subset out-port onto this toast to wire it as a {{token}} feeder

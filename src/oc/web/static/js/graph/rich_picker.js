@@ -14,15 +14,18 @@
 import { h } from "../dom.js";
 import { anchoredPopover } from "./combo_popover.js";
 
-// richPickerPop({ anchor, groups, current, onPick })
+// richPickerPop({ anchor, groups, current, onPick, hint })
 //   anchor  : the trigger element (a `.gi` button) the popover opens under.
 //   groups  : [[groupTitle | null, [{ value, label, meta }]]] — a null/blank title omits the
 //             header, so a flat list is just one untitled group.
 //   current : the currently-selected value — its row is marked with .sel and pre-highlighted.
 //   onPick  : (value) => void — called with the picked value, then the popover closes.
-export function richPickerPop({ anchor, groups, current, onPick }) {
+//   hint    : optional node/string shown pinned below the scrollable list (outside it, so it
+//             stays put while the list scrolls) — e.g. a syntax legend. Omit for no hint area.
+export function richPickerPop({ anchor, groups, current, onPick, hint }) {
     const list = h("div", { class: "sv-combo-list" });
-    const pop = h("div", { class: "sv-combo-pop rich-pick-pop", tabIndex: -1 }, list);
+    const pop = h("div", { class: "sv-combo-pop rich-pick-pop", tabIndex: -1 }, list,
+        hint ? h("div", { class: "sv-combo-hint" }, hint) : null);
 
     const rows = [], vals = [];   // flat option rows across groups (headers excluded from nav)
     let hl = -1;

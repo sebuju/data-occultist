@@ -36,7 +36,6 @@ def _post(spec: dict) -> None:
         ToastTextAlign,
         ToastTextStyle,
     )
-
     def _style(name: str):
         try:
             return ToastTextStyle[name.upper()] if name else None
@@ -87,33 +86,44 @@ def _post(spec: dict) -> None:
     if hero and Path(hero).exists():
         elements.append(Image(Path(hero).resolve().as_uri(), alt="", placement=ToastImagePlacement.HERO))
 
-    text_count = 0
-    for b in blocks:
-        content = b.get("content")
-        if not content:
-            continue
-        elements.append(Text(
-            content, style=_style(b.get("style", "")), align=_align(b.get("align", "")),
-            max_lines=b.get("max_lines") or None,
-        ))
-        text_count += 1
+    # Windows always binds the first TWO surviving text elements to the toast's own built-in
+    # title + subtitle lines (top-level AdaptiveText) — those two ignore hint-style/hint-align no
+    # matter what, so pass them through plain and reserve the styled group for anything after them
+    # (mirrors the node editor: AUTO_ROLE in toast_node.js disables style/align on blocks 0/1).
+    # Blanket, not opt-in: an opt-out toggle was tried, but with no top-level text at all Windows
+    # shows its own default title ("New notification"/the app name) AND still reserves that line's
+    # full height even with a blank placeholder — there's no way to have every block keep its own
+    # style AND avoid both the default text and the wasted row. Real top-level content is the only
+    # thing that satisfies Windows without a gap, so blocks 0/1 always pay that price.
+    survivors = [b for b in blocks if b.get("content")]
+    head_survivors, rest_survivors = survivors[:2], survivors[2:]
+    elements.extend(Text(b["content"]) for b in head_survivors)   # Windows' own title/subtitle binding
+    rest_texts = [Text(b.get("content"), style=_style(b.get("style", "")), align=_align(b.get("align", "")))
+                  for b in rest_survivors]
+    if rest_texts:
+        # toasted groups elements by NESTING PYTHON LISTS in `self.elements` (Toast._walk_elements)
+        # — one list level = <group>, a list nested inside it = <subgroup> — rather than a
+        # dedicated element class. hint-style/hint-align are honored ONLY on Text inside a
+        # subgroup, so wrap these blocks in one full-width group/subgroup to make each block's
+        # style+align actually reach the rendered toast (matches the node editor's preview).
+        elements.append([rest_texts])
 
     # generated inline body images (no placement = inline), in order
     for inl in spec.get("inline_images") or []:
         if inl and Path(inl).exists():
             elements.append(Image(Path(inl).resolve().as_uri(), alt=""))
 
-    if spec.get("attribution"):
-        elements.append(Text(spec["attribution"], is_attribution=True))
-        text_count += 1
+    attribution = spec.get("attribution")
+    if attribution:
+        elements.append(Text(attribution, is_attribution=True))
 
     # Windows injects a "New notification" placeholder title when a toast carries NO text element
-    # (e.g. an image-only toast). A blank text element suppresses that, BUT Windows trims
+    # at all (e.g. an image-only toast). A blank text element suppresses that, BUT Windows trims
     # WHITESPACE-only content (space, and the non-breaking space U+00A0 — both Unicode category Zs)
     # and still counts the toast as textless, so neither works. A zero-width space (U+200B) is
     # category Cf (format), NOT whitespace: Windows keeps it, so the toast has content and shows no
     # placeholder, while rendering nothing visible.
-    if text_count == 0:
+    if not head_survivors and not rest_texts and not attribution:
         elements.append(Text("​"))
 
     toast = Toast(

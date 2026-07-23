@@ -61,8 +61,8 @@ export class GraphModel {
             // title -> a "title"-styled block, message -> a default block. Clear the old fields so
             // `texts` is the single source of truth from here on.
             if (!x.texts.length && (x.title || x.message)) {
-                if (x.title) x.texts.push({ content: x.title, style: "title", align: "", max_lines: 0 });
-                if (x.message) x.texts.push({ content: x.message, style: "", align: "", max_lines: 0 });
+                if (x.title) x.texts.push({ content: x.title, style: "title", align: "" });
+                if (x.message) x.texts.push({ content: x.message, style: "", align: "" });
                 x.title = ""; x.message = "";
             }
         }
@@ -462,6 +462,7 @@ export class GraphModel {
         this._repoint("dataset", oldId, newId, { decl: true });   // move def + feeder decls + every ref
         if (!this.datasetDef(newId)) this.ensureDatasetDef(newId);   // a def must exist for the new name
         if (this._extraDatasets) this._extraDatasets = this._extraDatasets.filter((x) => x !== oldId);   // drop stale disk entry
+        this._rewriteToastTokens("dataset", oldId, newId);   // {{dataset:oldId...}} tokens in toast text
         this._emitRename("dataset", oldId, newId);
         return true;
     }
@@ -1556,7 +1557,7 @@ export class GraphModel {
     removeToastSource(id, ref) { const x = this.toastNode(id); if (x) x.sources = (x.sources || []).filter((r) => r !== ref); }
     // ---- toast rich-text blocks (the styled body) ----------------------------
     toastTexts(id) { const x = this.toastNode(id); return (x && x.texts) || []; }
-    addToastText(id) { const x = this.toastNode(id); if (!x) return; x.texts = x.texts || []; x.texts.push({ content: "", style: "", align: "", max_lines: 0 }); }
+    addToastText(id) { const x = this.toastNode(id); if (!x) return; x.texts = x.texts || []; x.texts.push({ content: "", style: "", align: "", skip_mode: "none" }); }
     removeToastText(id, i) { const x = this.toastNode(id); if (x && x.texts) x.texts.splice(i, 1); }
     moveToastText(id, i, dir) {
         const x = this.toastNode(id); if (!x || !x.texts) return false;
@@ -1565,7 +1566,7 @@ export class GraphModel {
     }
     setToastText(id, i, key, val) {
         const x = this.toastNode(id); const b = x && x.texts && x.texts[i]; if (!b) return;
-        if (key === "max_lines") b.max_lines = Math.max(0, parseInt(val, 10) || 0);
+        if (key === "skip_mode") b.skip_mode = ["any", "all"].includes(val) ? val : "none";
         else if (["content", "style", "align"].includes(key)) b[key] = val ?? "";
     }
     // ---- toast generated images (a LIST; each has its own placement: hero|inline|none) --------
@@ -1957,6 +1958,7 @@ export class GraphModel {
     removeDataset(id) {
         this.removeDatasetDef(id);   // drop the def object first...
         this._unwireDataset(id);     // ...then unwire every remaining holder
+        this._rewriteToastTokens("dataset", id, null);   // strip its now-dead tokens from toast text
     }
 
     // mint a fresh empty dataset (e.g. dragging a producer's wire onto empty canvas)
@@ -1999,11 +2001,13 @@ export class GraphModel {
     removeSubset(id) {
         this.profile.subsets = (this.profile.subsets || []).filter((s) => s.id !== id);
         this._unwire("subset", id);   // subset ids live in the shared dataset/subset ref sites
+        this._rewriteToastTokens("subset", id, null);   // strip its now-dead tokens from toast text
     }
     renameSubset(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.subsetDef(newId)) return false;
         this._repoint("subset", oldId, newId, { decl: true });   // def id + every subset ref (a subset can feed another)
+        this._rewriteToastTokens("subset", oldId, newId);   // {{subset:oldId...}} tokens in toast text
         this._emitRename("subset", oldId, newId);
         return true;
     }
@@ -2378,7 +2382,7 @@ export class GraphModel {
         if (!v) return false;
         v.id = newId;   // the readout id lives on the window (not a top-level def) — move it directly
         this._repoint("readout", vid, newId);   // toast/register "readout:" sources + trigger readout_watch
-        this._rewriteReadoutTokens(vid, newId);   // {{readout:vid}} / legacy {{vid}} tokens in toast text
+        this._rewriteToastTokens("readout", vid, newId);   // {{readout:vid}} / legacy {{vid}} tokens in toast text
         return true;
     }
     removeReadout(winId, vid) {
@@ -2389,22 +2393,33 @@ export class GraphModel {
         // drop the linked field if nothing else uses it
         if (v && v.field && !this._fieldUsed(w, v.field)) w.fields = (w.fields || []).filter((f) => f.id !== v.field);
         this._unwire("readout", vid);   // toast/register "readout:" sources + trigger readout_watch
-        this._rewriteReadoutTokens(vid, null);   // strip its now-dead tokens from toast text
+        this._rewriteToastTokens("readout", vid, null);   // strip its now-dead tokens from toast text
     }
-    // Rewrite (newId set) or strip (newId null) a readout's {{readout:id}} / legacy {{id}} tokens
-    // across every toast text surface — the token-string twin of the structured _repoint/_unwire
-    // above (tokens are substring edits, not whole-value id slots, so they live outside the registry).
-    _rewriteReadoutTokens(vid, newId) {
-        const esc = vid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const rePref = new RegExp("\\{\\{\\s*readout:\\s*" + esc + "\\s*(\\|[^}]*)?\\}\\}", "g");
-        const reBare = new RegExp("\\{\\{\\s*" + esc + "\\s*\\}\\}", "g");
+    // Rewrite (newId set) or strip (newId null) a graph id inside toast-text {{token}} strings, for
+    // the three heads toast text supports (readout/dataset/subset — see collect/templating.py). The
+    // token-string twin of the structured _repoint/_unwire above: tokens are substring edits, not
+    // whole-value id slots, so they live outside the registry. Only the head id moves; every suffix
+    // (.field / [slice] / |agg / ?? default) is preserved. Head-id boundary mirrors pretty_repoint.py
+    // _HEAD_END — the id ends at `.` `[` `|` whitespace or `}`.
+    _rewriteToastTokens(head, oldId, newId) {
+        const reTok = /\{\{(.+?)\}\}/g;
+        const idHead = new RegExp("^" + head + ":\\s*([^.\\[|\\s}]+)([\\s\\S]*)$");
+        const rebuild = (inner) => {
+            const s = inner.trim();
+            const m = s.match(idHead);
+            if (m && m[1] === oldId) return newId === null ? null : `${head}:${newId}${m[2]}`;
+            // legacy bare {{id}} == readout:id (older toast text); promote to the prefixed form
+            if (head === "readout" && s === oldId) return newId === null ? null : `readout:${newId}`;
+            return undefined;   // unrelated token — leave the whole match untouched
+        };
         for (const t of this.profile.toasts || [])
             for (const st of this._toastTokenSites(t)) {
                 const s = st.get();
                 if (typeof s !== "string" || !s.includes("{{")) continue;
-                st.set(newId
-                    ? s.replace(rePref, (_m, agg) => `{{readout:${newId}${agg || ""}}}`).replace(reBare, `{{readout:${newId}}}`)
-                    : s.replace(rePref, "").replace(reBare, ""));
+                st.set(s.replace(reTok, (whole, inner) => {
+                    const r = rebuild(inner);
+                    return r === undefined ? whole : (r === null ? "" : `{{${r}}}`);
+                }));
             }
     }
     // Every readout across all windows, for trigger-watch listing: {id, win}.

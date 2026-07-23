@@ -244,16 +244,14 @@ class WindowClassifier(ABC):
 
 @dataclass
 class ToastText:
-    """One styled text block on a toast (a Windows ``AdaptiveText``). ``content`` is the
-    already-token-rendered line; ``style`` is a size/weight preset name (``""`` = default,
-    else ``caption|body|base|subtitle|title|subheader|header`` and their ``*subtle`` /
-    ``*numeral`` variants); ``align`` is ``""|left|center|right``; ``max_lines`` (0 = unset)
-    caps the block's height (a long body truncates instead of growing)."""
+    """One styled text block on a toast (a Windows ``AdaptiveText``, always unlimited lines).
+    ``content`` is the already-token-rendered line; ``style`` is a size/weight preset name
+    (``""`` = default, else ``caption|body|base|subtitle|title|subheader|header`` and their
+    ``*subtle`` / ``*numeral`` variants); ``align`` is ``""|left|center|right``."""
 
     content: str = ""
     style: str = ""
     align: str = ""
-    max_lines: int = 0
 
 
 @dataclass

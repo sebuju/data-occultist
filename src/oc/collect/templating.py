@@ -250,6 +250,22 @@ def render(text: str, ctx: TokenContext, *, keep_missing: bool = False) -> str:
     return _TOKEN.sub(sub, text)
 
 
+def token_blanks(text: str, ctx: TokenContext) -> list[bool]:
+    """Per-``{{token}}`` blankness in ``text`` — one bool per token found, in order. A token is
+    blank when it resolves to ``None``/``""`` AND has no authored ``?? fallback`` (a fallback always
+    renders something, so it never counts as blank). Mirrors ``render()``'s per-token resolution
+    but reports blankness instead of building the substituted string — used by a toast block's
+    ``skip_mode`` (any/all) so the decision is about the TOKENS themselves, not whether the fully
+    rendered string happens to be blank (which literal surrounding text would mask)."""
+    out = []
+    for m in _TOKEN.finditer(text or ""):
+        base, default = split_default(m.group(1).strip())
+        core, _dp = split_dp(base)
+        v = resolve_token(ctx, core)
+        out.append((v is None or v == "") and default is None)
+    return out
+
+
 def render_template(text: str, values: dict | None) -> str:
     """Back-compat readouts-only render: ``values`` is a flat ``{readout_id: value}`` map.
     Kept so callers that only have live readouts (no dataset access) still work; dataset/subset

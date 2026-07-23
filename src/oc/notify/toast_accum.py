@@ -41,8 +41,8 @@ def _path(data_dir, game: str, key: str) -> Path:
 
 
 def _blocks_sig(blocks: list[dict]) -> str:
-    return json.dumps([[b.get("content", ""), b.get("style", ""), b.get("align", ""),
-                        b.get("max_lines", 0)] for b in blocks], sort_keys=True)
+    return json.dumps([[b.get("content", ""), b.get("style", ""), b.get("align", "")]
+                       for b in blocks], sort_keys=True)
 
 
 def _entry_sig(entry: dict) -> str:

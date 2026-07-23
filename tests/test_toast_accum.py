@@ -8,7 +8,7 @@ from oc.profile.models import ToastDef, ToastTextDef
 
 
 def _blocks(*contents):
-    return [{"content": c, "style": "", "align": "", "max_lines": 0} for c in contents]
+    return [{"content": c, "style": "", "align": ""} for c in contents]
 
 
 # ---- the sidecar tally ---------------------------------------------------------------

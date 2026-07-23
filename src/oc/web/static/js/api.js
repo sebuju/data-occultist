@@ -717,6 +717,25 @@ export const toasts = {
         try { boxes = JSON.parse(r.headers.get("X-Text-Boxes") || "[]"); } catch { boxes = []; }
         return { url: URL.createObjectURL(await r.blob()), boxes };
     },
+    // resolve a batch of in-progress block CONTENT strings (the combined-outcome preview) through
+    // the real render engine — same slice/aggregate/fallback/decimal handling a fired toast gets.
+    // Returns the rendered strings in order (unfed tokens stay literal); `[]` on failure.
+    previewText: (game, texts) => tfetch(`/api/toasts/${_pg(game)}/preview_text`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texts }) },
+        10_000).then((r) => (r.ok ? r.json().then((x) => x.rendered) : [])).catch(() => []),
+};
+
+// Icon-picker modal (both the small app-logo icon and the large icon-beside-title field): find
+// candidate local image files, and a plain URL for the picker's thumbnail preview.
+export const icons = {
+    // stored gallery — shared across every game, not searched from the filesystem each time.
+    list: (signal) => tfetch("/api/icons", { signal }, 15_000).then((r) => ok(r, "list icons").then((x) => x.json())),
+    upload: (file, signal) => {
+        const body = new FormData();
+        body.append("file", file);
+        return tfetch("/api/icons", { method: "POST", body, signal }, 30_000).then((r) => ok(r, "upload icon").then((x) => x.json()));
+    },
+    fileUrl: (name) => `/api/icons/file?name=${encodeURIComponent(name)}`,
 };
 
 // Resolve {{token}} inner-scalars server-side (count/sum/slice/join via templating.py) — one POST
