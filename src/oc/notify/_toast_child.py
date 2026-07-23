@@ -1,22 +1,28 @@
 """Out-of-process toast poster — the ONE place a toast is actually handed to Windows.
 
-Run as a throwaway script (``python _toast_child.py <spec.json>``), never imported by the
-server: :class:`oc.notify.windows_toast.WindowsToastNotifier` spawns one of these per toast and
-waits on it with a hard timeout, OS-killing it if it stalls. That process boundary is the whole
-point — see the ``windows_toast`` module docstring.
+Run as a script, never imported by the server. Two modes:
 
-Why a separate PROCESS and not (as before) a throwaway thread: posting a toast means a synchronous
-WinRT/COM call into the Windows notification service (WpnUserService). That call occasionally
-stalls indefinitely, and the ``winsdk`` (pywinrt 1.0.0b10) projection does NOT release the GIL
-around it — so a stuck post freezes the *entire* interpreter, and a ``thread.join(timeout)`` can
-never preempt it (the join needs the GIL the stuck thread is holding). A Python thread can't be
-force-killed; a child process can. Isolating the post in a child means a hang costs one abandoned
-child (SIGKILLed on timeout) instead of the whole server. It also keeps ``winsdk``/``toasted`` —
-and the WinRT runtime DLLs they pull in — out of the server process entirely, so they can never
-load ahead of onnxruntime's native extension and break OCR.
+- ``python _toast_child.py --serve`` — the **toast host**: print ``ready`` once the WinRT
+  imports are warm, then loop reading one JSON :class:`ToastSpec` per stdin line, posting it,
+  and acking ``ok``/``err`` on stdout. :class:`oc.notify.windows_toast.WindowsToastNotifier`
+  keeps ONE of these alive and watches each post with a hard timeout, OS-killing and
+  respawning the host if a post stalls. The expensive part (a fresh interpreter + the
+  toasted/winsdk imports) is paid once per host, not once per toast.
+- ``python _toast_child.py <spec.json>`` — legacy one-shot: post a single spec and exit.
+  Kept for manual debugging (``occ`` never uses it).
 
-This script is deliberately self-contained: it imports only stdlib + toasted + winsdk, never the
-``oc`` package, so a spawn is cheap and can't drag in the OCR/capture stack.
+Why a separate PROCESS and not a thread: posting a toast means a synchronous WinRT/COM call
+into the Windows notification service (WpnUserService). That call occasionally stalls
+indefinitely, and the ``winsdk`` (pywinrt 1.0.0b10) projection does NOT release the GIL around
+it — so a stuck post freezes the *entire* interpreter, and a ``thread.join(timeout)`` can
+never preempt it (the join needs the GIL the stuck thread is holding). A Python thread can't
+be force-killed; a child process can. Isolating the post out here means a hang costs one
+killed-and-respawned host instead of the whole server. It also keeps ``winsdk``/``toasted`` —
+and the WinRT runtime DLLs they pull in — out of the server process entirely, so they can
+never load ahead of onnxruntime's native extension and break OCR.
+
+This script is deliberately self-contained: it imports only stdlib + toasted + winsdk, never
+the ``oc`` package, so a spawn is cheap and can't drag in the OCR/capture stack.
 """
 
 from __future__ import annotations
@@ -51,8 +57,8 @@ def _post(spec: dict) -> None:
     logo = Path(__file__).resolve().parents[1] / "web" / "static" / "toast-logo.png"
 
     # AppUserModelID: a venv/non-UWP process has no system-registered id, so a toast would show
-    # under a generic 'Python' name — registering writes the label + our logo into HKCU (idempotent,
-    # cheap; one toast per child so it runs at most once) so the toast is ours.
+    # under a generic 'Python' name — registering writes the label + our logo into HKCU (idempotent
+    # and cheap, so re-running it per post in --serve mode is fine) so the toast is ours.
     app_name = spec.get("app_name") or "data-occultist"
     try:
         app_id = Toast.register_app_id(
@@ -159,9 +165,38 @@ def _post(spec: dict) -> None:
     ToastNotificationManager.create_toast_notifier(app_id).show(notification)
 
 
+def _serve() -> int:
+    # Toast-host loop: warm the WinRT stack BEFORE announcing ready, so the parent's first real
+    # post never pays the import cost, then ack every stdin spec line. stdout carries ONLY the
+    # protocol tokens (ready/ok/err) — the parent skips any stray line a library might print.
+    try:
+        import toasted  # noqa: F401
+        import winsdk.windows.data.xml.dom  # noqa: F401
+        import winsdk.windows.ui.notifications  # noqa: F401
+    except Exception:   # noqa: BLE001 - _post re-raises per spec; each just acks err
+        pass
+    print("ready", flush=True)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        # One spec per line. A bad spec / WinRT hiccup acks err and keeps serving — nothing a
+        # single toast does may kill the host (a WEDGED post doesn't return at all; the parent's
+        # watchdog kills the whole process for that case).
+        try:
+            _post(json.loads(line))
+            print("ok", flush=True)
+        except Exception:   # noqa: BLE001 - a bad spec must never take the host down
+            print("err", flush=True)
+    return 0
+
+
 def main() -> int:
-    # argv[1] is a JSON file holding the serialized ToastSpec. A failed toast must never matter —
-    # this whole process is fire-and-forget; swallow everything and exit 0.
+    # --serve: the long-lived host (see module docstring). Otherwise argv[1] is a JSON file
+    # holding one serialized ToastSpec (legacy one-shot). A failed one-shot must never matter —
+    # fire-and-forget; swallow everything and exit 0.
+    if len(sys.argv) > 1 and sys.argv[1] == "--serve":
+        return _serve()
     try:
         spec = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
         _post(spec)

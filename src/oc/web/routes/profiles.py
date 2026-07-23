@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter, Body, Header, HTTPException
 from fastapi.responses import JSONResponse
+
+from ...eventlog import publish as logev
 
 from ...profile import (
     GameProfile,
@@ -89,11 +93,16 @@ def put_profile(
     if profile.name != name:
         raise HTTPException(status_code=400, detail="Body name must match URL name")
     settings = get_settings()
+    # Phase wall-clocks for the slow-save warn below — a save that blocks (GIL contention from
+    # OCR/toast work, a lock wait, a Windows sharing-violation retry) shows WHERE it blocked
+    # instead of just feeling slow in the UI.
+    t0 = time.perf_counter()
     # The read (existing) -> merge -> write is a read-modify-write: two overlapping autosaves
     # (rapid edits fire a PUT each) would otherwise race and the later write silently drops
     # whatever the other one added (lost update) — same failure class the OCR cache already
     # locks against. A cross-process lock on the profile file serializes the whole cycle.
     with profile_write_lock(settings.profiles_dir, name):
+        t_lock = time.perf_counter()
         if if_match is not None:
             cur = profile_signature(settings.profiles_dir, name)
             # ETag values are sent quoted (RFC 7232) so strict HTTP clients (e.g. .NET's
@@ -107,10 +116,12 @@ def put_profile(
                     "server_modified": cur["modified"],
                     "server_version": cur["token"],
                 })
+        t_sig = time.perf_counter()
         existing = load_profile(settings.profiles_dir, name) if name in list_profiles(settings.profiles_dir) else None
         if merge and existing is not None:
             profile = merge_profiles(existing, profile)
         _preserve_producer_http(existing, profile)   # never let a stale save strip an http node's spec
+        t_load = time.perf_counter()
         if not layout:
             # Re-pull fed dictionaries so a feed-config change (columns/wiring) refreshes terms now —
             # save_profile then externalises the derived (deduped) list to each dictionary's term file.
@@ -119,8 +130,16 @@ def put_profile(
                 apply_feeds(settings.data_dir, name, profile)
             except Exception:  # noqa: BLE001 - best-effort; never block a save
                 pass
+        t_feeds = time.perf_counter()
         path = save_profile(settings.profiles_dir, profile, layout_only=layout)
+        t_write = time.perf_counter()
         new_sig = profile_signature(settings.profiles_dir, name)
+    total = time.perf_counter() - t0
+    if total > 1.0:
+        logev(f"profile save slow ({total:.1f}s): lock {t_lock - t0:.1f} · sig {t_sig - t_lock:.1f}"
+              f" · load {t_load - t_sig:.1f} · feeds {t_feeds - t_load:.1f}"
+              f" · write {t_write - t_feeds:.1f} · resig {time.perf_counter() - t_write:.1f}",
+              "warn", game=name)
     headers = {"ETag": f'"{new_sig["token"]}"'} if new_sig else {}
     return JSONResponse({"saved": str(path), "windows": [w.id for w in profile.windows]}, headers=headers)
 

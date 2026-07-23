@@ -1,9 +1,10 @@
 """A Windows Job Object that force-kills every child assigned to it the instant its handle closes.
 
-The toast poster (:mod:`oc.notify.windows_toast`) spawns a child process per toast and kills it on
-timeout — but that only covers the case where the PARENT is alive to run the kill. If the server
-process itself dies mid-post (crash, taskkill, power event), the daemon worker thread never runs,
-``proc.kill()`` never fires, and a hung child orphans (lingers till reboot / manual kill).
+The toast poster (:mod:`oc.notify.windows_toast`) keeps a child-process host that posts every
+toast, killing + respawning it when a post stalls — but that only covers the case where the PARENT
+is alive to run the kill. If the server process itself dies mid-post (crash, taskkill, power
+event), the daemon worker thread never runs, ``proc.kill()`` never fires, and a hung child orphans
+(lingers till reboot / manual kill).
 
 A Job Object with ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`` closes that hole at the OS level: the job
 handle is held open for the parent's whole life, and when the parent process exits FOR ANY REASON
