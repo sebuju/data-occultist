@@ -417,7 +417,7 @@ def preview_commit(profile: GameProfile, game: str | None = Query(None), capture
     engine = get_engine()
     frame, window, fields, reader = _window_reader(engine, profile, game, capture)
     with ocr_job(engine.ocr) as job:
-        records, _sentinel, _pruned = reader.read(frame, window, fields)
+        records, _sentinel, _pruned, _items_seen = reader.read(frame, window, fields)
     floor = engine.settings.tuning.min_confidence
     gated = [r for r in records if r.confidence >= floor]   # worst-field floor, as in collection
     low_conf = len(records) - len(gated)

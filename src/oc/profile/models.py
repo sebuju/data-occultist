@@ -1160,6 +1160,22 @@ class TriggerDef(BaseModel):
       (``input_window``) and optionally a client-relative rect within it (``input_rect``); a keyboard
       event may also be window-bound (fires only while that window is the recognized one). No window
       bound = fires regardless of what's on screen. See :class:`~oc.interfaces.InputSource`.
+    * ``on_item``        — pulse when a specific item template (``item_watch``) of a watched window
+      (``window_watch``) is detected/kept in a frame this tick (e.g. fire the moment a "terminator"
+      placeholder item is read — a terminator is just an item with ``ItemDef.terminator`` set, so
+      this works for any item template, not only terminators). ``item_watch == "*"`` is the "any
+      item" wildcard: fires when ANY item template in the watched window is detected, not one
+      specific one.
+    * ``on_window_detected``   — fire when a watched window (``window_watch``) becomes the
+      currently-recognized one (it just appeared on screen).
+    * ``on_window_undetected`` — fire when a watched window stops being the currently-recognized
+      one (it just left the screen). The mirror edge of ``on_window_detected``.
+    * ``on_window_data_start`` — fire on the FIRST new/changed row a watched window's dataset
+      produces after a quiet spell (the window just started producing data again).
+    * ``on_window_data_stop``  — fire once a watched window's dataset has gone quiet for
+      ``settle_ms`` (default when unset — see the runner) after producing data — the window
+      stopped producing new data. Reuses ``settle_ms`` as the quiet-before-fire duration rather
+      than a dedicated field, since that's already this trigger's "wait for quiet" knob.
     * ``manual``         — never auto-fires; just declares the wiring (the sweep button drives it).
 
     A trigger's ``targets`` are producer ids (sweep/refresh), file-source ids (read), toast/sound
@@ -1175,7 +1191,8 @@ class TriggerDef(BaseModel):
     id: str
     # interval | true_interval | on_change | on_any_change | on_new_batch | on_app_start |
     # on_capture | on_live_start | on_live_stop | on_readout | on_register | on_ready | on_input |
-    # manual
+    # on_item | on_window_detected | on_window_undetected | on_window_data_start |
+    # on_window_data_stop | manual
     kind: str = "interval"
     interval_s: float = 300.0               # for kind="interval"/"true_interval": seconds between fires
     watch: list[str] = Field(default_factory=list)    # for kind="on_change"/"on_any_change"/"on_new_batch": datasets to watch
@@ -1211,6 +1228,16 @@ class TriggerDef(BaseModel):
     # now watches a PRODUCER and fires on its sweep completion, so this is ignored. Kept so old
     # profiles that set it still load.
     ready_field: str = ""
+
+    # ---- kind="on_item"/"on_window_detected"/"on_window_undetected"/"on_window_data_start"/
+    # "on_window_data_stop" ------------------------------------------------------------------
+    # window ids this trigger watches (chips + edges). All 5 window-scoped kinds read this list;
+    # on_item uses only its first entry (the window the watched item template lives in).
+    window_watch: list[str] = Field(default_factory=list)
+    # for kind="on_item": the ItemDef.id (within window_watch[0]) whose detection pulses the
+    # trigger this tick. "*" = the "any item" wildcard (fires on ANY item template detected in
+    # the window). "" = not yet configured (never fires).
+    item_watch: str = ""
 
     # ---- kind="on_input" -----------------------------------------------------------------
     # which stream transition pulses the trigger: "down" (key/button pressed, auto-repeat

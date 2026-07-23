@@ -119,6 +119,7 @@ class TickResult:
     total: int = 0      # distinct records confirmed so far
     dataset: str | None = None              # the dataset records were written to
     changed: list[dict] = field(default_factory=list)  # values added/updated this tick (for triggers)
+    items_seen: list[str] = field(default_factory=list)  # ItemDef ids kept this frame (for on_item triggers)
     reads: list[dict] = field(default_factory=list)     # per-kept-record OCR detail (live debug log only)
     readout_reads: list[dict] = field(default_factory=list)  # per-readout OCR detail (live debug log only)
     readouts: dict = field(default_factory=dict)       # live ephemeral readout values read this tick (never stored)
@@ -543,7 +544,7 @@ class Collector:
             # whole-canvas OCR (there for the teach preview's raw layer) that reads nothing
             # storable — ~230ms/tick wasted on a readouts-only HUD window.
             if not window.regions and not window.items:
-                records, sentinel, pruned, cache_hit = [], None, [], True
+                records, sentinel, pruned, items_seen, cache_hit = [], None, [], [], True
             else:
                 # Skip OCR when the grid region is pixel-identical to the last tick.
                 _tg = time.perf_counter()
@@ -553,17 +554,17 @@ class Collector:
                 cached = self._frame_cache.get(window_id)
                 cache_hit = sig is not None and cached is not None and cached[0] == sig
                 if cache_hit:
-                    records, sentinel, pruned = cached[1], cached[2], cached[3]
+                    records, sentinel, pruned, items_seen = cached[1], cached[2], cached[3], cached[4]
                 else:
                     fields = {f.id: f for f in self._profile.fields_for(window)}
                     # Time OCR read specifically (only the frames where it actually ran — a
                     # cache-hit frame does no OCR, so recording it would understate the real cost).
                     _oc = time.perf_counter()
-                    records, sentinel, pruned = self._reader.read(frame, window, fields)
+                    records, sentinel, pruned, items_seen = self._reader.read(frame, window, fields)
                     oc_ms = (time.perf_counter() - _oc) * 1000.0
                     stats_store.record_timing(self._profile.name, f"win:{window_id}", "oc", oc_ms, n=len(records))
                     if sig is not None:
-                        self._frame_cache[window_id] = (sig, records, sentinel, pruned)
+                        self._frame_cache[window_id] = (sig, records, sentinel, pruned, items_seen)
 
         kept = self._above_floor(records)               # occlusion / garbage gate
         # Per-read debug detail for the live log — only on a REAL OCR frame (a cache hit
@@ -589,6 +590,7 @@ class Collector:
                 dataset=None,
                 changed=[],
                 reads=reads,
+                items_seen=items_seen,
                 readouts=readouts_now,
                 readout_confs=readout_confs_now,
                 readouts_all=readouts_all_now,
@@ -803,6 +805,7 @@ class Collector:
             dataset=dataset,
             changed=changed,
             reads=reads,
+            items_seen=items_seen,
             readout_reads=readout_reads,
             readouts=readouts_now,
             readout_confs=readout_confs_now,
@@ -869,12 +872,23 @@ class Collector:
                     # tick() can interpolate {{ro_1}} tokens with the freshest live values.
                     if result.readouts:
                         triggers.set_readouts(result.readouts)
-                    triggers.tick()
+                    triggers.tick()   # also drives the on_window_data_stop quiet check
                     # Live readouts are ephemeral (never written), so they can't ride the
                     # dataset change bus — evaluate their threshold triggers straight off this
                     # tick's readings (edge-triggered inside the runner).
                     if result.readouts:
                         triggers.on_readout(result.readouts)
+                    # Window recognition edges (on_window_detected/undetected): a pre-classify
+                    # throttled tick (window_id is None because classify never ran, not because
+                    # nothing's recognised) is ambiguous — skip it rather than churn the state.
+                    if not (result.status is TickStatus.throttled and result.window_id is None):
+                        triggers.note_window(result.window_id)
+                    # on_window_data_start/stop: only a real, classified window can "produce".
+                    if result.window_id:
+                        if result.new or result.changed:
+                            triggers.note_window_data(result.window_id)
+                        if result.items_seen:
+                            triggers.note_items(result.window_id, set(result.items_seen))
                 # Sleep the FAST poll, not the OCR interval — so triggers fire and the OCR
                 # throttle is re-checked often, catching a worthy screen within ~gate_interval.
                 wait = gate_interval if gate_interval > 0 else interval

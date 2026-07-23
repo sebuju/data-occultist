@@ -25,6 +25,16 @@ Kinds:
 * ``on_live_stop`` — fire when the server live-collection session stops (:meth:`fire_live_stop`).
 * ``on_input``     — pulse on a keyboard/mouse event matching a chord/rect/window (:meth:`on_input`),
   called from an :class:`oc.interfaces.InputSource` hook thread. LIVE ONLY (see :mod:`oc.collect.live`).
+* ``on_item``      — pulse when ``item_watch`` (a template in ``window_watch[0]``) is detected/kept
+  this tick (:meth:`note_items`), e.g. fire the instant a "terminator" placeholder item is read.
+* ``on_window_detected``/``on_window_undetected`` — pulse on a ``window_watch`` window becoming/
+  ceasing to be the currently-recognized one (:meth:`note_window`).
+* ``on_window_data_start``/``on_window_data_stop`` — pulse on a ``window_watch`` window's dataset
+  producing again after a quiet spell / going quiet after producing (:meth:`note_window_data`,
+  the quiet check in :meth:`tick`). ``on_window_data_stop`` reuses ``settle_ms`` as the quiet-
+  before-fire duration itself, not as a trailing debounce of an already-decided fire — so it
+  fires via a direct gate-check + emit (:meth:`_fire_gate_ok`), bypassing :meth:`_route_fire`'s
+  settle-defer branch (which would otherwise apply a SECOND quiet wait on top).
 * ``manual``       — never auto-fires (the sweep button drives it); declared only for wiring.
 
 A trigger ``target`` is a price-node id, a file-source id, a toast/sound id, OR an action id:
@@ -113,6 +123,13 @@ def write_subset_sigs(data_dir, game: str, sigs: dict) -> None:
         p.write_text(json.dumps(sigs), encoding="utf-8")
     except OSError:
         pass
+
+
+# Default quiet-before-fire duration for on_window_data_stop when the trigger's own settle_ms is
+# unset — a window that's produced data must go this long without producing more before the
+# "stopped producing" edge fires. Deliberately generous (a slow OCR confirm cadence between
+# genuinely-still-open reads must not misfire this as "stopped").
+DEFAULT_WINDOW_QUIET_MS = 2000.0
 
 
 class TriggerRunner:
@@ -208,6 +225,17 @@ class TriggerRunner:
         self._input_down_match: dict[str, bool] = {}
         # Per-trigger: monotonic time of the last completed matching press, for "double" detection.
         self._input_last_press: dict[str, float] = {}
+        # ---- window-scoped kinds (on_item / on_window_detected/undetected / on_window_data_*) ----
+        # The currently-recognized window id (None = no/unrecognised screen), so note_window can
+        # tell a genuine detected<->undetected transition from a repeat call with the same window.
+        self._cur_window: str | None = None
+        # Window ids currently "producing" (have written data and haven't yet gone quiet for their
+        # on_window_data_stop trigger's threshold) — set on note_window_data, cleared once tick()'s
+        # quiet check fires on_window_data_stop for that window (re-arms on the next data).
+        self._win_active: set[str] = set()
+        # Monotonic time of each window's last note_window_data call — what the quiet check in
+        # tick() measures elapsed time against.
+        self._win_last_data: dict[str, float] = {}
 
     # ---- throttle + shared fire funnel -------------------------------------
 
@@ -257,6 +285,22 @@ class TriggerRunner:
 
     # ---- trailing-settle debounce (mirror of throttle) ---------------------
 
+    def _fire_gate_ok(self, t, why: str, node: str = "", value: object = None) -> bool:
+        """Does ``t``'s value predicate (its wired gates) hold right now? A block is recorded to
+        history exactly like a throttle-suppression, so the UI shows why a pulsed trigger didn't
+        fire. Factored out of :meth:`_route_fire` so a kind whose OWN timing already means "wait
+        for quiet" (``on_window_data_stop`` reusing ``settle_ms`` as its threshold — see
+        :meth:`tick`) can gate-check and fire immediately without also going through
+        ``_route_fire``'s settle-defer branch, which would apply a second, redundant quiet wait."""
+        if self._gates_pass(t):
+            return True
+        from .trigger_history import record as record_hist
+        logev(f"trigger {t.id} gated ({why})", level="info", game=self._profile.name)
+        record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),
+                    throttled=True, ts=self._wall().isoformat(timespec="milliseconds"),
+                    node=node, value=value)
+        return False
+
     def _route_fire(self, t, why: str, items, node: str = "", value: object = None) -> bool:
         """Auto-fire entry point. With no ``settle_ms`` this is just ``_emit_fire`` (fire now). With
         ``settle_ms`` set, the fire is DEFERRED into a trailing window: the latest args are stashed
@@ -265,12 +309,7 @@ class TriggerRunner:
         data goes quiet (or ``settle_max_ms`` elapses). Returns True only for a SYNCHRONOUS fire; a
         deferred fire returns False and lands later via ``_settle_flush``. Manual "fire now" does not
         route here — it bypasses settle exactly as it bypasses throttle."""
-        if not self._gates_pass(t):
-            from .trigger_history import record as record_hist
-            logev(f"trigger {t.id} gated ({why})", level="info", game=self._profile.name)
-            record_hist(self._profile.name, t.id, why=why, targets=list(t.targets),
-                        throttled=True, ts=self._wall().isoformat(timespec="milliseconds"),
-                        node=node, value=value)
+        if not self._fire_gate_ok(t, why, node, value):
             return False
         settle_ms = getattr(t, "settle_ms", None)
         if not settle_ms or settle_ms <= 0:
@@ -364,10 +403,107 @@ class TriggerRunner:
                              f"producer:{node_id}", f"trigger:{t.id}", 1)
         return fired
 
+    # ---- window-scoped kinds: on_item / on_window_detected/undetected / on_window_data_* ---
+
+    def note_window(self, window_id: str | None) -> list[str]:
+        """Called once per real (classified) tick with the currently-recognized window id (None =
+        no/unrecognised screen this tick — see the collector's feed site, which skips the call
+        entirely on an ambiguous pre-classify throttled tick rather than pass a false None here).
+        Fires ``on_window_undetected`` for the window just LEFT and ``on_window_detected`` for the
+        window just ENTERED, on a genuine transition only (a repeat call with the same id is a
+        no-op, so a steady screen doesn't re-fire every tick)."""
+        if window_id == self._cur_window:
+            return []
+        old, self._cur_window = self._cur_window, window_id
+        fired: list[str] = []
+        for t in self._profile.triggers:
+            if not t.enabled:
+                continue
+            if t.kind == "on_window_undetected" and old and old in (t.window_watch or []):
+                if self._route_fire(t, f"{old} no longer detected", items=None):
+                    fired.append(t.id)
+                    publish_flow(self._profile.name, "watch", f"win:{old}", f"trigger:{t.id}", 1)
+            elif t.kind == "on_window_detected" and window_id and window_id in (t.window_watch or []):
+                if self._route_fire(t, f"{window_id} detected", items=None):
+                    fired.append(t.id)
+                    publish_flow(self._profile.name, "watch", f"win:{window_id}", f"trigger:{t.id}", 1)
+        return fired
+
+    def note_window_data(self, window_id: str) -> list[str]:
+        """Called when a tick produced new/changed rows for ``window_id``. Stamps the window's
+        last-data time (what the quiet check in :meth:`tick` measures against) and fires
+        ``on_window_data_start`` triggers watching it the moment it transitions from quiet to
+        producing (not on every subsequent row — a dripping sweep must not re-fire every tick)."""
+        self._win_last_data[window_id] = self._clock()
+        if window_id in self._win_active:
+            return []
+        self._win_active.add(window_id)
+        fired: list[str] = []
+        for t in self._profile.triggers:
+            if not t.enabled or t.kind != "on_window_data_start":
+                continue
+            if window_id not in (t.window_watch or []):
+                continue
+            if self._route_fire(t, f"{window_id} started producing", items=None):
+                fired.append(t.id)
+                publish_flow(self._profile.name, "watch", f"win:{window_id}", f"trigger:{t.id}", 1)
+        return fired
+
+    def note_items(self, window_id: str, item_ids: set[str]) -> list[str]:
+        """Called with the distinct item template ids DETECTED (kept, incl. fieldless guards/
+        terminators) this tick in ``window_id``. Fires every ``on_item`` trigger whose watched
+        window/item match — e.g. the instant a "terminator" placeholder item is read.
+        ``item_watch == "*"`` is the "any item" wildcard: fires on ANY item detected in the
+        watched window, not one specific template."""
+        fired: list[str] = []
+        if not item_ids:
+            return fired
+        for t in self._profile.triggers:
+            if not t.enabled or t.kind != "on_item" or not t.item_watch:
+                continue
+            watch = t.window_watch or []
+            if not watch or watch[0] != window_id:
+                continue
+            any_item = t.item_watch == "*"
+            if not any_item and t.item_watch not in item_ids:
+                continue
+            why = "any item read" if any_item else f"item {t.item_watch} read"
+            if self._route_fire(t, why, items=None):
+                fired.append(t.id)
+                dst = f"item:{window_id}:{t.item_watch}" if not any_item else f"win:{window_id}"
+                publish_flow(self._profile.name, "watch", dst, f"trigger:{t.id}", 1)
+        return fired
+
+    def _check_window_data_stop(self, now: float) -> list[str]:
+        """Called every :meth:`tick` pass: fire ``on_window_data_stop`` for a watched window once
+        it's been quiet (no :meth:`note_window_data`) for ``settle_ms`` (or
+        :data:`DEFAULT_WINDOW_QUIET_MS` when unset) after having produced. ``settle_ms`` here IS the
+        quiet-before-fire threshold itself, not a trailing debounce of an already-decided fire — so
+        this fires via :meth:`_fire_gate_ok` + :meth:`_emit_fire` directly, bypassing
+        :meth:`_route_fire`'s own settle-defer (which would otherwise wait the SAME span twice)."""
+        fired: list[str] = []
+        for t in self._profile.triggers:
+            if not t.enabled or t.kind != "on_window_data_stop":
+                continue
+            threshold = ((getattr(t, "settle_ms", None) or DEFAULT_WINDOW_QUIET_MS)) / 1000.0
+            for w in list(t.window_watch or []):
+                if w not in self._win_active:
+                    continue
+                last = self._win_last_data.get(w, now)
+                if now - last < threshold:
+                    continue
+                self._win_active.discard(w)
+                why = f"{w} quiet for {int(threshold)}s"
+                if self._fire_gate_ok(t, why) and self._emit_fire(t, why, items=None):
+                    fired.append(t.id)
+                    publish_flow(self._profile.name, "watch", f"win:{w}", f"trigger:{t.id}", 1)
+        return fired
+
     # ---- interval ----------------------------------------------------------
 
     def tick(self) -> list[str]:
-        """Fire every interval / true_interval trigger whose interval has elapsed. Returns
+        """Fire every interval / true_interval trigger whose interval has elapsed, and check every
+        ``on_window_data_stop`` trigger's quiet threshold (:meth:`_check_window_data_stop`). Returns
         fired ids.
 
         ``interval`` measures against the monotonic clock, reseeded to "now" whenever the runner
@@ -391,6 +527,7 @@ class TriggerRunner:
                 if self._true_interval_due(t, fires.get(t.id)):
                     if self._route_fire(t, f"true interval, every {int(t.interval_s)}s", items=None):
                         fired.append(t.id)
+        fired.extend(self._check_window_data_stop(now))
         return fired
 
     def _true_interval_due(self, t, last_iso: str | None) -> bool:

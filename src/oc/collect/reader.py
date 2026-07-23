@@ -188,6 +188,22 @@ def _terminator_sentinel(kept: list[int], ics: list, records: list[Record]) -> t
     return sentinel
 
 
+def _items_seen(kept: list[int], ics: list) -> list[str]:
+    """Distinct ``ItemDef.id``s DETECTED (kept) this frame, in reading order — every item
+    template that matched a tile, incl. fieldless guards/terminators (they store nothing but
+    still count as "read"; see the ``on_item`` trigger, :meth:`oc.collect.triggers.
+    TriggerRunner.note_items`). Same ``kept``/``ics`` inputs as :func:`_terminator_sentinel`,
+    so a terminator this reads is exactly the one that function can sentinel on."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for ci in kept:
+        item_id = ics[ci].item.id
+        if item_id not in seen:
+            seen.add(item_id)
+            out.append(item_id)
+    return out
+
+
 def _union(boxes: list[PixelBox]) -> PixelBox:
     x0 = min(b.x for b in boxes)
     y0 = min(b.y for b in boxes)
@@ -869,7 +885,7 @@ class RegionReader:
         return cells, lines, ics, cr
 
     def read(self, frame: Frame, window: WindowDef,
-             fields: dict[str, FieldDef]) -> tuple[list[Record], tuple[float, int] | None, list[Record]]:
+             fields: dict[str, FieldDef]) -> tuple[list[Record], tuple[float, int] | None, list[Record], list[str]]:
         cells, lines, ics, cr = self._read_cells(frame, window, fields)
         records: list[Record] = []
         for ci, c in enumerate(cr):
@@ -889,7 +905,7 @@ class RegionReader:
                     rec.xpos = self._data_xfrac(window, sum(b.x + b.w / 2 for b in bs) / len(bs))
             records.append(rec)
         if ics is None:
-            return ([r for ci, r in enumerate(records) if not r.is_empty() and not cr[ci].failed], None, [])
+            return ([r for ci, r in enumerate(records) if not r.is_empty() and not cr[ci].failed], None, [], [])
         # Item templates: keep a cell only if all its tells pass (drops popups/empties);
         # resolve template overlaps; and (when >1 template) tag which one matched.
         # A GUARD item (no fields, but has tells — e.g. a "no relic selected" placeholder)
@@ -915,6 +931,7 @@ class RegionReader:
         # invisible to mirror-sync, so a stale row it should retire is left untouched forever).
         pruned: list[Record] = []
         sentinel = _terminator_sentinel(kept, ics, records)
+        items_seen = _items_seen(kept, ics)
         for ci in kept:
             it = ics[ci].item
             if not it.fields:   # guard item -> suppressed the tile, stores nothing
@@ -925,7 +942,7 @@ class RegionReader:
             if tag:
                 records[ci].values["_item"] = it.id
             out.append(records[ci])
-        return out, sentinel, pruned
+        return out, sentinel, pruned, items_seen
 
     def _confirm_gate(self, key, present: bool, need: int) -> bool:
         """Presence-confirm hysteresis (C, per-readout ``FieldDef.confirm``): an empty->present

@@ -703,3 +703,129 @@ def test_gather_source_names_from_dataset(tmp_path):
 
     names = gather_source_names(tmp_path, "g", _profile(), ["master"])
     assert names == ["Soma Prime", "Volt Prime"]
+
+
+# ---- window-scoped kinds: on_item / on_window_detected/undetected / on_window_data_* --------
+
+def _window_profile(**kw):
+    return GameProfile(
+        name="g",
+        producers=[ProducerDef(id="sink", dataset="out", mode="orders", sources=["inv"])],
+        triggers=[TriggerDef(id="t", targets=["sink"], **kw)],
+    )
+
+
+def test_on_window_detected_fires_on_transition_only(tmp_path):
+    p = _window_profile(kind="on_window_detected", window_watch=["equipment"])
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.note_window("equipment") == ["t"]     # first sight -> detected
+    assert tr.note_window("equipment") == []        # steady screen -> no re-fire
+    assert calls == ["sink"]
+
+
+def test_on_window_detected_ignores_an_unwatched_window(tmp_path):
+    p = _window_profile(kind="on_window_detected", window_watch=["equipment"])
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.note_window("arsenal") == []
+
+
+def test_on_window_undetected_fires_when_watched_window_leaves(tmp_path):
+    p = _window_profile(kind="on_window_undetected", window_watch=["equipment"])
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.note_window("equipment") == []        # entering isn't the watched edge
+    assert tr.note_window("arsenal") == ["t"]        # left equipment -> fires
+    assert calls == ["sink"]
+    assert tr.note_window(None) == []               # already gone -> no re-fire from arsenal->none
+
+
+def test_on_window_detected_and_undetected_fire_together_on_a_swap(tmp_path):
+    # a trigger of EACH kind watching different windows: leaving one and entering the other in the
+    # same transition fires both, in undetected-then-detected order.
+    p = GameProfile(
+        name="g",
+        producers=[ProducerDef(id="sink", dataset="out", mode="orders", sources=["inv"])],
+        triggers=[
+            TriggerDef(id="left", kind="on_window_undetected", window_watch=["equipment"], targets=["sink"]),
+            TriggerDef(id="entered", kind="on_window_detected", window_watch=["arsenal"], targets=["sink"]),
+        ],
+    )
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.note_window("equipment") == []
+    assert tr.note_window("arsenal") == ["left", "entered"]
+
+
+def test_on_window_data_start_fires_once_until_quiet_again(tmp_path):
+    p = _window_profile(kind="on_window_data_start", window_watch=["equipment"])
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.note_window_data("equipment") == ["t"]   # first data after quiet -> fires
+    assert tr.note_window_data("equipment") == []      # still producing -> no re-fire
+    assert calls == ["sink"]
+
+
+def test_on_window_data_stop_fires_after_settle_ms_of_quiet(tmp_path):
+    p = _window_profile(kind="on_window_data_stop", window_watch=["equipment"], settle_ms=1000)
+    clock = [0.0]
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: clock[0])
+    tr.note_window_data("equipment")
+    clock[0] = 0.5
+    assert tr.tick() == []                 # only 0.5s quiet -> not yet
+    clock[0] = 1.1
+    assert tr.tick() == ["t"]              # 1.1s quiet -> fires
+    assert calls == ["sink"]
+    clock[0] = 5.0
+    assert tr.tick() == []                 # already fired -> no re-fire until data resumes
+    tr.note_window_data("equipment")
+    clock[0] = 6.2
+    assert tr.tick() == ["t"]              # resumed then quiet again -> fires again
+    assert calls == ["sink", "sink"]
+
+
+def test_on_window_data_stop_uses_default_quiet_when_settle_ms_unset(tmp_path):
+    p = _window_profile(kind="on_window_data_stop", window_watch=["equipment"])   # no settle_ms
+    clock = [0.0]
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: clock[0])
+    tr.note_window_data("equipment")
+    clock[0] = 1.0
+    assert tr.tick() == []            # under the 2s default -> not yet
+    clock[0] = 2.1
+    assert tr.tick() == ["t"]         # default quiet elapsed -> fires
+    assert calls == ["sink"]
+
+
+def test_on_item_fires_when_the_watched_item_is_seen(tmp_path):
+    p = _window_profile(kind="on_item", window_watch=["equipment"], item_watch="terminator")
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.note_items("equipment", {"weapon"}) == []               # not the watched item
+    assert tr.note_items("arsenal", {"terminator"}) == []              # not the watched window
+    assert tr.note_items("equipment", {"weapon", "terminator"}) == ["t"]
+    assert calls == ["sink"]
+
+
+def test_on_item_ignores_disabled(tmp_path):
+    p = _window_profile(kind="on_item", window_watch=["equipment"], item_watch="terminator")
+    p.triggers[0].enabled = False
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.note_items("equipment", {"terminator"}) == []
+
+
+def test_on_item_any_item_wildcard_fires_on_any_hit(tmp_path):
+    # item_watch="*" is the "any item" wildcard: any item detected in the watched window fires it.
+    p = _window_profile(kind="on_item", window_watch=["equipment"], item_watch="*")
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    assert tr.note_items("arsenal", {"weapon"}) == []           # not the watched window
+    assert tr.note_items("equipment", {"weapon"}) == ["t"]
+    assert tr.note_items("equipment", {"terminator"}) == ["t"]  # ANY item, not one specific template
+    assert calls == ["sink", "sink"]
+
+
+def test_on_item_ignores_empty_item_set(tmp_path):
+    p = _window_profile(kind="on_item", window_watch=["equipment"], item_watch="*")
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.note_items("equipment", set()) == []

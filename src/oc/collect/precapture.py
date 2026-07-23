@@ -1067,7 +1067,7 @@ class PrecaptureSession:
         if sig is not None and last_sig.get(window.id) == sig:
             return last_recs.get(window.id, [])
         fields = {f.id: f for f in self._profile.fields_for(window)}
-        records, _sentinel, _pruned = self._reader.read(frame, window, fields)
+        records, _sentinel, _pruned, _items_seen = self._reader.read(frame, window, fields)
         if sig is not None:
             last_sig[window.id] = sig
             last_recs[window.id] = records

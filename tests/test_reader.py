@@ -6,7 +6,7 @@ import numpy as np
 from oc.collect.atlas_match import AtlasMatcher
 from oc.collect.grid import Cell
 from oc.collect.items import ItemCell
-from oc.collect.reader import RegionReader, Record, _terminator_sentinel
+from oc.collect.reader import RegionReader, Record, _items_seen, _terminator_sentinel
 from oc.interfaces import OcrEngine
 from oc.profile.models import (
     Box, FieldDef, FieldRule, FieldType, ItemDef, Preprocess, PreprocessMode, ReadoutDef, RegionDef,
@@ -54,7 +54,7 @@ def test_substituted_read_does_not_sink_confidence():
     ])
     window = _window()
     fields = {f.id: f for f in window.fields}
-    records, _sentinel, _pruned = RegionReader(ocr).read(_frame(), window, fields)
+    records, _sentinel, _pruned, _items_seen = RegionReader(ocr).read(_frame(), window, fields)
     assert len(records) == 1
     rec = records[0]
     assert rec.values == {"name": "Soma Prime", "count": 1}
@@ -105,6 +105,33 @@ def test_sentinel_ignores_unkept_terminator_candidates():
     ics = [_ic(guard, col=0)]
     recs = [_rec(0.4, 0)]
     assert _terminator_sentinel([], ics, recs) is None   # not in `kept` -> not a candidate
+
+
+# ---- _items_seen: distinct item template ids kept this frame (feeds the on_item trigger) ----
+
+def test_items_seen_lists_each_kept_template_once():
+    weapon = ItemDef(id="weapon", box=Box(x=0, y=0, w=0.1, h=0.1))
+    guard = ItemDef(id="not_owned", box=Box(x=0, y=0, w=0.1, h=0.1), terminator=True)
+    ics = [_ic(weapon, col=0), _ic(weapon, col=1), _ic(guard, col=2)]
+    assert _items_seen([0, 1, 2], ics) == ["weapon", "not_owned"]   # dedup, reading order
+
+
+def test_items_seen_includes_a_fieldless_terminator():
+    # a terminator is usually a fieldless guard (stores nothing) — it must still show up here,
+    # since the on_item trigger fires on DETECTION, not on a stored record.
+    guard = ItemDef(id="not_owned", box=Box(x=0, y=0, w=0.1, h=0.1), terminator=True)
+    ics = [_ic(guard, col=0)]
+    assert _items_seen([0], ics) == ["not_owned"]
+
+
+def test_items_seen_ignores_unkept_cells():
+    weapon = ItemDef(id="weapon", box=Box(x=0, y=0, w=0.1, h=0.1))
+    ics = [_ic(weapon, col=0)]
+    assert _items_seen([], ics) == []
+
+
+def test_items_seen_empty_when_nothing_kept():
+    assert _items_seen([], []) == []
 
 
 def test_readout_multiword_read_stays_in_reading_order():
@@ -347,7 +374,7 @@ def test_real_low_confidence_read_still_sinks_record():
     ])
     window = _window()
     fields = {f.id: f for f in window.fields}
-    records, _sentinel, _pruned = RegionReader(ocr).read(_frame(), window, fields)
+    records, _sentinel, _pruned, _items_seen = RegionReader(ocr).read(_frame(), window, fields)
     assert len(records) == 1
     assert records[0].values["count"] == 3
     assert records[0].confidence == 0.30
@@ -577,7 +604,7 @@ def test_symbol_key_field_unmatched_drops_the_record():
         regions=[RegionDef(id="school", box=Box(x=0.10, y=0.10, w=0.40, h=0.40), field="school")],
     )
     fields = {f.id: f for f in window.fields}
-    records, _sentinel, _pruned = RegionReader(StubOcr([]), atlas=atlas).read(frame, window, fields)
+    records, _sentinel, _pruned, _items_seen = RegionReader(StubOcr([]), atlas=atlas).read(frame, window, fields)
     assert records == []
 
 

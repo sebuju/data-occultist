@@ -5,11 +5,13 @@ from __future__ import annotations
 
 from oc.profile.checker import check_profile
 from oc.profile.models import (
+    Box,
     DatasetDef,
     FieldDef,
     FieldRule,
     GameProfile,
     GateDef,
+    ItemDef,
     ProcessDef,
     ProcessInput,
     RegionDef,
@@ -121,3 +123,51 @@ def test_duplicate_ids_warn():
     p = _prof(datasets=[DatasetDef(id="a"), DatasetDef(id="a")])
     issues = check_profile(p)
     assert any(i.severity == "warn" and "duplicate id 'a'" in i.msg for i in issues)
+
+
+# ---- window-scoped kinds: window_watch / item_watch ----------------------------------------
+
+def test_window_watch_dangling():
+    p = _prof(triggers=[TriggerDef(id="t1", kind="on_window_detected", window_watch=["ghost_win"])])
+    issues = check_profile(p)
+    assert any("ghost_win" in i.msg for i in issues)
+
+
+def test_window_watch_real_window_is_clean():
+    p = _prof(
+        windows=[WindowDef(id="equip")],
+        triggers=[TriggerDef(id="t1", kind="on_window_detected", window_watch=["equip"])],
+    )
+    assert check_profile(p) == []
+
+
+def test_on_item_watch_dangling_item():
+    p = _prof(
+        windows=[WindowDef(id="equip", items=[ItemDef(id="weapon", box=Box(x=0, y=0, w=0.1, h=0.1))])],
+        triggers=[TriggerDef(id="t1", kind="on_item", window_watch=["equip"], item_watch="ghost_item")],
+    )
+    issues = check_profile(p)
+    assert any("ghost_item" in i.msg for i in issues)
+
+
+def test_on_item_watch_real_item_is_clean():
+    p = _prof(
+        windows=[WindowDef(id="equip", items=[ItemDef(id="weapon", box=Box(x=0, y=0, w=0.1, h=0.1))])],
+        triggers=[TriggerDef(id="t1", kind="on_item", window_watch=["equip"], item_watch="weapon")],
+    )
+    assert check_profile(p) == []
+
+
+def test_on_item_watch_with_no_window_flagged():
+    p = _prof(triggers=[TriggerDef(id="t1", kind="on_item", item_watch="weapon")])
+    issues = check_profile(p)
+    assert any("no window is set" in i.msg for i in issues)
+
+
+def test_on_item_watch_any_item_wildcard_is_clean():
+    # "*" is the "any item" wildcard, not a real item id -- must not be flagged as missing.
+    p = _prof(
+        windows=[WindowDef(id="equip", items=[ItemDef(id="weapon", box=Box(x=0, y=0, w=0.1, h=0.1))])],
+        triggers=[TriggerDef(id="t1", kind="on_item", window_watch=["equip"], item_watch="*")],
+    )
+    assert check_profile(p) == []
