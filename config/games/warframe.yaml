@@ -5046,7 +5046,7 @@ triggers:
   - 0.11481518518518524
   input_window: arsenal_warframe
   input_double_ms: 350.0
-- id: toast_top_relic
+- id: toast_when_terminator
   kind: on_item
   interval_s: 300.0
   watch:
@@ -5059,12 +5059,35 @@ triggers:
   - toast_best_relic
   enabled: true
   throttle_ms: 15000.0
-  settle_ms: 2000.0
   settle_max_ms: 5000.0
   ready_field: ''
   window_watch:
   - relic_refinement
   item_watch: not_owned
+  input_event: down
+  input_button: ''
+  input_mods: []
+  input_rect: []
+  input_window: ''
+  input_double_ms: 350.0
+- id: toast_when_scrolled
+  kind: on_scroll_bottom
+  interval_s: 300.0
+  watch:
+  - top_picks_for_relics
+  readout_watch: []
+  register_watch: []
+  gates:
+  - gate_best_relic_change
+  targets:
+  - toast_best_relic
+  enabled: true
+  throttle_ms: 15000.0
+  settle_max_ms: 5000.0
+  ready_field: ''
+  window_watch:
+  - relic_select
+  item_watch: ''
   input_event: down
   input_button: ''
   input_mods: []
@@ -5580,7 +5603,7 @@ toasts:
       - {{subset:top_picks_for_relics.price_median[3]}}p ({{subset:top_picks_for_relics.name[3]}})'
     style: body
     align: ''
-    skip_mode: none
+    skip_mode: any
   images: []
   app_name: data-occultist
   duration: short
@@ -6488,8 +6511,8 @@ layout:
       custH: true
       softH: true
     win:mission_rewards:
-      x: -4280.0
-      y: -8160.0
+      x: -3360.0
+      y: -7540.0
       w: 620.0
       h: 660.0
       collapsed: false
@@ -6498,8 +6521,8 @@ layout:
       softW: false
       softH: false
     ds:mission_rewards:
-      x: -3600.0
-      y: -8160.0
+      x: -2680.0
+      y: -7540.0
       collapsed: false
     win:arsenal_warframe:
       x: 4520.0
@@ -8006,7 +8029,17 @@ layout:
       custH: true
       softW: true
       softH: false
-    trigger:toast_top_relic:
+    gate:gate_best_relic_change:
+      x: -220.0
+      y: -9260.0
+      w: 360.0
+      h: 140.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:toast_when_terminator:
       x: -220.0
       y: -9540.0
       w: 360.0
@@ -8016,15 +8049,16 @@ layout:
       custH: true
       softW: true
       softH: true
-    gate:gate_best_relic_change:
+    trigger:toast_when_scrolled:
       x: -220.0
-      y: -9260.0
+      y: -9100.0
       w: 360.0
-      h: 118.0
+      h: 260.0
       collapsed: false
       custW: true
-      custH: false
+      custH: true
       softW: true
+      softH: true
   tables:
     warframe:ds:master:
       sorts:
@@ -9438,10 +9472,11 @@ layout:
     - sub:relics_owned_contents_priced
     - vt:sub:relics_owned_contents_priced
     - toast:toast_best_relic
-    - trigger:toast_top_relic
+    - trigger:toast_when_terminator
     - sub:top_picks_for_relics
     - vt:sub:top_picks_for_relics
     - gate:gate_best_relic_change
+    - trigger:toast_when_scrolled
     outline:
       color: '#e69a5a'
       style: none
