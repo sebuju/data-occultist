@@ -1008,12 +1008,12 @@ class TriggerRunner:
                    mods=list(t.input_mods or []), x=ev.get("x", 0), y=ev.get("y", 0), result=result)
 
     def _input_fire_or_log(self, t, matched: bool, reason: str, ev: dict) -> str:
-        """Route a MATCHED input pulse through the shared fire funnel (gates/throttle/settle),
-        or just log a miss. Returns the disposition string recorded to the input log:
-        ``"fired"``/``"deferred"`` (settle armed)/``"throttled"``/``"gated"``, or ``reason``."""
+        """Route a MATCHED input pulse through the shared fire funnel (gates/throttle/settle);
+        an unmatched pulse (window/rect/chord miss) is never logged -- pure noise. Returns the
+        disposition string recorded to the input log: ``"fired"``/``"deferred"`` (settle armed)/
+        ``"throttled"``/``"gated"``, or ``reason``."""
         if not matched:
-            self._log_input(t, ev, reason)
-            return reason
+            return reason   # window/rect/chord misses are never logged -- pure noise
         if not self._gates_pass(t):
             self._log_input(t, ev, "gated")
             return "gated"
@@ -1080,8 +1080,7 @@ class TriggerRunner:
                 continue
             # double: two full-match presses within input_double_ms of each other
             if not full_match:
-                self._log_input(t, ev, reason or "chord_miss")
-                continue
+                continue   # window/rect/chord misses are never logged -- pure noise
             now = self._clock()
             last = self._input_last_press.get(t.id)
             window = (t.input_double_ms or 350.0) / 1000.0

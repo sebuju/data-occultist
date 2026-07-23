@@ -2,9 +2,10 @@
 
 The twin of :mod:`oc.collect.trigger_history`: where that ring records only the fires an
 ``on_input`` trigger actually MADE, this one records every raw hook event the trigger CONSIDERED
-and what it decided — matched-and-fired, throttled, gated, a rect/window miss, or no chord — so the
-teach UI's input-log satellite doubles as a "why isn't this firing" debugger (button/mods typo,
-wrong window bound, pointer outside the rect...). Like every other history ring
+and matched in some way — fired, throttled, gated, awaiting a second tap — so the teach UI's
+input-log satellite doubles as a "why isn't this firing" debugger. Window/rect/chord misses are
+NOT recorded (pure noise — every unbound click/keypress on the whole desktop would otherwise
+flood the ring). Like every other history ring
 ([[trigger_history]] and siblings) it is deliberately transient — wiped on restart, a live debugging
 view rather than an audit log. The ring mechanics live in the shared
 :class:`oc.collect.history_ring.HistoryRing` primitive; this module only fixes the trigger key +
@@ -26,15 +27,15 @@ from __future__ import annotations
 
 from .history_ring import HistoryRing
 
-_ring = HistoryRing(200)
+_ring = HistoryRing(200, kind="input")
 
 
 def record(game: str, trigger_id: str, *, ts: str, event: str, button: str,
            mods: list[str], x: int, y: int, result: str) -> None:
     """Append one considered input event to the trigger's ring (newest first). ``ts`` is an ISO
     timestamp (the caller stamps it so tests stay deterministic); ``event`` is the raw hook action
-    (down/up/move); ``result`` is the trigger's disposition — ``"fired"``, ``"throttled"``,
-    ``"gated"``, ``"rect_miss"``, ``"window_miss"``, ``"chord_miss"``, or ``"awaiting_double"``."""
+    (down/up/move); ``result`` is the trigger's disposition — ``"fired"``, ``"deferred"``,
+    ``"throttled"``, ``"gated"``, or ``"awaiting_double"``."""
     _ring.record((game, trigger_id), {"ts": ts, "event": event, "button": button,
                                       "mods": list(mods), "x": x, "y": y, "result": result})
 

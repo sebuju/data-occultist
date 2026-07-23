@@ -80,7 +80,7 @@ def test_any_button_matches_either_device():
 def test_chord_requires_held_modifier():
     tr, calls = _runner(_profile(input_event="down", input_button="key:w", input_mods=["ctrl"]))
     assert tr.on_input(_ev(action="down")) == []           # ctrl not held
-    assert _dispositions("g", "t")[0] == "chord_miss"
+    assert input_history.recent("g", "t") == []             # chord misses aren't logged
     tr.on_input(_ev(action="up"))                            # release w before pressing it again
     tr.on_input(_ev(action="down", button="ctrl"))          # hold ctrl
     assert tr.on_input(_ev(action="down", button="w")) == ["t"]
@@ -101,7 +101,7 @@ def test_window_gate_blocks_when_unrecognized():
     down = _ev(device="mouse", action="down", button="left", x=50, y=50)
     up = _ev(device="mouse", action="up", button="left", x=50, y=50)
     assert tr.on_input(down) == []
-    assert _dispositions("g", "t")[0] == "window_miss"
+    assert input_history.recent("g", "t") == []             # window misses aren't logged
     tr.on_input(up)   # release before pressing again
     tr.set_input_context("equipment", PixelBox(0, 0, 100, 100))
     assert tr.on_input(down) == ["t"]
@@ -114,7 +114,7 @@ def test_rect_gate_maps_client_relative():
     tr.set_input_context("equipment", PixelBox(0, 0, 100, 100))
     outside = _ev(device="mouse", action="down", button="left", x=10, y=10)
     assert tr.on_input(outside) == []
-    assert _dispositions("g", "t")[0] == "rect_miss"
+    assert input_history.recent("g", "t") == []             # rect misses aren't logged
     tr.on_input(_ev(device="mouse", action="up", button="left", x=10, y=10))   # release
     inside = _ev(device="mouse", action="down", button="left", x=60, y=60)   # fraction (0.6, 0.6)
     assert tr.on_input(inside) == ["t"]
