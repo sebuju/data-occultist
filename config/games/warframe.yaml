@@ -5054,7 +5054,7 @@ triggers:
   readout_watch: []
   register_watch: []
   gates:
-  - gate
+  - gate_best_relic_change
   targets:
   - toast_best_relic
   enabled: true
@@ -5172,9 +5172,11 @@ gates:
   logic: or
   negate: false
   enabled: true
-- id: gate
-  source: ''
-  conds: []
+- id: gate_best_relic_change
+  source: subset:top_picks_for_relics
+  conds:
+  - when: changed
+    arg: ''
   logic: or
   negate: false
   enabled: true
@@ -8004,20 +8006,25 @@ layout:
       custH: true
       softW: true
       softH: false
-    gate:gate:
-      x: -200.0
-      y: -9260.0
-      collapsed: false
     trigger:toast_top_relic:
       x: -220.0
       y: -9540.0
       w: 360.0
-      h: 220.0
+      h: 260.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    gate:gate_best_relic_change:
+      x: -220.0
+      y: -9260.0
+      w: 360.0
+      h: 118.0
       collapsed: false
       custW: true
       custH: false
       softW: true
-      softH: true
   tables:
     warframe:ds:master:
       sorts:
@@ -9434,7 +9441,7 @@ layout:
     - trigger:toast_top_relic
     - sub:top_picks_for_relics
     - vt:sub:top_picks_for_relics
-    - gate:gate
+    - gate:gate_best_relic_change
     outline:
       color: '#e69a5a'
       style: none
