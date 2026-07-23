@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from .history_ring import HistoryRing
 
-_ring = HistoryRing(200)
+_ring = HistoryRing(200, kind="producer")
 
 
 def record(game: str, producer_id: str, *, ts: str, dataset: str, total: int,

@@ -44,17 +44,22 @@ def new_stamp_path(backup_dir: Path | str, ext: str, now: datetime) -> tuple[str
         now += timedelta(microseconds=1)
 
 
-def list_snapshots(backup_dir: Path | str, ext: str) -> list[Path]:
-    """All ``*.<ext>`` snapshots in ``backup_dir``, oldest first (stamp sorts chronologically)."""
+def list_snapshots(backup_dir: Path | str, ext: str, *, prefix: str = "") -> list[Path]:
+    """All ``<prefix>*.<ext>`` snapshots in ``backup_dir``, oldest first (stamp sorts
+    chronologically). Pass ``prefix`` when ``backup_dir`` is SHARED by more than one
+    snapshot kind under the same ``ext`` (e.g. ``logs/`` holds both ``logbar-*.log`` and
+    ``nodelog-*.log``) — without it, a keep-last-N prune sorts and caps stems from every
+    kind together, so one kind rotating faster can evict every snapshot of the other."""
     d = Path(backup_dir)
     if not d.exists():
         return []
-    return sorted(d.glob(f"*.{ext.lstrip('.')}"))
+    return sorted(d.glob(f"{prefix}*.{ext.lstrip('.')}"))
 
 
-def prune(backup_dir: Path | str, ext: str, keep: set[str]) -> None:
-    """Delete every ``*.<ext>`` snapshot whose stamp isn't in ``keep``."""
-    for p in list_snapshots(backup_dir, ext):
+def prune(backup_dir: Path | str, ext: str, keep: set[str], *, prefix: str = "") -> None:
+    """Delete every ``<prefix>*.<ext>`` snapshot whose stamp isn't in ``keep``. ``prefix``
+    must match whatever was passed to build ``keep`` — see :func:`list_snapshots`."""
+    for p in list_snapshots(backup_dir, ext, prefix=prefix):
         if p.stem not in keep:
             p.unlink(missing_ok=True)
 

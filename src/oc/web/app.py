@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from ..collect import nodelog_file
 from ..profile import list_profiles, load_profile
 from .deps import get_locator, get_settings
 from .routes import (
@@ -24,7 +25,9 @@ from .routes import (
     dictionaries,
     events,
     flow,
+    icons,
     live,
+    logbar,
     ocr,
     precapture,
     pretty,
@@ -152,6 +155,13 @@ async def lifespan(_app: FastAPI):
         from .logfilter import install as _install_access_filter
         _install_access_filter(verbose=os.environ.get("OCC_VERBOSE_ACCESS") == "1")
     except Exception:  # noqa: BLE001 - log tidiness must never break startup
+        pass
+    # Rotate the logbar file for this server start (see routes/logbar.py — OCC_BOOT_ID
+    # tells a real launch apart from a --reload worker respawn, so this doesn't spam
+    # logs/ with a new file on every code save).
+    try:
+        logbar.start_session()
+    except Exception:  # noqa: BLE001 - logging setup must never break startup
         pass
     # Kill any precapture OCR worker that somehow outlived a prior run before doing
     # anything else — no stray thread should keep hammering the GPU at startup.
@@ -383,6 +393,7 @@ def create_app() -> FastAPI:
     app.include_router(triggers.router)
     app.include_router(actions.router)
     app.include_router(toasts.router)
+    app.include_router(icons.router)
     app.include_router(sources.router)
     app.include_router(sounds.router)
     app.include_router(dictionaries.router)
@@ -395,6 +406,8 @@ def create_app() -> FastAPI:
     app.include_router(screenshot.router)
     app.include_router(dbschema.router)
     app.include_router(dbbackup.router)
+    app.include_router(logbar.router)
+    app.include_router(nodelog_file.router)
     # Serve the single-page front-end at root.
     app.mount("/", _RevalidateStatic(directory=str(_STATIC), html=True), name="static")
     return app

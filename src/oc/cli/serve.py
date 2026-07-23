@@ -27,6 +27,12 @@ def run(args) -> int:
     # env var is how the opt-out reaches that worker subprocess (it inherits the parent env).
     if getattr(args, "verbose_access", False):
         os.environ["OCC_VERBOSE_ACCESS"] = "1"
+    # One random id per real `serve` invocation, inherited unchanged by every `--reload`
+    # worker respawn of THIS run (they're child processes of this one, not fresh launches).
+    # oc.web.routes.logbar reads it to tell "a real new server start" apart from "the
+    # --reload worker restarted again" so it can rotate the logbar file only on the former.
+    import uuid
+    os.environ["OCC_BOOT_ID"] = uuid.uuid4().hex
     # Shutdown is clean WITHOUT a graceful-shutdown timeout: the app's lifespan chains the
     # SIGINT/SIGTERM handlers to flip a shutdown flag that every long-lived SSE stream watches
     # (see oc.web.shutdown / oc.web.sse), so the streams self-close and uvicorn's connection

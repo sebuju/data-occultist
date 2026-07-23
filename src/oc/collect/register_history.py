@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from .history_ring import HistoryRing
 
-_ring = HistoryRing(200)
+_ring = HistoryRing(200, kind="register")
 
 
 def record(game: str, register_id: str, *, ts: str, key: str, value,

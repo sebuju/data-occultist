@@ -19,7 +19,10 @@ export function openLogStream(game) {
     if (!game) return;
     dsevents.setGame(game);   // ensure the shared stream is pointed at the game (idempotent)
     unsub = dsevents.subscribeLog((ev) => {
-        log(ev.msg, ev.level || "info");
+        // bridge:false — this line is already server-side (it arrived over SSE) and already
+        // written to the logbar file by routes/logbar.py's bus subscriber; re-publishing it
+        // via /api/logbar/emit would just loop it back.
+        log(ev.msg, ev.level || "info", false);
         if (ev.kind === "profile_check") profileAlert.reportIssue(ev);
     });
 }

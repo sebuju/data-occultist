@@ -26,6 +26,9 @@ captures/
 *.onnx
 models/
 
+# Log-bar history (one file per front-end boot, keep-last-10 — see routes/logbar.py)
+/logs/
+
 # data-occultist UI local state: profile backups + per-device graph viewport (config/dictionaries IS tracked)
 config/games/.backups/
 config/games/.local/

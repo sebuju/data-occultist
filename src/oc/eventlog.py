@@ -27,7 +27,11 @@ _seq = 0
 
 def publish(msg: str, level: str = "info", *, game: str | None = None, **fields) -> dict:
     """Announce one activity line. ``level`` maps to a log-bar style (info/run/ok/warn/err);
-    ``game`` scopes it so the UI shows only the current game's lines. Returns the event."""
+    ``game`` scopes it so the UI shows only the current game's lines. A ``file_only=True``
+    field (passed via ``**fields`` — see ``routes/logbar.py``'s ``/emit``) marks an event as
+    client-originated diagnostics: it still gets persisted to the logbar file by that
+    module's subscriber, but ``routes/events.py`` excludes it from the SSE fan-out/backfill
+    so the browser that published it doesn't get it echoed back. Returns the event."""
     global _seq
     with _lock:
         _seq += 1

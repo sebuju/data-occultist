@@ -24,7 +24,7 @@ function scrollBottom() {
     if (body) body.scrollTop = body.scrollHeight;
 }
 
-function append({ ts, msg, level }) {
+function append({ ts, msg, level, bridge }) {
     latest.textContent = msg;
     latest.className = `log-latest lvl-${level}`;
     const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 30;
@@ -34,6 +34,46 @@ function append({ ts, msg, level }) {
     body.appendChild(row);
     while (body.children.length > MAX) body.removeChild(body.firstChild);
     if (atBottom) body.scrollTop = body.scrollHeight;
+    if (bridge) queueEmit({ msg, level });
+}
+
+// The logbar file (logs/logbar-<stamp>.log) is written entirely server-side — it rotates
+// on server start and is fed from the oc.eventlog bus (routes/logbar.py). The bar's
+// client-only lines (boot progress, mirrored console errors) have no server-side origin,
+// so the only way they reach the file is by publishing them onto that SAME bus via
+// POST /api/logbar/emit (file_only — persisted here, but never echoed back over SSE, so
+// this doesn't loop). `bridge` (set by log()) tells append() which lines are ours to send:
+// true for anything logged directly in this browser, false for lines relayed FROM the
+// server (logstream.js) — those are already on the bus and already written; re-publishing
+// them would loop. Batched + debounced — a burst of boot lines becomes one POST. Never let
+// logging throw or block the UI.
+const _emitQueue = [];
+let _emitTimer = null;
+function queueEmit(e) {
+    _emitQueue.push(e);
+    if (_emitTimer) return;
+    _emitTimer = setTimeout(flushEmit, 1000);
+}
+function flushEmit() {
+    _emitTimer = null;
+    if (!_emitQueue.length) return;
+    const entries = _emitQueue.splice(0);
+    try {
+        fetch("/api/logbar/emit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entries }),
+        }).catch(() => { /* logging must never break the UI */ });
+    } catch { /* ditto */ }
+}
+
+// One fresh node-log file per front-end boot: log.js loads exactly once per page load (the
+// SPA's sole log entry point), so firing this at module scope IS the boot signal.
+// --reload dev restarts don't reopen the page, so this ping only fires on a real boot.
+if (typeof window !== "undefined") {
+    try {
+        fetch("/api/nodelog/session", { method: "POST" }).catch(() => {});
+    } catch { /* best-effort */ }
 }
 
 // Expand/collapse the log history programmatically (boot opens it so the initial-load
@@ -53,8 +93,12 @@ export function fmtDur(ms) {
     return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-export function log(msg, level = "info") {
-    const e = { ts: new Date().toLocaleTimeString("en-GB", { hour12: false }), msg: String(msg), level };
+// `bridge` (default true): true for lines that originate in THIS browser (direct log()
+// calls, mirrored console errors, timed() durations) — these get published to the server
+// for persistence. logstream.js passes false for lines relayed from the server over SSE,
+// which are already on the bus and already written to the file.
+export function log(msg, level = "info", bridge = true) {
+    const e = { ts: new Date().toLocaleTimeString("en-GB", { hour12: false }), msg: String(msg), level, bridge };
     if (ensure()) append(e); else buffer.push(e);
 }
 

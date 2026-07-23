@@ -19,12 +19,19 @@ from __future__ import annotations
 
 from collections import deque
 
+from . import nodelog_file
+
 
 class HistoryRing:
-    """A bounded newest-first ring per ``(game, id)`` key. ``cap`` caps each key's ring."""
+    """A bounded newest-first ring per ``(game, id)`` key. ``cap`` caps each key's ring.
 
-    def __init__(self, cap: int = 200) -> None:
+    ``kind`` (e.g. ``"gate"``, ``"trigger"``) tags every record written through this ring
+    to the write-only node-log file (:mod:`oc.collect.nodelog_file`) — pass it so this
+    ring's entries land there; omit for a ring that shouldn't be file-logged."""
+
+    def __init__(self, cap: int = 200, kind: str | None = None) -> None:
         self._cap = cap
+        self._kind = kind
         self._h: dict[tuple, deque] = {}
 
     def record(self, key: tuple, entry: dict) -> None:
@@ -33,6 +40,8 @@ class HistoryRing:
         if dq is None:
             dq = self._h[key] = deque(maxlen=self._cap)
         dq.appendleft(entry)
+        if self._kind:
+            nodelog_file.write(self._kind, key[0], key[1], entry)
 
     def recent(self, key: tuple) -> list[dict]:
         """This key's recent events, newest first (empty if nothing recorded)."""

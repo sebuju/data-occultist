@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from .history_ring import HistoryRing
 
-_ring = HistoryRing(200)
+_ring = HistoryRing(200, kind="process")
 
 
 def record(game: str, process_id: str, *, ts: str, key: str, raw: str, value,

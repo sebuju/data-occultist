@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from .history_ring import HistoryRing
 
-_ring = HistoryRing(200)
+_ring = HistoryRing(200, kind="readout")
 
 
 def _id(window_id: str, readout_id: str) -> str:

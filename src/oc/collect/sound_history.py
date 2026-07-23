@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from .history_ring import HistoryRing
 
-_ring = HistoryRing(200)
+_ring = HistoryRing(200, kind="sound")
 
 
 def record(game: str, sound_id: str, *, ts: str, trigger: str) -> None:

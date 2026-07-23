@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from .history_ring import HistoryRing
 
-_ring = HistoryRing(200)
+_ring = HistoryRing(200, kind="router")
 
 
 def record(game: str, router_id: str, *, ts: str, source: str, source_value, branches,

@@ -116,7 +116,11 @@ async def events(game: str, request: Request, after: int = 0, cid: str = ""):
             if g == game:
                 push(("flow", {"kind": kind, "src": src, "dst": dst, "n": n}))
         def on_log(ev: dict) -> None:
-            if ev.get("game") in (None, game):
+            # file_only events (routes/logbar.py's /emit — client-only diagnostics with no
+            # server origin) are persisted to the log file by their own bus subscriber but
+            # never streamed back: the browser that published one already shows it locally,
+            # so echoing it over SSE would double it up.
+            if ev.get("game") in (None, game) and not ev.get("file_only"):
                 push(("log", ev))
         def on_fire(g: str, trigger_id: str, sounds: list) -> None:
             # a live, un-backfilled cue -> the browser plays these sound nodes at once. ``sounds`` is
@@ -197,4 +201,5 @@ async def events(game: str, request: Request, after: int = 0, cid: str = ""):
 
     # backfill buffered log lines since the client's last-seen seq, then go live
     return sse_response(request, subscribe_fn, fmt,
-                        backfill=lambda: [("log", ev) for ev in log_recent(after_seq=after, game=game)])
+                        backfill=lambda: [("log", ev) for ev in log_recent(after_seq=after, game=game)
+                                          if not ev.get("file_only")])
