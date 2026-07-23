@@ -168,6 +168,11 @@ class Collector:
         self._slice_sync: dict[str, SliceSync] = {}
         self._scroll_vis: dict[str, float] = {}   # mirror: rows-on-screen measured from row pitch
         self._pos_sent: dict[str, dict] = {}       # mirror: last slot map published (skip unchanged re-writes)
+        # mirror: datasets whose scrollbar thumb has been read confidently at least once. Lets
+        # tick() tell a flickering scrollbar (thumb was readable, momentarily isn't -> hold the
+        # commit so the read isn't stored unpositioned) from a genuinely short list with no
+        # scrollbar (thumb never readable -> commit normally, don't hold).
+        self._thumb_seen: set[str] = set()
         # Per-dataset gate for field-rule ``prune`` signals (e.g. a depleted relic's count
         # hitting 0): re-arming, unlike ``Confirmer``, so the same key can prune again after
         # being re-added (see tick()).
@@ -622,7 +627,18 @@ class Collector:
                 new += 1
         else:
             store = self._store_for(window)
-            if confirmed and dataset in self._pending_batch:
+            # Read the scrollbar thumb ONCE up front (reused by the mirror block below). For a
+            # mirror dataset it decides whether this frame can position what it stores: if we've
+            # confidently read the thumb before but can't now (a flickering scrollbar), holding the
+            # commit stops the read landing UNPOSITIONED — junk the terminator/slice-sync can never
+            # reach. A dataset whose thumb has never been readable (short list, no scrollbar) is not
+            # held: it commits as before (its rows are simply never mirror-managed).
+            is_mirror = self._profile.sync_mode_for(dataset) == "mirror"
+            p = self._thumb_pos(frame, window) if is_mirror else None
+            if p is not None:
+                self._thumb_seen.add(dataset)
+            hold = is_mirror and p is None and dataset in self._thumb_seen
+            if confirmed and not hold and dataset in self._pending_batch:
                 store.begin_batch()   # this detection's offering = its own revertable batch
                 self._pending_batch.discard(dataset)
             observed = self._observed[dataset]
@@ -630,7 +646,10 @@ class Collector:
                 key = store.key_of(rec.values)
                 if key is not None:
                     observed.add(key)
-            new, _skipped, batch_changed = commit_records(store, confirmed)   # the ONE write path
+            if hold:
+                new, batch_changed = 0, []               # flickered thumb -> defer to a positionable frame
+            else:
+                new, _skipped, batch_changed = commit_records(store, confirmed)   # the ONE write path
             changed.extend(batch_changed)               # added/updated -> triggers may price it
             if new:
                 # Source-aware data hop for the graph blob animation: announce that THIS window
@@ -642,8 +661,7 @@ class Collector:
             # visible scroll slice; a stored key whose last-seen position is in that slice but
             # which is no longer read has gone -> remove (soft). A partial/occluded frame
             # (kept < read) is not clean and contributes no removal evidence.
-            if self._profile.sync_mode_for(dataset) == "mirror":
-                p = self._thumb_pos(frame, window)
+            if is_mirror:
                 if p is not None:
                     clean = bool(records) and len(kept) == len(records)
                     fresh = clean or cache_hit          # this frame contributes evidence
@@ -724,9 +742,19 @@ class Collector:
                         # it again would spam an unchanged _pos every tick for nothing.
                         store.set_positions(read_cells)
                         self._pos_sent[dataset] = dict(read_cells)
+                    # Immortal-junk sweep: this dataset MIRRORS the screen, so a present key with no
+                    # learned slot is not on the list — an old relic refined away, a stale misread.
+                    # set_positions just ran (above), so every cell actually on screen now holds a
+                    # fresh slot and off-screen owned relics keep their persisted one; only genuinely
+                    # off-list keys are left unpositioned. This is NOT gated on the terminator: the
+                    # end-marker is only visible at the very bottom of the list, so gating on it left
+                    # the immortals alive whenever the user wasn't scrolled to the end (the real
+                    # reason this kept "not working"). Any steady, positioned frame reaps them.
+                    if fresh:
+                        store.remove_unpositioned()
                     # Terminator cut: a sentinel template (e.g. an unowned-relic placeholder) marks
-                    # the end of the real list. On a clean frame it's visible, drop every stored key
-                    # parked at or after its (row, col) in reading order — stale misreads that
+                    # the end of the real list. On a clean frame it's visible, drop every POSITIONED
+                    # key parked at or after its (row, col) in reading order — stale misreads that
                     # scrolled out of view and were never replaced (which slice_sync alone can't
                     # reach), AND any real cell sharing the terminator's row but at a later column
                     # (a row-only cutoff would wrongly keep those). Runs AFTER set_positions so a

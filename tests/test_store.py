@@ -167,6 +167,25 @@ def test_remove_after_col_cutoff_defaults_to_row_start(tmp_path):
     assert s.present_keys() == set()
 
 
+def test_remove_unpositioned_sweeps_present_keys_with_no_slot(tmp_path):
+    # A present key with NO positions row is immortal to remove_after (the SQL only sees `positions`)
+    # and to slice-sync. In a mirror dataset it's off-list by definition -> remove_unpositioned reaps
+    # it, while positioned keys (on the list) survive untouched.
+    s = _store(tmp_path)
+    for nm in ["Lith A1", "Lith B2", "Ghost X"]:
+        s.record_seen({"name": nm})
+    s.set_positions({"lith_a1": (0.1, 0.0), "lith_b2": (0.1, 1.0)})   # ghost_x deliberately unpositioned
+    # remove_after (cutoff past both reals) can never touch the unpositioned ghost
+    s.remove_after(5)
+    assert s.present_keys() == {"lith_a1", "lith_b2", "ghost_x"}
+    # the dedicated sweep reaps exactly the unpositioned key; the two positioned reals survive
+    swept = s.remove_unpositioned()
+    assert {e.key for e in swept} == {"ghost_x"}
+    assert s.present_keys() == {"lith_a1", "lith_b2"}
+    # a second sweep is a no-op (nothing left unpositioned) -> no spurious events
+    assert s.remove_unpositioned() == []
+
+
 def test_positions_follow_rename_and_delete(tmp_path):
     s = _store(tmp_path)
     s.record_seen({"name": "Lith G1"})

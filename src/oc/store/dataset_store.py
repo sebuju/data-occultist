@@ -974,16 +974,34 @@ class DatasetStore:
         A terminator/sentinel item marks the end of the real list — nothing valid can sit at or
         after it — so a record still parked there is stale (an old misread that scrolled out of
         view and was never replaced, or a real cell sharing the terminator's row but sitting at a
-        later column — a row-only cutoff would wrongly keep that one). Keys with no learned
-        position are left untouched. ``col_cutoff`` defaults to 0 (the row's first column), so a
-        caller that only cares about the row (the terminator sits at the row's start, or the grid
-        has one column) gets the old row-only behaviour for free. Reuses :meth:`remove_keys`
-        (which also drops the removed keys' ``positions`` rows)."""
+        later column — a row-only cutoff would wrongly keep that one). ``col_cutoff`` defaults to 0
+        (the row's first column), so a caller that only cares about the row (the terminator sits at
+        the row's start, or the grid has one column) gets the old row-only behaviour for free.
+        Keys with no learned position are left untouched (see :meth:`remove_unpositioned`). Reuses
+        :meth:`remove_keys` (which also drops the removed keys' ``positions`` rows)."""
         rows = self._conn.execute(
             "SELECT key FROM positions WHERE dataset=? AND (pos > ? OR (pos = ? AND xpos >= ?))",
             (self._dataset, float(pos_cutoff), float(pos_cutoff), float(col_cutoff))).fetchall()
         keys = {r["key"] for r in rows} & self.present_keys()
         return self.remove_keys(keys)
+
+    def remove_unpositioned(self) -> list[ChangeEvent]:
+        """Soft-remove every present key that has **no** ``positions`` row at all.
+
+        A ``sync_mode: mirror`` dataset IS the current screen. Every cell actually on the list earns
+        a learned grid slot the moment it's read on a positioned frame (:meth:`set_positions`), and
+        that slot persists across sessions in the ``positions`` table. So a present key with no slot
+        is, by definition, not on the list — an old relic refined away, a transient misread that was
+        committed but never re-seen at a real position, a legacy row. It is IMMORTAL to every other
+        remover: the row/col cut (:meth:`remove_after`) only queries ``positions``, and slice-sync
+        skips a key it has no slot for. This is the ONLY thing that reaps it.
+
+        The caller MUST have just run :meth:`set_positions` for this frame's visible cells, so a
+        relic genuinely on screen already holds a fresh slot and is never caught here — only
+        genuinely off-list keys remain unpositioned. Reuses :meth:`remove_keys`."""
+        positioned = {r["key"] for r in self._conn.execute(
+            "SELECT key FROM positions WHERE dataset=?", (self._dataset,)).fetchall()}
+        return self.remove_keys(self.present_keys() - positioned)
 
     def reconcile(self, present_keys: set[str]) -> list[ChangeEvent]:
         """Mark stored keys absent from a *complete* pass as removed.
