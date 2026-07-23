@@ -8,7 +8,7 @@ import * as api from "../api.js";
 import { isOnline } from "../conn.js";
 import { h, frag, TRASH, labCell, labAdd, srcRow, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
-import { model, afterBoot } from "./state.js";
+import { model } from "./state.js";
 import * as hub from "../hub.js";
 import { log } from "../log.js";
 
@@ -323,6 +323,13 @@ export function wireProducerNode(div, game, dataset, mode = "", type = "http",
         catch (e) { btn.dataset.running = ""; showMeter(false); $(".enr-prog").textContent = String(e.message || e); }
     });
 
+    // Paint "idle" immediately with no fetch — the only case a sweep is already in flight at
+    // paint time (reload mid-sweep) is caught by the hub subscribe below, which replays its last
+    // snapshot synchronously and overwrites this seed. No boot fetch needed (was: afterBoot(loadSummary),
+    // which fired one /summary request per producer node simultaneously at boot — pure waste, since
+    // idle is this function's own default and a running sweep is already on the heartbeat).
+    reflectStatus({ running: false });
+
     // Catch a sweep started by ANOTHER actor (a trigger's "fire now", the collector loop, another
     // tab): the self-poll only runs once THIS node kicks it, so ride the shared heartbeat — when a
     // sweep for our dataset appears and we're not already polling, reflectStatus kicks the poll loop.
@@ -333,6 +340,4 @@ export function wireProducerNode(div, game, dataset, mode = "", type = "http",
         const sw = (snap.sweeps || []).find((s) => s.dataset === dataset);
         if (sw && sw.running) reflectStatus(sw);               // kicks poll()
     });
-
-    afterBoot(loadSummary);
 }
