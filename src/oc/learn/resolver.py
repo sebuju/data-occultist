@@ -169,7 +169,3 @@ class FieldResolver:
                              dropped=res.dropped, prune=res.prune, substituted=res.substituted,
                              verified=res.verified)
 
-    def rule_trace(self, field: FieldDef, raw_text: str, confidence: float = 1.0) -> list:
-        """The per-rule in/out trace for the node debug panel (see ``run_rules(trace=True)``)."""
-        return run_rules(field, raw_text, dict_hook=self.apply_dictionary,
-                         confidence=confidence, trace=True).trace or []

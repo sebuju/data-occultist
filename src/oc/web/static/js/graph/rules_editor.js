@@ -15,12 +15,11 @@ import { armConfirm } from "./main.js";
 // The shared primitive (clipboard.js) — the forge's pitch/shape sections hold their own clips.
 const ruleClip = makeClip(".rulepaste");
 
-export function wireFieldRules(div, fd, { edit, retrace }) {
+export function wireFieldRules(div, fd, { edit }) {
     fd.rules = fd.rules || [];
-    const doTrace = () => retrace?.(div);   // hand the live node body over (see refreshRuleTrace)
     const rule = (e) => fd.rules[+e.target.dataset.ri];
-    const editVal = (e, k) => { edit(() => { rule(e)[k] = e.target.value; }); doTrace(); };
-    const editNum = (e, k) => { edit(() => { rule(e)[k] = +e.target.value; }); doTrace(); };
+    const editVal = (e, k) => { edit(() => { rule(e)[k] = e.target.value; }); };
+    const editNum = (e, k) => { edit(() => { rule(e)[k] = +e.target.value; }); };
     const restructure = (mutate) => edit(mutate, { rebuild: true });
 
     div.querySelector(".ruleadd")?.addEventListener("click", () => {
@@ -51,7 +50,6 @@ export function wireFieldRules(div, fd, { edit, retrace }) {
     div.querySelectorAll(".rule-del").forEach((b) => armConfirm(b, () => {
         restructure(() => fd.rules.splice(+b.dataset.ri, 1));
     }, { silent: true, resetOnOutside: true }));
-    doTrace();   // paint the trace for the freshly-built rows (uses the live body, not a nodeEls lookup)
 }
 
 // Two-stage armed removal for a sources-input chip's trash (CLAUDE.md rule 2 — no confirm()).

@@ -398,8 +398,8 @@ class RegionReader:
     def _ro_preprocess_map(self, window: WindowDef, fields: dict) -> dict:
         """``{readout_id: Preprocess}`` for enabled readouts whose linked field sets its OWN
         ``preprocess`` override (readouts without one fall back to ``window.preprocess``).
-        Keyed by readout id to line up with the ``(id, box)`` pending lists. Shared by
-        :meth:`read_readouts_detailed` and :meth:`representative_raws` (rule 7)."""
+        Keyed by readout id to line up with the ``(id, box)`` pending lists. Shared with
+        :meth:`read_readouts_detailed` (rule 7)."""
         out = {}
         for v in window.readouts:
             if not v.enabled:
@@ -1058,52 +1058,6 @@ class RegionReader:
                                    "trace": ["confirming"] if held else [], "conf": conf})
             if surfaced:
                 out[v.id] = (value, conf, text, substituted)
-        return out
-
-    def representative_raws(self, frame: Frame, window: WindowDef,
-                            fields: dict[str, FieldDef]) -> dict[str, tuple[str, float]]:
-        """One representative RAW read for EVERY field, from a SINGLE OCR pass — the batch
-        behind the field nodes' rule-trace panels. All the window's readout boxes read in
-        one focus pass and all region/grid fields come off ONE ``_read_cells`` pass, so the
-        whole node fleet's traces cost one window read instead of one read per field. A
-        readout field reads its own box; a region/grid field uses the first cell that read
-        it (else its first cell). Returns ``{field_id: (text, conf)}`` (fields never read
-        are omitted; the caller defaults them)."""
-        cw, ch = frame.client.w, frame.client.h
-        out: dict[str, tuple[str, float]] = {}
-        # symbol readouts aren't OCR'd — classify each against the atlas directly
-        for v in window.readouts:
-            if v.enabled and self._is_symbol(fields.get(v.field)) and v.field in fields and v.field not in out:
-                box = v.box.to_fraction().to_pixels(cw, ch)
-                out[v.field] = self._symbol_value(frame, box) or ("", 0.0)
-        # readouts: detection-gated read of every enabled readout box (NOT recognition-only —
-        # a blank box must read as empty, not a hallucinated value), cross-checked against a
-        # wider pass for boxes found present; see _readout_text_reads.
-        ro_boxes = [(v.id, v.box.to_fraction().to_pixels(cw, ch)) for v in window.readouts
-                    if v.enabled and not self._is_symbol(fields.get(v.field))]
-        ro_reads = self._readout_text_reads(
-            frame, window, ro_boxes, self._ro_preprocess_map(window, fields)) if ro_boxes else {}
-        for v in window.readouts:
-            if v.enabled and v.field in fields and v.field not in out:
-                out[v.field] = ro_reads.get(v.id) or ("", 0.0)
-        # region/grid fields: ONE cell pass, first non-empty read per field (else its first cell)
-        if any(fid not in out for fid in fields):
-            _, _, _, cr = self._read_cells(frame, window, fields)
-            for fid in fields:
-                if fid in out:
-                    continue
-                fallback: tuple[str, float] | None = None
-                for c in cr:
-                    fr = c.fields.get(fid)
-                    if fr is None:
-                        continue
-                    if fr.raw:
-                        out[fid] = (fr.raw, fr.conf)
-                        break
-                    fallback = fallback or (fr.raw or "", fr.conf)
-                else:
-                    if fallback is not None:
-                        out[fid] = fallback
         return out
 
     def region_signature(self, frame: Frame, window: WindowDef) -> int | None:

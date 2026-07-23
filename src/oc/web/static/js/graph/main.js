@@ -69,7 +69,7 @@ import {
     openImage, openAtlasImage, refreshDetect, nodeIdOf,
     openItemImage,
     scheduleWindowRead, flushWindowRead,
-    refreshImageBoxes, selectRegionNode, refreshRuleTrace,
+    refreshImageBoxes, selectRegionNode,
     RECT_TYPES, toggleRectEditor, openDetectColorPick,
     mountMatchPreview, refreshMatchPreviews,
 } from "./imaging.js";
@@ -1161,7 +1161,6 @@ function wireNode(div, n) {
         }));
         if (fld) wireFieldRules(div, fld, {
             edit: rulesEdit(n.id, () => autosave(n.win?.id)),
-            retrace: (el) => refreshRuleTrace(n.win.id, fld.id, n.id, el),
         });
     } else if (n.type === "detect") {
         const owner = n.win.id;                         // window id, or "game" for the gate

@@ -14,7 +14,7 @@ import { panZoomTo } from "./camera.js";
 import { wireTools } from "./drawtool.js";
 import {
     refreshItemBoxes, refreshImageBoxes, scheduleItemRead,
-    setItemCellKeepingChildren, refreshItemReadout, refreshRuleTrace,
+    setItemCellKeepingChildren, refreshItemReadout,
 } from "./imaging.js";
 import {
     render, autosave, rebuildNode, nodeEdit,
@@ -218,7 +218,6 @@ function wireItemField(div, n) {
         // `rebuild` is handled by rulesEdit (it rebuilds THIS node); the boxes/grid resync and the
         // cutout re-read split across paint-now / read-on-commit.
         edit: rulesEdit(n.id, itemRead(winId, itemId)),
-        retrace: (el) => refreshRuleTrace(winId, n.field.id, n.id, el),
     });
     div.querySelector(".itell")?.addEventListener("change", (e) => {
         fieldEdit(() => model.setItemFieldTell(winId, itemId, fid, e.target.checked),

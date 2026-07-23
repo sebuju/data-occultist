@@ -1553,29 +1553,6 @@ function previewProfileFor(winId) {
     return { ...model.profile, windows: w ? [w] : [] };
 }
 
-// One rule-trace read per WINDOW, shared by every field node on it. At boot the whole field
-// fleet asks for its trace at once; without this each call re-OCR'd the entire window (N reads),
-// which stalled the renderer under load. Singleflighted per window: a burst of rule edits (or the
-// initial node-build fleet) collapses into ONE `/api/rule_trace` request, and a call that lands
-// while one is in flight is remembered and ALWAYS re-run once it settles, with the latest profile.
-// (The old design returned the in-flight promise itself, snapshotted at first-call time, with no
-// re-run — a rule edit landing mid-flight silently got served the pre-edit reads, and only a LATER
-// edit — landing when nothing was in flight — ever refreshed the label. That's the "wrong values
-// until you nudge another input" bug this replaces.) Debouncing a rule edit's trace refresh is now
-// the shared clock's job (scheduleWindowRead, below) — this fires immediately when called.
-const _lastTrace = new Map();    // winId -> last successful batch {fields}
-
-function fetchWindowTrace(winId) {
-    return singleFlight(`trace:${winId}`, (ctx) => doWindowTrace(winId, ctx));
-}
-
-async function doWindowTrace(winId, { superseded } = {}) {
-    const cap = await curCapOf(winId);
-    const batch = await api.ruleTrace(previewProfileFor(winId), model.profile.name, cap);
-    if (superseded?.()) return;   // a newer trace is already queued — let it paint instead
-    _lastTrace.set(winId, batch);
-    repaintTracedNodes(winId);   // a fresh batch landed -> repaint EVERY traced node on this window
-}
 
 // Stash what a window's readout boxes read off a preview result into readoutPreview (the NON-LIVE
 // source for each readout node's value). Scope to THIS window's ids: set the ones that read, drop
@@ -1608,13 +1585,13 @@ function storeReadoutPreview(winId, res) {
 }
 
 // One readouts read per WINDOW for its readout nodes, used when live mode is OFF (no collector
-// feeding values). Coalesced (singleFlight) the same way as the rule trace above, so a config edit
-// landing mid-flight always gets a trailing re-run instead of being served a stale in-flight
-// result. Reads the current bound image and stores each readout's value (+conf) into readoutPreview.
+// feeding values). Coalesced (singleFlight), so a config edit landing mid-flight always gets a
+// trailing re-run instead of being served a stale in-flight result. Reads the current bound image
+// and stores each readout's value (+conf) into readoutPreview.
 // Callers driven by an EDIT (not the initial fetch on node-open) should go through
 // scheduleWindowRead(winId, {readouts:true}) instead of calling this directly — it shares the
 // window's read settle clock, so a readout edit doesn't fire its own separate un-debounced fetch
-// alongside the coalesced preview/detect/trace one.
+// alongside the coalesced preview/detect one.
 export function refreshReadoutValues(winId) {
     const w = model.window(winId);
     if (!w || !(w.readouts || []).length) return Promise.resolve();
@@ -1632,69 +1609,6 @@ async function doRefreshReadoutValues(winId, { superseded } = {}) {
     } finally {
         roIds.forEach((id) => setNodeBusy(id, false));
     }
-}
-
-// Every field node that has painted a trace, so an image swap (or a fresh batch landing) can
-// repaint them all (the trace is on-demand, not polled — nothing re-reads it when the bound image
-// changes underneath). Keyed by nodeId; carries the winId + fieldId needed to repaint. Auto-pruned
-// when its node is gone.
-const _tracedNodes = new Map();   // nodeId -> { winId, fieldId }
-
-// Paint one field node's `.frule-trace` slots from the last stashed batch for its window — pure,
-// no fetch. `host` is the live node body.
-function paintRuleTrace(winId, fieldId, host) {
-    const slots = [...host.querySelectorAll(".frule-trace")];
-    if (!slots.length) return;
-    const steps = _lastTrace.get(winId)?.fields?.[fieldId]?.trace || [];
-    for (const slot of slots) {
-        const s = steps[+slot.dataset.ri];
-        slot.classList.remove("frule-drop");
-        if (!s) { slot.textContent = ""; continue; }
-        const q = (v) => (v == null ? "∅" : `"${v}"`);
-        if (!s.fired) { slot.textContent = `${q(s.in)}  (skipped)`; continue; }
-        if (s.out == null) { slot.textContent = `${q(s.in)}  →  dropped`; slot.classList.add("frule-drop"); continue; }
-        slot.textContent = `${q(s.in)}  →  ${q(s.out)}`;
-    }
-}
-
-// Repaint every already-traced field node on a window from the last stashed batch (no fetch) —
-// called once a fresh batch lands (doWindowTrace).
-function repaintTracedNodes(winId) {
-    for (const [nodeId, t] of _tracedNodes) {
-        if (t.winId !== winId) continue;
-        const host = nodeEls.get(nodeId);
-        if (!host) { _tracedNodes.delete(nodeId); continue; }
-        paintRuleTrace(winId, t.fieldId, host);
-    }
-}
-
-// Re-run the rule trace for every already-traced field node on a window — call after its bound
-// image changes so each `.frule-trace` reflects the NEW image, not the old read. The stashed batch
-// is for the PREVIOUS image, so this drops it and forces an immediate fresh fetch rather than
-// repainting stale data.
-function retraceWindow(winId) {
-    _lastTrace.delete(winId);
-    fetchWindowTrace(winId);
-}
-
-// Fill a field node's `.frule-trace` slots: paint immediately from the last cached batch (no blank
-// flash), then queue a fresh read on the shared settle clock (scheduleWindowRead) so a rule/input
-// edit is reflected without needing to "nudge" another input afterwards — coalesced with any other
-// pending read for this window (preview/detect/item), so a rule edit settles in the SAME beat as
-// the rest of that edit's fallout instead of its own separately-timed debounce.
-function refreshRuleTrace(winId, fieldId, nodeId, el) {
-    _tracedNodes.set(nodeId, { winId, fieldId });   // remember it so an image swap / fresh batch can repaint it
-    // prefer the live node body the caller hands us: on the FIRST build the node isn't in
-    // `nodeEls` yet (wiring runs before registration), so a lookup would miss and the trace
-    // would only appear after an edit. `el` is always the current body.
-    const host = el || nodeEls.get(nodeId);
-    if (!host || !host.querySelectorAll(".frule-trace").length) return;
-    paintRuleTrace(winId, fieldId, host);
-    // While this node is being edited, ask for the TRACE ONLY: the preview+detect pass would
-    // setNodeBusy this very node and blur the input being typed in (edit_txn.js). Gate on ARMED,
-    // not dirty — a value momentarily typed back to its original is still mid-edit, and the caret
-    // must survive it.
-    scheduleWindowRead(winId, { trace: true, preview: !nodeTxn.armed(nodeId) });
 }
 
 // Coalesce reads: at most ONE OCR request per window is ever in flight (shared singleFlight
@@ -2103,15 +2017,15 @@ export async function refreshCollisions() {
         if (collisionAgain) { collisionAgain = false; refreshCollisions(); }
     }
 }
-// ---- ONE coalesced read scheduler: preview + detect (+ rule-trace, + item cutout reads) all
-// settle on a SINGLE shared clock, instead of the old three/four independently-timed debounces
-// (detect 700ms / preview 700ms / trace 350ms / item 500ms) that fired at staggered moments for
-// ONE edit — several separate spinner flashes + OCR passes per settle, and the reason a burst of
-// quick edits (or a held WASD move/resize) never really "debounced" together. Window-level ids
-// accumulate across the debounce window so edits spanning windows don't drop each other; a null
-// winId means "every open window" (a global edit, e.g. a preprocess/global setting change). Item
-// reads (scheduleItemRead, above) are a SEPARATE pending set that rides the SAME clock without
-// implying a window-wide preview/detect of their own (e.g. merely opening an item's cutout view).
+// ---- ONE coalesced read scheduler: preview + detect (+ item cutout reads) all settle on a
+// SINGLE shared clock, instead of the old independently-timed debounces (detect 700ms / preview
+// 700ms / item 500ms) that fired at staggered moments for ONE edit — several separate spinner
+// flashes + OCR passes per settle, and the reason a burst of quick edits (or a held WASD
+// move/resize) never really "debounced" together. Window-level ids accumulate across the
+// debounce window so edits spanning windows don't drop each other; a null winId means "every open
+// window" (a global edit, e.g. a preprocess/global setting change). Item reads (scheduleItemRead,
+// above) are a SEPARATE pending set that rides the SAME clock without implying a window-wide
+// preview/detect of their own (e.g. merely opening an item's cutout view).
 const READ_DEBOUNCE_MS = 700;
 // Page-step grace: cycling next/prev must do ZERO costly work per click — the read AND the
 // live feed (feed=1 + commit) both ride this clock so they collapse into ONE pass on the page
@@ -2120,7 +2034,6 @@ const PAGE_FEED_MS = 1000;
 let _readTimer = null;
 let _readDelay = 0;               // longest delay any pending arm asked for this settle (max wins)
 const _readWins = new Set();      // winIds queued for preview+detect this settle
-const _readTrace = new Set();     // subset of _readWins that ALSO needs a rule-trace refresh
 const _readReadouts = new Set();  // subset of _readWins that ALSO needs a readout-values refetch
 const _readFeed = new Set();      // winIds to run the collect feed (feed=1 + commit) once this settle fires
 const _readItems = new Map();     // "winId:itemId" -> {winId,itemId} queued for a cutout re-read
@@ -2134,20 +2047,18 @@ function armReadTimer(delay = READ_DEBOUNCE_MS) {
 }
 
 // Window-level: preview + detect, scoped to `winId` (or every open window when null). Pass
-// `trace: true` to also refresh the rule-trace for that window, or `readouts: true` to also
-// refetch its readout values (refreshReadoutValues — the live-mode-off, satellite-independent
-// path), once this settle fires. Replaces the old separate refreshOpenPreviews/refreshOpenDetect
-// debounces + fetchWindowTrace's own + wireReadout's immediate, un-coalesced refetch().
-// `preview: false` queues the trace/readout refresh WITHOUT the window's preview+detect pass. That
+// `readouts: true` to also refetch its readout values (refreshReadoutValues — the live-mode-off,
+// satellite-independent path), once this settle fires. Replaces the old separate
+// refreshOpenPreviews/refreshOpenDetect debounces + wireReadout's immediate, un-coalesced refetch().
+// `preview: false` queues the readout refresh WITHOUT the window's preview+detect pass. That
 // pass is what calls setNodeBusy -> `inert` -> blurs the input being typed in, so a node with an
-// uncommitted config edit asks for its rule trace alone: you see rule output update as you type,
-// and nothing locks. The full pass runs once, on commit, via the deferred autosave.
+// uncommitted config edit can ask for its readout alone: nothing locks while typing.
+// The full pass runs once, on commit, via the deferred autosave.
 // `feed: true` also runs the collect feed (feed=1 + commit — a live tick) for that window this
 // settle, coalesced with the read; `delay` overrides the debounce (page-step passes PAGE_FEED_MS).
-function scheduleWindowRead(winId = null, { trace = false, readouts = false, preview = true, feed = false, delay = READ_DEBOUNCE_MS } = {}) {
+function scheduleWindowRead(winId = null, { readouts = false, preview = true, feed = false, delay = READ_DEBOUNCE_MS } = {}) {
     if (winId) {
         if (preview) _readWins.add(winId);
-        if (trace) _readTrace.add(winId);
         if (readouts) _readReadouts.add(winId);
         if (feed) _readFeed.add(winId);
     } else _readAll = true;
@@ -2159,7 +2070,7 @@ function scheduleWindowRead(winId = null, { trace = false, readouts = false, pre
 // of the burst, so waiting another 700ms just reads as lag. Returns a promise of the work it
 // started, so a commit can hold its node's loader up for exactly as long as the work runs.
 export function flushWindowRead() {
-    const queued = _readAll || _readWins.size || _readTrace.size || _readReadouts.size || _readFeed.size || _readItems.size;
+    const queued = _readAll || _readWins.size || _readReadouts.size || _readFeed.size || _readItems.size;
     if (!queued) return Promise.resolve();
     clearTimeout(_readTimer);
     return fireWindowRead();   // sets _readTimer = null and drains every pending set
@@ -2171,7 +2082,6 @@ function fireWindowRead() {
     const work = [];
     _readTimer = null; _readDelay = 0;
     const all = _readAll; _readAll = false;
-    const traceWins = [..._readTrace]; _readTrace.clear();
     const roWins = [..._readReadouts]; _readReadouts.clear();
     const feedWins = [..._readFeed]; _readFeed.clear();
     const items = [..._readItems.values()]; _readItems.clear();
@@ -2194,7 +2104,6 @@ function fireWindowRead() {
         if (model.window(id)?.enabled !== false) work.push(refreshDetect(id));   // skip disabled windows
     }
     _readWins.clear();
-    for (const id of traceWins) work.push(fetchWindowTrace(id));
     for (const id of roWins) work.push(refreshReadoutValues(id));
     // feed: a live tick (feed=1 + commit) for each page-stepped window — runs ONCE on the settled
     // page. Re-check liveCollecting() here, not at schedule time: it may have flipped on during the
@@ -2237,8 +2146,6 @@ function clearWindowReads(winId) {
     clearGrid(winId);              // grid boxes, per-cell reads, cell outlines, guards, occluded, raw detections
     refreshImageBoxes(winId);      // repaint the overlay with the AUTHORED boxes only
     imageCanvases.get(winId)?.overlay.setDetectStatus({});   // drop the per-box detect tint
-    _lastTrace.delete(winId);      // the stashed rule-trace batch read the OLD image
-    repaintTracedNodes(winId);     // → every field node's `.frule-trace` slot blanks
     prevHost(winId)?.replaceChildren(h("p", { class: "muted", style: "padding:8px" }, "reading…"));
     setWindowDetectStatus(winId, {});   // window node's per-detector ticks + overall verdict
     for (const a of model.detects(winId)) blankDetectStatus(`det:${winId}:${a.id}`);
@@ -2328,11 +2235,11 @@ async function loadImage(winId, recapture, { deferRead = false } = {}) {
         // client read here just contends with it. Skip the read (capture path only).
         if (recapture && liveCollecting()) return;
         // page-step (next/prev): EVERYTHING costly — the live feed (feed=1 + commit) AND the
-        // preview/detect/trace/readout read — rides the settle clock, so cycling through images does
+        // preview/detect/readout read — rides the settle clock, so cycling through images does
         // NO OCR or commit per click; it all fires once, PAGE_FEED_MS after the last click, on the
         // page you land on. Skip the feed during boot / while the collector owns OCR (it feeds anyway).
         if (deferRead) {
-            scheduleWindowRead(winId, { trace: true, readouts: true,
+            scheduleWindowRead(winId, { readouts: true,
                 feed: !boot.phase && !liveCollecting(), delay: PAGE_FEED_MS });
             return;
         }
@@ -2342,11 +2249,6 @@ async function loadImage(winId, recapture, { deferRead = false } = {}) {
             curCapOf(winId).then((c) => c && feedImage(game, previewProfileFor(winId), c)).catch(() => {});
         if (prevHost(winId)) refreshPreview(winId, false);
         else refreshGridPreview(winId);
-        // the image changed → the field nodes' rule traces are stale, re-read them — but not
-        // during boot: N windows opening in a burst means N serialized rule_trace POSTs starved
-        // behind the OCR item/read pool (feeds only the .frule-trace step overlay, not first
-        // paint). finishBoot fires one coalesced trace pass per open window instead.
-        if (!boot.phase) retraceWindow(winId);
         refreshDetect(winId);
     };
     img.onerror = () => setNodeBusy(nodeIdOf(winId), false);
@@ -2603,7 +2505,7 @@ export {
     KINDS, ITEM_KINDS, TELL_KINDS, updateImageLabel, closeImage, openImage, createItemFromGeom,
     closeItemImage, setItemCellKeepingChildren, openItemImage, refreshItemBoxes,
     scheduleItemRead, runItemRead, refreshItemReadout,
-    prevHost, previewProfileFor, refreshRuleTrace, setReadBusy, refreshPreview,
+    prevHost, previewProfileFor, setReadBusy, refreshPreview,
     tellChip, subLabel, previewCell, previewTable, prefillDetectText,
     refreshDetect, setDetectStatus, scheduleWindowRead,
     loadImage, refreshImageBoxes, itemLocatorBox, staticGridOrigins, buildGridGuides,

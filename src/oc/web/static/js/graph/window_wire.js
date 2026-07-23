@@ -261,7 +261,7 @@ export function wireReadout(div, n) {
     });
     // initial value off the current image — but ONLY on a genuine node-open, not a mid-edit
     // rebuild. While a config txn is armed the read is deferred to commit (scheduleRefetch
-    // aftermath); firing here would OCR uncommitted. Mirrors the armed-gate in refreshRuleTrace.
+    // aftermath); firing here would OCR uncommitted.
     if (!nodeTxn.armed(n.id)) refetch();
     // cutout preview: this readout's box, matched pixels painted when its preprocess masks a colour.
     mountMatchPreview(n.id, winId, div.querySelector(".mp-canvas"), () => n.ref.box, () => {

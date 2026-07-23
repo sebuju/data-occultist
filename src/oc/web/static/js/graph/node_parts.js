@@ -531,9 +531,9 @@ function ruleThenOperands(r, then, d) {
 }
 
 // One field's RULE PIPELINE rows (FieldRule list) — the value flows top-to-bottom. Each row:
-// ▲/▼ reorder, the `when` condition (+ its arg), the `then` action (+ its operands), delete;
-// and a `.frule-trace` slot below the row that the node wiring fills with `in → out` from a
-// live read of the current canvas. Menus are filtered to the field's type (okRuleType).
+// ▲/▼ reorder, the `when` condition (+ its arg), the `then` action (+ its operands), delete.
+// The per-rule `in → out` trace lives on the readout-history satellite vttable, not inline here.
+// Menus are filtered to the field's type (okRuleType).
 // `cls` is unused here (rules have their own classes); `fid` (item fields) tags each control.
 export function ruleRows(fd, cls, fid) {
     const da = fid ? { fid } : {};
@@ -561,11 +561,6 @@ export function ruleRows(fd, cls, fid) {
                     opts(RULE_THEN, then, 2)),
                 ...ruleThenOperands(r, then, d),
                 trashBtn({ cls: "rule-del", dataset: d, title: "remove this rule" })));
-        // DISABLED: the inline `.frule-trace` slot is superseded by the readout-history satellite
-        // vttable (per-rule columns). Not rendering the slot makes refreshRuleTrace short-circuit
-        // (its `.frule-trace` guard finds none), so no /api/rule_trace fetch or paint happens. The
-        // API/resolver/wiring are left intact; re-add the slot below to restore inline traces:
-        //   h("div", { class: "frule-trace muted", dataset: d })
     });
 }
 
