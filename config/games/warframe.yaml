@@ -4635,6 +4635,8 @@ triggers:
   - wf_market_live
   enabled: true
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: ''
   input_mods: []
@@ -4657,6 +4659,8 @@ triggers:
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: ''
   input_mods: []
@@ -4679,6 +4683,8 @@ triggers:
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: ''
   input_mods: []
@@ -4701,6 +4707,8 @@ triggers:
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: ''
   input_mods: []
@@ -4723,6 +4731,8 @@ triggers:
   enabled: true
   throttle_ms: 3000.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: ''
   input_mods: []
@@ -4742,6 +4752,8 @@ triggers:
   - relic_sound
   enabled: true
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: ''
   input_mods: []
@@ -4760,6 +4772,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -4782,6 +4796,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -4804,6 +4820,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -4826,6 +4844,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -4848,6 +4868,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -4870,6 +4892,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -4892,6 +4916,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -4914,6 +4940,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -4936,6 +4964,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -4958,6 +4988,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -4979,6 +5011,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -5000,6 +5034,8 @@ triggers:
   enabled: true
   throttle_ms: 500.0
   ready_field: ''
+  window_watch: []
+  item_watch: ''
   input_event: down
   input_button: mouse:left
   input_mods: []
@@ -5011,7 +5047,7 @@ triggers:
   input_window: arsenal_warframe
   input_double_ms: 350.0
 - id: trigger
-  kind: on_any_change
+  kind: on_item
   interval_s: 300.0
   watch:
   - top_picks_for_relics
@@ -5021,9 +5057,13 @@ triggers:
   targets:
   - toast_best_relic
   enabled: true
+  throttle_ms: 15000.0
   settle_ms: 2000.0
   settle_max_ms: 5000.0
   ready_field: ''
+  window_watch:
+  - relic_refinement
+  item_watch: not_owned
   input_event: down
   input_button: ''
   input_mods: []
@@ -7740,7 +7780,7 @@ layout:
       collapsed: false
     sub:relics_owned:
       x: -2100.0
-      y: -9820.0
+      y: -9880.0
       w: 360.0
       h: 880.0
       collapsed: false
@@ -7893,7 +7933,7 @@ layout:
       softH: true
     sub:relics_owned_with_contents:
       x: -1700.0
-      y: -9820.0
+      y: -9880.0
       w: 360.0
       h: 880.0
       collapsed: false
@@ -7916,7 +7956,7 @@ layout:
       softH: false
     sub:relics_owned_contents_priced:
       x: -1300.0
-      y: -9820.0
+      y: -9880.0
       w: 360.0
       h: 880.0
       collapsed: false
@@ -7925,7 +7965,7 @@ layout:
       softH: true
     vt:sub:relics_owned_contents_priced:
       x: -900.0
-      y: -9820.0
+      y: -9880.0
       w: 640.0
       h: 880.0
       collapsed: false
@@ -7935,7 +7975,7 @@ layout:
       softH: true
     trigger:trigger:
       x: -220.0
-      y: -9480.0
+      y: -9540.0
       w: 360.0
       h: 220.0
       collapsed: false
@@ -7945,9 +7985,9 @@ layout:
       softH: true
     toast:toast_best_relic:
       x: 180.0
-      y: -9620.0
-      w: 640.0
-      h: 560.0
+      y: -9680.0
+      w: 660.0
+      h: 900.0
       collapsed: false
       custW: true
       custH: true
@@ -7955,12 +7995,12 @@ layout:
       softH: true
     sub:top_picks_for_relics:
       x: -220.0
-      y: -9820.0
+      y: -9880.0
       collapsed: false
     vt:sub:top_picks_for_relics:
       x: 180.0
-      y: -9820.0
-      w: 640.0
+      y: -9880.0
+      w: 660.0
       h: 180.0
       collapsed: false
       custW: true
