@@ -892,6 +892,12 @@ class Collector:
                     # nothing's recognised) is ambiguous — skip it rather than churn the state.
                     if not (result.status is TickStatus.throttled and result.window_id is None):
                         triggers.note_window(result.window_id)
+                    # on_window_tick: the FULL grid/dataset OCR path ran this tick (TickStatus.saved
+                    # only — a throttled/readout-only tick can still carry a window_id without ever
+                    # touching the grid, so gating on `result.window_id` alone would fire on ticks
+                    # that read nothing). Content-independent on purpose — see triggers.py's kind doc.
+                    if result.status is TickStatus.saved:
+                        triggers.note_window_tick(result.window_id)
                     # on_window_data_start/stop: only a real, classified window can "produce".
                     if result.window_id:
                         if result.new or result.changed:

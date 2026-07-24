@@ -798,6 +798,51 @@ def test_on_window_data_stop_uses_default_quiet_when_settle_ms_unset(tmp_path):
     assert calls == ["sink"]
 
 
+# ---- on_window_tick: content-independent, fires every OCR'd tick (never stalls like on_change) ----
+
+def test_on_window_tick_fires_on_every_call_unlike_note_window(tmp_path):
+    p = _window_profile(kind="on_window_tick", window_watch=["equipment"])
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    # THREE consecutive ticks of the SAME window (a screen with no new/changed content across
+    # them, e.g. scroll overlap) -> all three fire. note_window's edge-only semantics would give
+    # exactly one "detected" pulse here; this kind must not collapse to that.
+    assert tr.note_window_tick("equipment") == ["t"]
+    assert tr.note_window_tick("equipment") == ["t"]
+    assert tr.note_window_tick("equipment") == ["t"]
+    assert calls == ["sink", "sink", "sink"]
+
+
+def test_on_window_tick_ignores_an_unwatched_window(tmp_path):
+    p = _window_profile(kind="on_window_tick", window_watch=["equipment"])
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.note_window_tick("arsenal") == []
+
+
+def test_on_window_tick_ignores_no_window(tmp_path):
+    p = _window_profile(kind="on_window_tick", window_watch=["equipment"])
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: None, clock=lambda: 0.0)
+    assert tr.note_window_tick(None) == []
+    assert tr.note_window_tick("") == []
+
+
+def test_on_window_tick_gate_stops_a_scroll_loop_cleanly(tmp_path):
+    """The actual use case: a register flag gates on_window_tick off once flipped — the loop
+    stops via the gate, not by content going quiet (which on_window_tick never does on its own)."""
+    g = GateDef(id="go", source="register:sweep#done", conds=[GateCond(when="not_equal", arg="1")],
+               targets=["t"])
+    p = _window_profile(kind="on_window_tick", window_watch=["equipment"])
+    p.gates = [g]
+    calls = []
+    tr = TriggerRunner(p, tmp_path, fire=lambda pn, items: calls.append(pn.id), clock=lambda: 0.0)
+    tr.set_registers({"sweep": {"done": ""}})
+    assert tr.note_window_tick("equipment") == ["t"]      # armed -> fires
+    assert tr.note_window_tick("equipment") == ["t"]      # still armed -> fires again (no stall)
+    tr.set_registers({"sweep": {"done": "1"}})             # on_scroll_bottom's action flips this
+    assert tr.note_window_tick("equipment") == []          # gate now blocks -> stopped
+    assert calls == ["sink", "sink"]
+
+
 def test_on_item_fires_when_the_watched_item_is_seen(tmp_path):
     p = _window_profile(kind="on_item", window_watch=["equipment"], item_watch="terminator")
     calls = []

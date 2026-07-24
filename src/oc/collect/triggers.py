@@ -29,6 +29,12 @@ Kinds:
   this tick (:meth:`note_items`), e.g. fire the instant a "terminator" placeholder item is read.
 * ``on_window_detected``/``on_window_undetected`` — pulse on a ``window_watch`` window becoming/
   ceasing to be the currently-recognized one (:meth:`note_window`).
+* ``on_window_tick``  — pulse EVERY tick a ``window_watch`` window's grid was actually OCR'd
+  (:meth:`note_window_tick`, called only on :class:`~oc.collect.collector.TickStatus.saved` —
+  content-INDEPENDENT, unlike ``on_change``/``on_any_change``, which stay silent on a tick that
+  re-reads already-seen rows (see :meth:`oc.store.dataset_store.DatasetStore.record_seen`). The
+  driver for a "read -> scroll -> wait -> repeat" loop that can't stall on duplicate/overlapping
+  rows: gate it on a register flag, flip that flag from an ``on_scroll_bottom`` action to stop.
 * ``on_window_data_start``/``on_window_data_stop`` — pulse on a ``window_watch`` window's dataset
   producing again after a quiet spell / going quiet after producing (:meth:`note_window_data`,
   the quiet check in :meth:`tick`). ``on_window_data_stop`` reuses ``settle_ms`` as the quiet-
@@ -446,6 +452,28 @@ class TriggerRunner:
                 if self._route_fire(t, f"{window_id} detected", items=None):
                     fired.append(t.id)
                     publish_flow(self._profile.name, "watch", f"win:{window_id}", f"trigger:{t.id}", 1)
+        return fired
+
+    def note_window_tick(self, window_id: str) -> list[str]:
+        """Called once per tick that actually ran the FULL grid/dataset OCR path for ``window_id``
+        (the collector's ``TickStatus.saved`` — never a throttled/readout-only pass, which can
+        still carry a non-None ``window_id`` without having read the grid at all). Fires every
+        ``on_window_tick`` trigger watching it, EVERY such tick, regardless of whether the read
+        produced new/changed rows — that's the point: ``on_change``/``on_any_change`` go silent on
+        a duplicate-content re-read (the store's own dedup drops it before the change bus ever
+        fires), which would stall a scroll-then-wait loop gated on either of them. This kind can't
+        stall that way; it only ever stops because something ELSE (a gate) blocks it."""
+        if not window_id:
+            return []
+        fired: list[str] = []
+        for t in self._profile.triggers:
+            if not t.enabled or t.kind != "on_window_tick":
+                continue
+            if window_id not in (t.window_watch or []):
+                continue
+            if self._route_fire(t, f"{window_id} tick", items=None):
+                fired.append(t.id)
+                publish_flow(self._profile.name, "watch", f"win:{window_id}", f"trigger:{t.id}", 1)
         return fired
 
     def note_window_data(self, window_id: str) -> list[str]:

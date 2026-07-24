@@ -9,6 +9,8 @@
 // sweep/fetch finishes (the producer does the work and knows when it's done); `on_item` fires when
 // a specific item template in a watched WINDOW is detected/kept this tick; `on_window_detected`/
 // `on_window_undetected` fire on a watched window becoming/ceasing to be the recognized one;
+// `on_window_tick` fires EVERY tick a watched window's grid was actually OCR'd (content-
+// independent, unlike on_change — won't stall on a duplicate-content re-read);
 // `on_window_data_start`/`on_window_data_stop` fire on a watched window's dataset producing again
 // after a quiet spell / going quiet after producing; `on_scroll_top`/`on_scroll_bottom` fire when a
 // watched window's scrollbar thumb arrives at the top/bottom of its track; `manual` never
@@ -31,6 +33,7 @@ export const KIND_GROUPS = [
     ["producer", [["on_ready", "on ready"]]],
     ["window", [["on_item", "on item"], ["on_window_detected", "on window detected"],
                 ["on_window_undetected", "on window undetected"],
+                ["on_window_tick", "on window tick"],
                 ["on_window_data_start", "on window data start"],
                 ["on_window_data_stop", "on window data stop"],
                 ["on_scroll_top", "on scroll top"], ["on_scroll_bottom", "on scroll bottom"]]],
@@ -54,6 +57,7 @@ export const KIND_DESC = {
     on_item: "pulse when a specific item template (or any item) of a watched window is detected/kept this tick (e.g. a \"terminator\" placeholder)",
     on_window_detected: "fire when a watched window becomes the currently-recognized one",
     on_window_undetected: "fire when a watched window stops being the currently-recognized one",
+    on_window_tick: "fire every tick a watched window's grid was actually OCR'd — content-independent, won't stall on a duplicate-content re-read (unlike on change)",
     on_window_data_start: "fire the first time a watched window produces data again after a quiet spell",
     on_window_data_stop: "fire once a watched window has gone quiet (see settle below) after producing data",
     on_scroll_top: "fire when a watched window's scrollbar thumb arrives at the TOP of its track",
@@ -67,7 +71,7 @@ export const KIND_DESC = {
 };
 
 // window-scoped kinds: all watch window_watch (a window node); on_item ALSO sub-picks item_watch.
-const WINDOW_KINDS = ["on_item", "on_window_detected", "on_window_undetected",
+const WINDOW_KINDS = ["on_item", "on_window_detected", "on_window_undetected", "on_window_tick",
                        "on_window_data_start", "on_window_data_stop",
                        "on_scroll_top", "on_scroll_bottom"];
 
@@ -179,6 +183,7 @@ export function triggerParts(t, model) {
         const hint = kind === "on_item" ? "the window the watched item template lives in"
             : kind === "on_window_detected" ? "windows to watch for becoming the recognized one"
             : kind === "on_window_undetected" ? "windows to watch for no longer being the recognized one"
+            : kind === "on_window_tick" ? "windows to watch for a real OCR tick (fires every such tick, content-independent)"
             : kind === "on_window_data_start" ? "windows to watch for producing data again after a quiet spell"
             : kind === "on_window_data_stop" ? "windows to watch for going quiet after producing data (see settle below)"
             : kind === "on_scroll_top" ? "windows to watch for their scrollbar reaching the top"

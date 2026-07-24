@@ -874,7 +874,7 @@ export class GraphModel {
             // on_item/on_window_detected/undetected/on_window_data_start/stop/on_scroll_top/bottom
             // all WATCH window(s) — dashed line(s) to each watched window node, mirroring
             // on_input's window bind above.
-            if (["on_item", "on_window_detected", "on_window_undetected",
+            if (["on_item", "on_window_detected", "on_window_undetected", "on_window_tick",
                  "on_window_data_start", "on_window_data_stop",
                  "on_scroll_top", "on_scroll_bottom"].includes(t.kind))
                 for (const wid of t.window_watch || [])
@@ -1186,7 +1186,7 @@ export class GraphModel {
         this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_register", "on_ready", "on_input", "on_item", "on_window_detected", "on_window_undetected", "on_window_data_start", "on_window_data_stop", "on_scroll_top", "on_scroll_bottom", "manual"].includes(kind)) t.kind = kind; }
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_register", "on_ready", "on_input", "on_item", "on_window_detected", "on_window_undetected", "on_window_tick", "on_window_data_start", "on_window_data_stop", "on_scroll_top", "on_scroll_bottom", "manual"].includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     // minimum ms between fires — empty/invalid clears it (null = no throttle).
     setTriggerThrottle(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.throttle_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }

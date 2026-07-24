@@ -1179,6 +1179,12 @@ class TriggerDef(BaseModel):
       currently-recognized one (it just appeared on screen).
     * ``on_window_undetected`` — fire when a watched window stops being the currently-recognized
       one (it just left the screen). The mirror edge of ``on_window_detected``.
+    * ``on_window_tick``       — fire EVERY tick a watched window's grid was actually OCR'd
+      (content-INDEPENDENT — unlike ``on_change``/``on_any_change`` it still fires on a tick that
+      re-reads already-seen rows, since a dataset write that changes nothing never reaches the
+      change bus at all; see ``DatasetStore.record_seen``). The driver for a scroll-then-wait loop
+      that can't stall on duplicate/overlapping reads — gate it with a register flag flipped by an
+      ``on_scroll_bottom`` action to stop.
     * ``on_window_data_start`` — fire on the FIRST new/changed row a watched window's dataset
       produces after a quiet spell (the window just started producing data again).
     * ``on_window_data_stop``  — fire once a watched window's dataset has gone quiet for
