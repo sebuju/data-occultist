@@ -1713,7 +1713,9 @@ def fire_action(game: str, action, data_dir, *, profile, trigger_id: str | None 
 def _run_action(game: str, action, data_dir, *, profile, seen: set[str],
                 timer_factory: Callable[..., object], trigger_id: str | None = None) -> bool:
     """The action's actual work, run either inline or off its delay timer — dataset/register ops,
-    then the sound cue, then the chained action nodes. Split out so ``delay_ms`` defers ONE thing."""
+    then the sound cue, then the chained action nodes, then (independently — see
+    :func:`_run_input_events`) a bound window's send-events sequence. Split out so ``delay_ms``
+    defers ONE thing."""
     from . import action_history
     from ..store.dataset_ops import fire_dataset_target
     from .register_ops import fire_register_target
@@ -1722,6 +1724,7 @@ def _run_action(game: str, action, data_dir, *, profile, seen: set[str],
     ran = False
     sounds: list[str] = []
     chained: list[str] = []
+    window_id: str | None = None
     for ref in getattr(action, "sources", []):
         kind, _, rid = ref.partition(":")
         if kind == "dataset":
@@ -1736,6 +1739,8 @@ def _run_action(game: str, action, data_dir, *, profile, seen: set[str],
             sounds.append(rid)
         elif kind == "action":
             chained.append(rid)
+        elif kind == "window":
+            window_id = rid   # noted, not fired here — see _run_input_events below
     if sounds and _cue_sounds(game, action, sounds, profile=profile, timer_factory=timer_factory):
         ran = True
     by_action = {x.id: x for x in (getattr(profile, "actions", None) or [])}
@@ -1747,7 +1752,106 @@ def _run_action(game: str, action, data_dir, *, profile, seen: set[str],
     action_history.record(
         game, action.id, ts=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
         trigger=trigger_id, ran=ran, sounds=sounds, chained=chained)
+    # The send-events sequence is its own async, gated, timed thing (below) — it records ITS OWN
+    # action_history entry once it finishes/is denied (which can be well after this function
+    # returns), so it's deliberately excluded from the record above rather than awaited here. Its
+    # bool return is just "did it get past the immediate gate check", not "did it finish" —
+    # good enough for fire_action's "anything ran or was scheduled" contract.
+    if window_id and getattr(action, "input_events", None):
+        if _run_input_events(game, action, window_id, timer_factory=timer_factory, trigger_id=trigger_id):
+            ran = True
     return ran
+
+
+def _total_sends(events) -> int:
+    """How many actual key/mouse/scroll sends an :class:`InputEvent` sequence plans (excludes
+    ``"delay"`` rows) — used only to size the "N/M sent" denial log line."""
+    return sum(max(1, ev.repeat) for ev in events if ev.token != "delay")
+
+
+def _run_input_events(game: str, action, window_id: str, *, timer_factory: Callable[..., object],
+                      trigger_id: str | None) -> bool:
+    """Send ``action.input_events`` to the live session's currently-recognized window, IF that
+    window is ``window_id`` AND the game is foreground right now — re-checked immediately before
+    EVERY individual send, not just once at the start, so a mid-sequence alt-tab stops the rest
+    instead of finishing blind. Entirely non-blocking: rows/repeats are flattened into a chain of
+    ``_arm_delay`` callbacks (the same non-blocking-timer style :func:`_cue_sounds` uses) so a long
+    sequence never ties up the collector tick or a request thread. Reports exactly once, when the
+    sequence finishes OR is denied, via :func:`oc.collect.action_history.record` — which (being a
+    ``HistoryRing`` feeder tagged ``kind="action"``) also writes the outcome to the node log file,
+    satisfying "report a denial in the node log" with no extra plumbing. Returns True only if it got
+    past the very first gate check (i.e. actually started sending) — an immediate denial (window
+    mismatch/not foreground before the first send) returns False, matching how a gated trigger never
+    counts as "fired"."""
+    from . import action_history
+    from ..window import send_input
+    from .live import active_session
+    events = list(action.input_events or [])
+    if not events:
+        return False
+    session = active_session(game)
+    sent = 0
+
+    def gate_ok() -> tuple[bool, str]:
+        if session is None:
+            return False, "window_inactive"
+        cur, win, fg = session.current_input_target()
+        if win is None or cur != window_id:
+            return False, "window_inactive"
+        if not fg:
+            return False, "not_foreground"
+        return True, ""
+
+    def finish(denied: bool, reason: str) -> None:
+        action_history.record(
+            game, action.id, ts=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            trigger=trigger_id, ran=sent > 0, sounds=[], chained=[], sent=sent,
+            denied=denied, reason=reason)
+        if denied:
+            logev(f"action {action.id} input denied ({reason}, {sent}/{_total_sends(events)} sent)",
+                  level="warn", game=game)
+
+    # Flatten rows into timed steps: a "delay" row is one wait; a send row is `repeat` sends,
+    # `delay_ms` apart (no trailing wait after a row's LAST send — the gap is only ever BETWEEN
+    # sends, matching the row editor's "every ms" label).
+    steps: list[tuple[str, object]] = []
+    for ev in events:
+        if ev.token == "delay":
+            steps.append(("wait", ev.delay_ms))
+            continue
+        reps = max(1, ev.repeat)
+        for r in range(reps):
+            steps.append(("send", ev.token))
+            if r < reps - 1:
+                steps.append(("wait", ev.delay_ms))
+
+    def run_step(i: int) -> None:
+        nonlocal sent
+        if i >= len(steps):
+            finish(False, "")
+            return
+        kind, val = steps[i]
+        if kind == "wait":
+            if val:
+                _arm_delay(timer_factory, val / 1000.0, lambda: run_step(i + 1))
+            else:
+                run_step(i + 1)
+            return
+        ok, reason = gate_ok()
+        if not ok:
+            finish(True, reason)
+            return
+        if send_input.send_token(val):
+            sent += 1
+            publish_flow(game, "trigger", f"action:{action.id}", f"win:{window_id}", 1)
+        run_step(i + 1)
+
+    ok, reason = gate_ok()
+    if not ok:
+        finish(True, reason)
+        return False
+    run_step(0)
+    return True
 
 
 def _cue_sounds(game: str, action, sound_ids: list[str], *, profile,

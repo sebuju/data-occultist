@@ -22,13 +22,17 @@ _ring = HistoryRing(200, kind="action")
 
 
 def record(game: str, action_id: str, *, ts: str, trigger: str | None, ran: bool,
-           sounds, chained) -> None:
+           sounds, chained, sent: int = 0, denied: bool = False, reason: str = "") -> None:
     """Append one action run to its ring (newest first). ``ts`` is an ISO timestamp (the caller
     stamps it). ``trigger`` is the firing trigger's id (``None`` for a manual/chained fire), ``ran``
     whether a dataset/register op actually ran, ``sounds`` the sound ids cued, ``chained`` the
-    downstream action ids fired."""
+    downstream action ids fired. ``sent`` is how many input_events rows a send-events run actually
+    sent before stopping (0 outside that path); ``denied``/``reason`` flag a send-events run that
+    stopped early (or never started) because its bound window wasn't the recognized/foreground one —
+    ``reason`` is ``"not_foreground"``/``"window_inactive"``, empty otherwise."""
     _ring.record((game, action_id), {"ts": ts, "trigger": trigger, "ran": ran,
-                                     "sounds": list(sounds or []), "chained": list(chained or [])})
+                                     "sounds": list(sounds or []), "chained": list(chained or []),
+                                     "sent": sent, "denied": denied, "reason": reason})
 
 
 def recent(game: str, action_id: str) -> list[dict]:

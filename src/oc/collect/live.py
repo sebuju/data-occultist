@@ -724,6 +724,19 @@ class LiveSession:
                                            notifier=self._engine.notifier)
         return self._triggers
 
+    def current_input_target(self) -> tuple[str | None, object, bool]:
+        """The currently-recognized window id, its live ``WindowInfo`` (None if no tick has run
+        yet), and whether the GAME window is foreground RIGHT NOW — the three facts a send-events
+        action gates on (see :func:`oc.collect.triggers._run_action`). Mirrors the same
+        ``collector.last_window`` / ``self._cur`` / ``engine.window.is_foreground`` reads
+        ``_on_tick`` already does for the on_input gate context and precapture's own foreground
+        check. Read-only; safe to call from any thread (a worker running an input sequence calls
+        this fresh before every send, not just once)."""
+        collector = self._collector
+        win = getattr(collector, "last_window", None) if collector is not None else None
+        fg = self._engine.window.is_foreground(win) if win is not None else False
+        return self._cur[0], win, fg
+
     def gated_node_ids(self) -> list[str]:
         """Prefixed graph-node ids currently BLOCKED by an enabled gate (trigger or any other gated
         kind — evaluated against the runner's live caches). A display hint for the activity snapshot

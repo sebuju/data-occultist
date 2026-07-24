@@ -1554,6 +1554,26 @@ class RegisterOp(BaseModel):
     writes: list[RegisterWrite] = Field(default_factory=list)   # per-key rows (set only)
 
 
+class InputEvent(BaseModel):
+    """One row of an :class:`ActionDef`'s ``input_events`` sequence — a key tap, mouse click,
+    wheel notch, or a plain wait, sent (in order) to the action's bound ``"window:<id>"`` source.
+
+    ``token`` is one of: ``"delay"`` (just wait — ``repeat`` is ignored), ``"key:<name>"``
+    (matches :data:`oc.input._hook_child._VK_NAMES` / ``io_wire.js``'s vocabulary — letters,
+    digits, function keys, nav, modifiers, punctuation, numpad), ``"mouse:<left|right|middle|
+    x1|x2>"``, or ``"scroll:<up|down>"`` (one wheel notch, the same direction/notch convention
+    :func:`oc.window.input.scroll_window` uses).
+
+    A tap/click/scroll fires ``repeat`` times, ``delay_ms`` apart; a ``"delay"`` row instead
+    waits ``delay_ms`` once before the next row runs. Each individual send re-checks the bound
+    window's foreground/recognized gate (see :func:`oc.collect.triggers._run_action`) — a row
+    can partially run and then stop if the game loses focus mid-repeat."""
+
+    token: str = ""
+    repeat: int = Field(default=1, ge=1, le=99)
+    delay_ms: int = Field(default=0, ge=0, le=600_000)
+
+
 class ActionDef(BaseModel):
     """An *action node*: does something to everything wired into ``sources`` when fired — a dataset
     operation (clear, or clone/move data into ``dest``), a register operation, a browser sound cue,
@@ -1579,13 +1599,24 @@ class ActionDef(BaseModel):
     NEW kind clears every OTHER register's dest on this node first, since an id from the old kind
     would otherwise dangle pointing at the wrong kind of entity.
 
-    ``sources`` also holds two NON-dataset, NON-register kinds:
+    ``sources`` also holds three NON-dataset, NON-register kinds:
 
     * ``"sound:<id>"`` — a sound node cued to the browser when this node runs, ``repeat`` times
       ``repeat_ms`` apart. The cue rides the same :func:`oc.store.fire_events.publish_fire` bus a
       trigger's own sound targets use, so the browser only ever plays a cue that JUST arrived.
     * ``"action:<id>"`` — another action node, fired downstream once this one has run (chaining).
       The chained node's own ``delay_ms`` applies to its fire, so chain delays accumulate naturally.
+    * ``"window:<id>"`` — a window node this action SENDS keyboard/mouse events to (see
+      ``input_events`` below) when fired. Unlike the dataset/register/sound/action kinds, a window
+      source carries no op of its own — its presence, together with a non-empty ``input_events``,
+      IS the send-events behavior.
+
+    ``input_events`` (only meaningful with a ``"window:<id>"`` source) is an ordered
+    :class:`InputEvent` sequence sent to that window when this node fires. Gated hard: a send only
+    happens while that window is the currently-recognized one AND the game is foreground, re-checked
+    before EVERY individual key/click/scroll (not just once per fire) — see
+    :func:`oc.collect.triggers._run_action`. A denied send is never partial-and-silent: it stops and
+    is reported to the node log.
 
     ``delay_ms`` waits that long after being fired before doing ANY of the above. All scheduling is
     server-side on purpose: a backgrounded browser tab throttles its timers (~1s clamp) but not its
@@ -1594,8 +1625,9 @@ class ActionDef(BaseModel):
 
     id: str
     action: str = ""                        # "" | clear | clone_batches | clone_resolved | move_batches | move_resolved — DATASET sources only
-    # prefixed refs "dataset:<id>" / "register:<id>" / "sound:<id>" / "action:<id>" — everything this
-    # node operates on when fired (dataset ops, register ops, browser sound cues, chained actions)
+    # prefixed refs "dataset:<id>" / "register:<id>" / "sound:<id>" / "action:<id>" / "window:<id>" —
+    # everything this node operates on when fired (dataset ops, register ops, sound cues, chained
+    # actions, a window it sends input_events to)
     sources: list[str] = Field(default_factory=list)
     # LEGACY: register id -> targeted readout keys, folded into reg_ops[id].keys by _migrate_reg_ops.
     # Kept only so old YAML still validates; new profiles use reg_ops exclusively.
@@ -1603,6 +1635,8 @@ class ActionDef(BaseModel):
     dest: str = ""                          # destination dataset for clone/move actions — DATASET sources only
     # register id -> that register's own op (independent of the shared action/dest/slots above)
     reg_ops: dict[str, RegisterOp] = Field(default_factory=dict)
+    # ordered key/mouse/scroll/delay sequence sent to a "window:<id>" source when fired — see InputEvent
+    input_events: list[InputEvent] = Field(default_factory=list)
     delay_ms: int = Field(default=0, ge=0, le=600_000)      # wait before running (0 = run now)
     repeat: int = Field(default=1, ge=1, le=99)             # how many times to cue the sound sources
     repeat_ms: int = Field(default=300, ge=10, le=10_000)   # gap between those cues
