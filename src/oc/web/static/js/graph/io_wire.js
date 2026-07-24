@@ -37,6 +37,8 @@ import { richPickerPop } from "./rich_picker.js";
 import { comboPopover } from "./combo_popover.js";
 import { renderProcessHistory } from "./process_history_node.js";
 import { wireKeyRows, wireRegWriteRows } from "./reg_slots.js";
+import { wireInputRows } from "./input_rows.js";
+import { armCapture } from "./key_capture.js";
 import { makeArmed } from "./armbtn.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 import { refreshImageBoxes } from "./imaging.js";
@@ -342,47 +344,14 @@ function wireTrigger(div, n) {
     div.querySelector(".tg-inry")?.addEventListener("change", inRectChanged);
     div.querySelector(".tg-inrw")?.addEventListener("change", inRectChanged);
     div.querySelector(".tg-inrh")?.addEventListener("change", inRectChanged);
-    // "listen": arm the button, capture the NEXT keydown/mousedown (incl. held modifiers) into the
-    // button field, then disarm. No blocking dialog (rule 2) — just an .armed class on the icon
-    // button while armed; Escape cancels. preventDefault so the captured key/click never reaches
-    // the page underneath.
+    // "listen": arm the button, capture the NEXT keydown/mousedown into the button field, then
+    // disarm (key_capture.js's armCapture — shared with the action node's send-events row, the
+    // second caller that pulled this out of a copy-paste). No blocking dialog (rule 2) — just an
+    // .armed class on the icon button while armed; Escape cancels.
     div.querySelector(".tg-inlisten")?.addEventListener("click", (e) => {
         const btn = e.currentTarget;
         const input = div.querySelector(".tg-inbutton");
-        btn.classList.add("armed");
-        btn.disabled = true;
-        const finish = (token) => {
-            document.removeEventListener("keydown", onKey, true);
-            document.removeEventListener("mousedown", onMouse, true);
-            document.removeEventListener("contextmenu", onCtx, true);
-            btn.classList.remove("armed");
-            btn.disabled = false;
-            if (token) { input.value = token; model.setTriggerInputButton(t.id, token); autosave(null); }
-        };
-        // Named-key translation to the SAME token vocabulary oc.input.win32_hook's _key_name
-        // produces (VK-derived), so a browser-captured bind matches the live hook's events.
-        // Letters/digits/punctuation already agree (both lowercase the printable char).
-        const NAMED_KEYS = {
-            Escape: "esc", " ": "space", ArrowLeft: "left", ArrowUp: "up", ArrowRight: "right",
-            ArrowDown: "down", PageUp: "pageup", PageDown: "pagedown",
-        };
-        const MOD_KEYS = { Control: "ctrl", Shift: "shift", Alt: "alt", Meta: "win" };
-        const onKey = (ev) => {
-            ev.preventDefault(); ev.stopPropagation();
-            if (ev.key === "Escape") return finish(null);
-            if (MOD_KEYS[ev.key]) return;   // a bare modifier arms the chord but isn't itself the button
-            const name = NAMED_KEYS[ev.key] || ev.key.toLowerCase();
-            finish(`key:${name}`);
-        };
-        const onMouse = (ev) => {
-            ev.preventDefault(); ev.stopPropagation();
-            const NAMES = { 0: "left", 1: "middle", 2: "right", 3: "x1", 4: "x2" };
-            finish(`mouse:${NAMES[ev.button] || "left"}`);
-        };
-        const onCtx = (ev) => ev.preventDefault();   // suppress the right-click menu while armed
-        document.addEventListener("keydown", onKey, true);
-        document.addEventListener("mousedown", onMouse, true);
-        document.addEventListener("contextmenu", onCtx, true);
+        armCapture(btn, (token) => { input.value = token; model.setTriggerInputButton(t.id, token); autosave(null); });
     });
     // rebuildNode (not render) re-renders THIS node's chips — render() only builds NEW nodes,
     // so an in-place chip add/remove wouldn't show. drawEdges() drops/adds the trigger's edges
@@ -637,6 +606,19 @@ function wireAction(div, n) {
         setRemove: (regId, idx, on) => model.setActionWriteRemove(x.id, regId, idx, on),
         after: () => { rebuildNode(n.id); autosave(null); },
         autosaveOnly: () => autosave(null),
+    });
+    // send-events rows (window target): token is now a free-text field + a record button (like the
+    // trigger's on_input listen — armCapture, key_capture.js) rather than a picker, since "delay"/
+    // "scroll:up"/"scroll:down" have no key/mouse to capture and typing them is one keystroke. A
+    // token edit rebuilds (delay <-> send toggles the repeat field's visibility); repeat/delay/add/
+    // remove are plain autosave-only edits — all wired together in wireInputRows (input_rows.js).
+    wireInputRows(div, {
+        add: () => model.addInputEvent(x.id),
+        removeRow: (idx) => model.removeInputEvent(x.id, idx),
+        setToken: (idx, v) => model.setInputEventToken(x.id, idx, v),
+        setRepeat: (idx, v) => { model.setInputEventRepeat(x.id, idx, v); autosave(null); },
+        setDelay: (idx, v) => { model.setInputEventDelay(x.id, idx, v); autosave(null); },
+        after: () => { rebuildNode(n.id); autosave(null); },
     });
     // timing knobs — persisted only; the SERVER schedules the delay and the repeated sound cues (a
     // backgrounded tab throttles its timers but not its SSE cue delivery), so nothing here runs a clock.

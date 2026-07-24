@@ -1583,6 +1583,21 @@ async function initKillGpu() {
             .filter((s) => model.subsetReaches(s.id, dataset)).map((s) => s.id);
         queueNodeRefresh({ datasets: [dataset], subsets: subs });
     });
+    // Send-events "active" glow: an action node sending its input_events sequence pulses one flow
+    // hop PER SEND (action:<id> -> win:<window id>) — box-shadow it lit for as long as sends keep
+    // landing, fading shortly after the last one. Scoped to dst="win:..." specifically (not every
+    // action->target hop) so a plain dataset/register-op fire never lights this — only an actual
+    // send does. Looked up fresh off `nodeEls` per event (never cached) so a mid-sequence rebuild
+    // can't leave a dangling reference.
+    const activeGlowTimers = new Map();   // action node id -> pending "remove the glow" timeout
+    dsevents.subscribeFlow((d) => {
+        if (d.kind !== "trigger" || !d.dst?.startsWith("win:") || !d.src?.startsWith("action:")) return;
+        const el = nodeEls.get(d.src);
+        if (!el) return;
+        el.classList.add("action-active");
+        clearTimeout(activeGlowTimers.get(d.src));
+        activeGlowTimers.set(d.src, setTimeout(() => el.classList.remove("action-active"), 900));
+    });
     // Safety net only: catch any event missed across a stream reconnect. Slow on purpose — the
     // push bus is the mechanism, not this. Skipped while offline (conn.js gates the overlay).
     setInterval(() => { if (model.profile.name && conn.isOnline()) refreshLive(); }, FLOW_FALLBACK_MS);

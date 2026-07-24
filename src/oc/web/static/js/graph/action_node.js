@@ -1,21 +1,24 @@
 // Action node: when fired, does whatever is wired into its targets — runs a dataset op (clear, or
 // clone/move into a destination) on every DATASET target, EACH register target's own op (set
 // values, remove all keys, or clone/move — independent of the dataset op, so a dataset clear and a
-// register set can coexist on one node), cues sound nodes to the browser, and fires other action
-// nodes downstream (chaining). A trigger names this node's id in its `targets` (drag the trigger's
-// fire-port here, or pick it in the trigger's "fires"), so any trigger condition can drive it — the
-// shared fire_action funnel does the work for every path (collector, trigger fire-now, this node's
-// own fire button).
+// register set can coexist on one node), cues sound nodes to the browser, sends a scripted
+// key/mouse/scroll sequence to a bound WINDOW target (gated on that window being foreground — see
+// oc.collect.triggers._run_action), and fires other action nodes downstream (chaining). A trigger
+// names this node's id in its `targets` (drag the trigger's fire-port here, or pick it in the
+// trigger's "fires"), so any trigger condition can drive it — the shared fire_action funnel does
+// the work for every path (collector, trigger fire-now, this node's own fire button).
 //
 // The body is kind-dependent: the dataset-op row only appears once a dataset is attached, one
 // register-op block per attached register (its own op selector + kind-dependent sub-rows), the
-// sound repeat rows only once a sound is attached, and `delay` (which defers the whole node) is
-// always there. ALL timing is server-side — a backgrounded tab throttles its timers but not its SSE
-// cue delivery, so the browser only ever plays a cue that just arrived and never schedules one.
+// send-events row editor only once a window is attached (input_rows.js), the sound repeat rows
+// only once a sound is attached, and `delay` (which defers the whole node) is always there. ALL
+// timing is server-side — a backgrounded tab throttles its timers but not its SSE cue delivery, so
+// the browser only ever plays a cue that just arrived and never schedules one.
 // Rendering only — wiring is in io_wire.js (wireAction). Config persists in the profile YAML.
 import { h, frag, labCell, srcRow } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
 import { keyRows, regWriteRows } from "./reg_slots.js";
+import { inputRows } from "./input_rows.js";
 
 // dataset ops this node can perform, on a DATASET target only (a register target runs its OWN op —
 // see REG_OPS below, independent of this one). "" = no-op. clone/move copy into `dest` (batches =
@@ -76,6 +79,7 @@ export function actionParts(x, model) {
     const datasets = srcs.filter((s) => s.kind === "dataset");
     const regSrcs = srcs.filter((s) => s.kind === "register");
     const sounds = srcs.filter((s) => s.kind === "sound");
+    const windows = srcs.filter((s) => s.kind === "window");
     // free options: everything not already wired, each a prefixed ref with a typed label. Another
     // action can be chained, but never this one (a self-chain would cascade forever). A thunk so the
     // "+" list is recomputed live on open (node creation skips the consumer-rebuild sweep).
@@ -87,6 +91,11 @@ export function actionParts(x, model) {
         ...(model.profile.actions || []).map((a) => a.id)
             .filter((a) => a !== x.id && !have.has(`action:${a}`) && !model._actionReaches(a, x.id))
             .map((a) => ({ value: `action:${a}`, label: a })),
+        // a window this action SENDS keyboard/mouse/scroll events to (input_events below) — at most
+        // one at a time makes sense (there's one flat send sequence per node, not per-window), but
+        // nothing here enforces that; a second window chip just has nowhere to send its own events.
+        ...(model.profile.windows || []).filter((w) => !have.has(`window:${w.id}`))
+            .map((w) => ({ value: `window:${w.id}`, label: w.id })),
     ];
     const repeat = x.repeat ?? 1;
     // Per-register op block: each register target picks its OWN op (independent of the shared
@@ -115,7 +124,7 @@ export function actionParts(x, model) {
     return {
         title: h("input", { class: "gi gi-id acrename", value: x.id, title: "rename action" }),
         body: frag(
-            srcRow("targets", "datasets, registers, sounds and actions this node operates on when fired",
+            srcRow("targets", "datasets, registers, sounds, a window (to send input to) and actions this node operates on when fired",
                 sourcesInput({
                     chips: srcs.map((s) => ({ value: s.ref, label: s.id, node: model.refNode(s.ref) })),
                     free, addLabel: "+ target", addinCls: "sv-addin ac-addsrc", rmCls: "sv-rmin ac-rmsrc" })),
@@ -127,12 +136,13 @@ export function actionParts(x, model) {
             datasets.length > 0 && needsDest && h("button", { class: "ac-dest rich-dd-btn", type: "button" },
                 x.dest ? `<${x.dest}>` : "- dataset -"),
             ...regBlocks,
+            windows.length > 0 && inputRows({ rows: model.actionInputEvents(x.id) }),
             sounds.length > 0 && labCell("repeat", "how many times to play the attached sound(s)"),
             sounds.length > 0 && h("span", { class: "tg-secs" },
                 h("input", { class: "gi ac-repeat", type: "number", min: "1", step: "1", value: repeat }), " plays"),
             sounds.length > 0 && repeat > 1 && labCell("every", "gap between those plays"),
             sounds.length > 0 && repeat > 1 && msRow("ac-repms", x.repeat_ms ?? 300, { min: 10, step: 10 })),
         foot: h("button", { class: "ac-fire", title: "run this action now on its targets" }, "↻ fire"),
-        ports: h("span", { class: "port out", title: "drag to a dataset, register, sound or action this node operates on" }),
+        ports: h("span", { class: "port out", title: "drag to a dataset, register, sound, window or action this node operates on" }),
     };
 }

@@ -4,16 +4,21 @@
 //
 // One row per run (newest first): WHEN, BY (the firing trigger id, or "manual"/"chain" — the action
 // has no live trigger to name for a manual/chained fire), RAN (whether a dataset/register op actually
-// happened), SOUNDS (cued ids), CHAINED (downstream action ids fired). Data rides the activity
+// happened), WHY (a send-events run's denial reason — a window/foreground gate miss — blank for an
+// ordinary run), SOUNDS (cued ids), CHAINED (downstream action ids fired). Data rides the activity
 // heartbeat TOP-LEVEL (`action_history["<id>"]`, build_activity, fed by
-// TriggerRunner._run_action — the single funnel every fire path shares). Painted on satellite open
-// and each beat (activity.js) — a closed satellite (no host in the DOM) costs nothing.
+// TriggerRunner._run_action / _run_input_events — the single funnel every fire path shares).
+// Painted on satellite open and each beat (activity.js) — a closed satellite (no host in the DOM)
+// costs nothing.
 import * as hub from "../hub.js";
 import { nodeEls } from "./state.js";
 import { fmtDateTimeMs } from "../datefmt.js";
 import { satVTData } from "./sat_vtable.js";
 
-const COLS = ["when", "by", "ran", "sounds", "chained"];
+const COLS = ["when", "by", "ran", "why", "sounds", "chained"];
+
+// A send-events denial reason (oc.collect.triggers._run_input_events) -> readable text.
+const REASON_LABEL = { not_foreground: "game not foreground", window_inactive: "window not active" };
 
 // Render an action's run-history into its (open) satellite. No-op when the satellite is hidden (no
 // host in the DOM). `history` defaults to the last heartbeat snapshot for this action, so a bare
@@ -27,11 +32,12 @@ export function renderActionHistory(id, history) {
         when: fmtDateTimeMs(e.ts),
         by: e.trigger || "manual",
         ran: e.ran ? "yes" : "no",
+        why: e.denied ? (REASON_LABEL[e.reason] || e.reason || "denied") + (e.sent ? ` (${e.sent} sent)` : "") : "",
         sounds: (e.sounds || []).join(", ") || "-",
         chained: (e.chained || []).join(", ") || "-",
-        _idle: !e.ran,
+        _flag: !e.ran || e.denied,
     }));
     satVTData(`acthist:${id}`, host, COLS, rows, {
-        rowClass: (row) => (row._idle ? "hist-throttled" : ""),
+        rowClass: (row) => (row._flag ? "hist-throttled" : ""),
     });
 }

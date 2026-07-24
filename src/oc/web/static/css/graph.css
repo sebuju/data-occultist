@@ -849,6 +849,21 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .ac-krow .ac-krmrow { flex: 0 0 auto; margin-left: auto; }
 .gnode .ac-krow.armed { background: var(--warn); color: var(--on-accent); border-radius: 4px; }
 .gnode .ac-krow.armed .ac-krmrow { color: var(--on-accent); }
+/* send-events rows (action node, input_rows.js): one flex row per InputEvent — [token text input]
+   [record button] [repeat x, hidden for "delay"] [ms field] [row trash]. Sibling of .ac-wrow/
+   .ac-krow above (same shape, a free-text token + capture button in place of a plain key field). */
+.gn-grid > .ac-irows { display: flex; flex-direction: column; gap: 2px; margin: 0 0 0 4px; min-width: 0; }
+.ac-irow { display: flex; align-items: center; gap: 6px; }
+.ac-irow .ac-itok { flex: 1 1 0; width: auto; min-width: 6ch; }
+.ac-irow .ac-irec { flex: 0 0 auto; }
+/* mirrors .tg-inlisten.armed (trigger's on_input listen button) — same capture primitive
+   (key_capture.js armCapture), same "armed" cue. */
+.ac-irow .ac-irec.armed { color: var(--danger, #e05252); opacity: 1; }
+/* beats .gnode input.gi's width:100% (higher specificity: 3 classes vs 2 classes+element) */
+.gnode .ac-irow .ac-irepeat, .gnode .ac-irow .ac-idelay { width: 6ch; }
+.ac-irow .ac-irmrow { flex: 0 0 auto; margin-left: auto; }
+.gnode .ac-irow.armed { background: var(--warn); color: var(--on-accent); border-radius: 4px; }
+.gnode .ac-irow.armed .ac-irmrow { color: var(--on-accent); }
 /* "+ input" rides the inputs subhead as an icon (like the rules .ruleadd) — opens the combo popover. */
 .frule-btns .pr-inadd { background: none; border: 0; padding: 0; display: inline-flex; align-items: center; line-height: 1; font-size: var(--fs-xs); color: var(--nt, var(--accent)); cursor: pointer; }
 /* input + its unit suffix share ONE grid cell (else the "s" wraps to the next grid row) */
@@ -1352,6 +1367,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* a node whose rect overlaps another node: excluded from wire routing (its wires drop)
    until the user separates them — ringed in --warn so the collision is visible. */
 .gnode.node-intersecting { box-shadow: 0 0 0 2px var(--warn), 0 10px 30px #000000; }
+/* an action node actively sending its input_events sequence to its bound window (main.js's
+   dsevents.subscribeFlow handler, lit per send and faded shortly after the last one) — --ok
+   (green) so it reads as "doing its job", distinct from .busy (blue --accent), .rm-armed/
+   .node-intersecting (--warn yellow) and .selected (node-hue). */
+.gnode.action-active { box-shadow: 0 0 0 2px var(--ok), 0 0 14px 2px var(--ok); transition: box-shadow .15s ease; }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
 .seltoolbar { position: fixed; left: 50%; top: 46px; transform: translateX(-50%);

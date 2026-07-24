@@ -119,10 +119,11 @@ function outPortSpec(n) {
         };
         case "action": return {
             // an action node operates on everything it's wired to: DATASET(s)/REGISTER(s) get its op
-            // run on them, SOUND(s) are cued to the browser, and another ACTION is fired downstream
-            // (chaining, each link with its own delay). selfId blocks the self-drop; addActionSource
-            // refuses a chain that would close a cycle.
-            target: ["dataset", "register", "sound", "action"],
+            // run on them, SOUND(s) are cued to the browser, a WINDOW gets its input_events sequence
+            // sent to it, and another ACTION is fired downstream (chaining, each link with its own
+            // delay). selfId blocks the self-drop; addActionSource refuses a chain that would close a
+            // cycle.
+            target: ["dataset", "register", "sound", "window", "action"],
             selfId: n.ref.id,
             onDrop: (id, ttype) => model.addActionSource(n.ref.id, `${ttype}:${id}`),
         };

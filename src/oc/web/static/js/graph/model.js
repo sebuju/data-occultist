@@ -919,14 +919,16 @@ export class GraphModel {
             // route-history satellite: dotted "img" edge router -> its recent-route-changes grid (opt-in)
             if (this.satelliteOn(`routhist:${r.id}`)) es.push({ from: `router:${r.id}`, to: `routhist:${r.id}`, kind: "img" });
         }
-        // an action node ACTS ON its dataset AND register sources, CUES its sound sources and FIRES
-        // its chained action sources (all control, hence kind "trigger"), and WRITES into its
-        // clone/move destination(s) (action -> dest, the only data edges here) — the shared dest for
-        // a DATASET target (always a dataset), and each register target's OWN dest (reg_ops) besides
-        // (a prefixed ref, dataset OR another register — refNode resolves either directly).
+        // an action node ACTS ON its dataset AND register sources, CUES its sound sources, FIRES
+        // its chained action sources, and SENDS input_events to its window source (all control,
+        // hence kind "trigger" — the window edge also carries the live send-events flow pulses that
+        // drive the node's active glow), and WRITES into its clone/move destination(s) (action ->
+        // dest, the only data edges here) — the shared dest for a DATASET target (always a dataset),
+        // and each register target's OWN dest (reg_ops) besides (a prefixed ref, dataset OR another
+        // register — refNode resolves either directly).
         for (const x of this.profile.actions || []) {
             for (const s of this.actionSources(x.id)) {
-                const to = this.refNode(s.ref);   // ds: / register: / sound: / action:
+                const to = this.refNode(s.ref);   // ds: / register: / sound: / action: / win:
                 if (to) es.push({ from: `action:${x.id}`, to, kind: "trigger" });
             }
             if (x.dest && (x.action || "").match(/^(clone|move)_/)) es.push({ from: `action:${x.id}`, to: `ds:${x.dest}`, kind: "data" });
@@ -1415,7 +1417,8 @@ export class GraphModel {
         const ok = (kind === "dataset" && this.datasets().includes(rid))
             || (kind === "register" && !!this.registerNode(rid))
             || (kind === "sound" && !!this.soundNode(rid))
-            || (kind === "action" && !!this.actionNode(rid) && rid !== id && !this._actionReaches(rid, id));
+            || (kind === "action" && !!this.actionNode(rid) && rid !== id && !this._actionReaches(rid, id))
+            || (kind === "window" && !!this.window(rid));
         if (!ok) return false;
         x.sources = x.sources || [];
         if (x.sources.includes(ref)) return false;
@@ -1500,6 +1503,29 @@ export class GraphModel {
     setActionWriteKey(id, regId, idx, v) { const w = this.actionNode(id)?.reg_ops?.[regId]?.writes?.[idx]; if (w) w.key = v || ""; }
     setActionWriteValue(id, regId, idx, v) { const w = this.actionNode(id)?.reg_ops?.[regId]?.writes?.[idx]; if (w) w.value = v || ""; }
     setActionWriteRemove(id, regId, idx, on) { const w = this.actionNode(id)?.reg_ops?.[regId]?.writes?.[idx]; if (w) w.remove = !!on; }
+    // ---- send-events rows: a "window:<id>" source's own ordered key/mouse/scroll/delay sequence
+    // (InputEvent, models.py) — one flat list per node (unlike reg_ops, not keyed per-source: an
+    // action binds at most one window). Removing the window source leaves input_events in place
+    // (mirrors the dataset op/dest surviving a dataset source removal) so re-attaching the same
+    // window doesn't lose the authored sequence.
+    actionInputEvents(id) { return this.actionNode(id)?.input_events || []; }
+    addInputEvent(id) {
+        const x = this.actionNode(id);
+        if (x) (x.input_events = x.input_events || []).push({ token: "delay", repeat: 1, delay_ms: 0 });
+    }
+    removeInputEvent(id, idx) { this.actionNode(id)?.input_events?.splice(idx, 1); }
+    setInputEventToken(id, idx, token) {
+        const ev = this.actionInputEvents(id)[idx];
+        if (ev) ev.token = token || "delay";
+    }
+    setInputEventRepeat(id, idx, v) {
+        const ev = this.actionInputEvents(id)[idx];
+        if (ev) ev.repeat = Math.max(1, Math.round(Number(v) || 1));
+    }
+    setInputEventDelay(id, idx, v) {
+        const ev = this.actionInputEvents(id)[idx];
+        if (ev) ev.delay_ms = Math.max(0, Math.round(Number(v) || 0));
+    }
     // Does the chain starting at `from` reach `target`? Guards addActionSource from closing a cycle
     // (a -> b -> a would cascade forever were the server not also guarding).
     _actionReaches(from, target) {
