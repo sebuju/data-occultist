@@ -1,6 +1,16 @@
 // Thin wrapper around the backend HTTP API.
 import * as conn from "./conn.js";
 
+// Debug tabs and e2e runs share the user's already-running server, so isolation can't be a
+// launch-time flag — it has to travel per-request. ?debug=1 ALWAYS sandboxes (debug mode
+// never disables saving, so without this every debug-boot edit/drag would hit the real
+// profile YAML); ?sandbox=1 opts a plain tab in (e2e URLs use this); ?sandbox=0 is the escape
+// hatch to force real writes from a debug tab. Computed once — the query string can't change
+// without a reload — and read by _guardedFetch below so every /api/ call carries it.
+const _sbxQuery = new URLSearchParams(location.search);
+const _sbxParam = (k) => { const v = _sbxQuery.get(k); return v === null ? null : (v !== "0" && v !== "false"); };
+const SANDBOX = (_sbxParam("debug") || _sbxParam("sandbox")) && _sbxParam("sandbox") !== false;
+
 // Every request gets a DEADLINE: a wedged server (e.g. a dead --reload worker whose
 // parent still holds the port) leaves connections hanging forever instead of refusing
 // them — without a timeout the whole UI just silently stalls. Light endpoints fail
@@ -56,6 +66,13 @@ function _guardedFetch(native, input, init = {}) {
     if (!url.includes("/api/")) return native(input, init);   // only guard our backend API
     const path = url.split("?")[0];
     const method = (init.method || (typeof input !== "string" && input.method) || "GET").toUpperCase();
+    // Sandbox every profile-touching request from a debug/e2e tab (see SANDBOX above) — the
+    // server's profiles_dir_dep only redirects when this header is present and truthy.
+    if (SANDBOX) {
+        const h = new Headers(init.headers || {});
+        h.set("X-OC-Sandbox", "1");
+        init = { ...init, headers: h };
+    }
     // breaker tripped: fail fast (recoverable — the next call after the cooldown probes live).
     if (_breakerOpen(path)) {
         return Promise.reject(new Error(`${path}: paused after repeated timeouts (retrying shortly)`));
