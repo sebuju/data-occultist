@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
-from fastapi import APIRouter, Body, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from ...eventlog import publish as logev
@@ -27,27 +28,27 @@ from ...profile import (
 )
 from ...profile.merge import merge_profiles
 from ..deps import get_settings
+from ..sandbox import profiles_dir_dep
 
 router = APIRouter(prefix="/api/profiles", tags=["profiles"])
 
 
 @router.get("")
-def all_profiles():
-    return list_profiles(get_settings().profiles_dir)
+def all_profiles(pdir: Path = Depends(profiles_dir_dep)):
+    return list_profiles(pdir)
 
 
 @router.get("/{name}")
-def get_profile(name: str):
-    settings = get_settings()
-    if name not in list_profiles(settings.profiles_dir):
+def get_profile(name: str, pdir: Path = Depends(profiles_dir_dep)):
+    if name not in list_profiles(pdir):
         raise HTTPException(status_code=404, detail=f"No profile {name!r}")
-    body = load_profile(settings.profiles_dir, name).model_dump(mode="json", exclude_none=True)
+    body = load_profile(pdir, name).model_dump(mode="json", exclude_none=True)
     # Tag the response with a structural fingerprint (stale-tab save guard): the client
     # remembers this ETag and sends it back as If-Match on save, so a save that would
     # clobber a change made elsewhere since this GET gets rejected (409) instead of
     # silently overwriting it. Hashing the STRUCTURAL text (not the raw bytes) means a
     # pure layout/geometry save from another tab never trips a false conflict.
-    sig = profile_signature(settings.profiles_dir, name)
+    sig = profile_signature(pdir, name)
     headers = {"ETag": f'"{sig["token"]}"', "X-Profile-Modified": sig["modified"]} if sig else {}
     return JSONResponse(body, headers=headers)
 
@@ -74,6 +75,7 @@ def put_profile(
     merge: bool = True,
     layout: bool = False,
     if_match: str | None = Header(None, alias="If-Match"),
+    pdir: Path = Depends(profiles_dir_dep),
 ):
     """Save a profile. With ``merge`` (default), upsert the incoming window(s) and
     field(s) into the existing profile so other windows are preserved — this is how
@@ -101,10 +103,10 @@ def put_profile(
     # (rapid edits fire a PUT each) would otherwise race and the later write silently drops
     # whatever the other one added (lost update) — same failure class the OCR cache already
     # locks against. A cross-process lock on the profile file serializes the whole cycle.
-    with profile_write_lock(settings.profiles_dir, name):
+    with profile_write_lock(pdir, name):
         t_lock = time.perf_counter()
         if if_match is not None:
-            cur = profile_signature(settings.profiles_dir, name)
+            cur = profile_signature(pdir, name)
             # ETag values are sent quoted (RFC 7232) so strict HTTP clients (e.g. .NET's
             # HttpClient, which otherwise silently drops an unquoted response ETag) parse
             # it — strip the quotes back off before comparing to our plain hex token.
@@ -117,7 +119,7 @@ def put_profile(
                     "server_version": cur["token"],
                 })
         t_sig = time.perf_counter()
-        existing = load_profile(settings.profiles_dir, name) if name in list_profiles(settings.profiles_dir) else None
+        existing = load_profile(pdir, name) if name in list_profiles(pdir) else None
         if merge and existing is not None:
             profile = merge_profiles(existing, profile)
         _preserve_producer_http(existing, profile)   # never let a stale save strip an http node's spec
@@ -131,9 +133,9 @@ def put_profile(
             except Exception:  # noqa: BLE001 - best-effort; never block a save
                 pass
         t_feeds = time.perf_counter()
-        path = save_profile(settings.profiles_dir, profile, layout_only=layout)
+        path = save_profile(pdir, profile, layout_only=layout)
         t_write = time.perf_counter()
-        new_sig = profile_signature(settings.profiles_dir, name)
+        new_sig = profile_signature(pdir, name)
     total = time.perf_counter() - t0
     if total > 1.0:
         logev(f"profile save slow ({total:.1f}s): lock {t_lock - t0:.1f} · sig {t_sig - t_lock:.1f}"
@@ -147,44 +149,42 @@ def put_profile(
 # ---- per-device graph-local state (viewport/minimap, gitignored sidecar) ---------
 
 @router.get("/{name}/graphlocal")
-def get_graphlocal(name: str):
-    return load_graph_local(get_settings().profiles_dir, name)
+def get_graphlocal(name: str, pdir: Path = Depends(profiles_dir_dep)):
+    return load_graph_local(pdir, name)
 
 
 @router.put("/{name}/graphlocal")
-def put_graphlocal(name: str, state: dict = Body(...)):
-    save_graph_local(get_settings().profiles_dir, name, state)
+def put_graphlocal(name: str, state: dict = Body(...), pdir: Path = Depends(profiles_dir_dep)):
+    save_graph_local(pdir, name, state)
     return {"ok": True}
 
 
 # ---- versioned backups -----------------------------------------------------------
 
 @router.get("/{name}/backups")
-def get_backups(name: str, limit: int = 10, offset: int = 0):
+def get_backups(name: str, limit: int = 10, offset: int = 0, pdir: Path = Depends(profiles_dir_dep)):
     """A PAGE of snapshots, newest first, each with date + node/structural counts.
     Only the returned page is parsed (counts need a YAML load) — listing is a cheap
     glob, so a profile with hundreds of backups still opens instantly. ``limit<=0``
     returns the rest from ``offset``. Returns ``{total, items}`` for the lazy list."""
-    paths = list(reversed(list_backups(get_settings().profiles_dir, name)))   # newest first
+    paths = list(reversed(list_backups(pdir, name)))   # newest first
     page = paths[offset:] if limit <= 0 else paths[offset:offset + limit]
     return {"total": len(paths), "items": [backup_meta(p) for p in page]}
 
 
 @router.get("/{name}/backups/{stamp}")
-def get_backup(name: str, stamp: str):
+def get_backup(name: str, stamp: str, pdir: Path = Depends(profiles_dir_dep)):
     """The full backup profile (drives the preview render and restore)."""
-    settings = get_settings()
-    if not backup_path(settings.profiles_dir, name, stamp).exists():
+    if not backup_path(pdir, name, stamp).exists():
         raise HTTPException(status_code=404, detail=f"No backup {stamp!r} for {name!r}")
-    return read_backup(settings.profiles_dir, name, stamp).model_dump(mode="json", exclude_none=True)
+    return read_backup(pdir, name, stamp).model_dump(mode="json", exclude_none=True)
 
 
 @router.post("/{name}/backups/{stamp}/restore")
-def post_restore_backup(name: str, stamp: str):
+def post_restore_backup(name: str, stamp: str, pdir: Path = Depends(profiles_dir_dep)):
     """Load a backup as the new live profile (snapshotting the current state first).
     The chosen backup file is left intact."""
-    settings = get_settings()
-    if not backup_path(settings.profiles_dir, name, stamp).exists():
+    if not backup_path(pdir, name, stamp).exists():
         raise HTTPException(status_code=404, detail=f"No backup {stamp!r} for {name!r}")
-    profile = restore_backup(settings.profiles_dir, name, stamp)
+    profile = restore_backup(pdir, name, stamp)
     return profile.model_dump(mode="json", exclude_none=True)

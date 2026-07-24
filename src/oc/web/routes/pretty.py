@@ -8,7 +8,9 @@ profile YAML — until an explicit ``commit`` bakes them in.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, HTTPException
+from pathlib import Path
+
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from ...profile import list_profiles, load_profile, save_profile
 from ...profile.pretty import load_pretty, save_pretty
@@ -16,59 +18,58 @@ from ...profile.pretty_repoint import repoint_pretty
 from ...runtime import apply_overrides, clear_override, get_overrides, set_override
 from ...store import store_for
 from ..deps import get_settings
+from ..sandbox import profiles_dir_dep
 
 router = APIRouter(prefix="/api/pretty", tags=["pretty"])
 
 
-def _require_game(game: str):
-    settings = get_settings()
-    if game not in list_profiles(settings.profiles_dir):
+def _require_game(game: str, pdir: Path):
+    if game not in list_profiles(pdir):
         raise HTTPException(status_code=404, detail=f"No profile {game!r}")
-    return settings
 
 
 # ---- the design document ----------------------------------------------------------
 
 @router.get("/{game}")
-def get_pretty(game: str):
-    settings = _require_game(game)
-    return load_pretty(settings.profiles_dir, game)
+def get_pretty(game: str, pdir: Path = Depends(profiles_dir_dep)):
+    _require_game(game, pdir)
+    return load_pretty(pdir, game)
 
 
 @router.put("/{game}")
-def put_pretty(game: str, doc: dict = Body(...)):
-    settings = _require_game(game)
-    path = save_pretty(settings.profiles_dir, game, doc)
+def put_pretty(game: str, doc: dict = Body(...), pdir: Path = Depends(profiles_dir_dep)):
+    _require_game(game, pdir)
+    path = save_pretty(pdir, game, doc)
     return {"saved": str(path)}
 
 
 @router.post("/{game}/repoint")
-def repoint(game: str, body: dict = Body(...)):
+def repoint(game: str, body: dict = Body(...), pdir: Path = Depends(profiles_dir_dep)):
     """Rewrite ``{{token}}`` references after a graph-node rename so Pretty tokens don't go
     stale. Body: ``{rewrites: [{kind, old, new, win?}]}``. Best-effort — a no-op (0 hits) never
     touches the file. Works even when Pretty was never opened this session (edits the doc on
     disk; a view switch reloads it)."""
-    settings = _require_game(game)
-    doc = load_pretty(settings.profiles_dir, game)
+    _require_game(game, pdir)
+    doc = load_pretty(pdir, game)
     n = repoint_pretty(doc, (body or {}).get("rewrites") or [])
     if n:
-        save_pretty(settings.profiles_dir, game, doc)
+        save_pretty(pdir, game, doc)
     return {"repointed": n}
 
 
 # ---- transient overrides ----------------------------------------------------------
 
 @router.get("/{game}/overrides")
-def list_overrides(game: str):
-    _require_game(game)
+def list_overrides(game: str, pdir: Path = Depends(profiles_dir_dep)):
+    _require_game(game, pdir)
     return {"overrides": get_overrides(game)}
 
 
 @router.post("/{game}/override")
-def post_override(game: str, body: dict = Body(...)):
+def post_override(game: str, body: dict = Body(...), pdir: Path = Depends(profiles_dir_dep)):
     """Set one transient override. Body: ``{path, value}``. Takes effect on the running
     profile immediately (next load); never written to YAML."""
-    _require_game(game)
+    _require_game(game, pdir)
     path = (body or {}).get("path")
     if not path:
         raise HTTPException(status_code=400, detail="missing path")
@@ -77,24 +78,24 @@ def post_override(game: str, body: dict = Body(...)):
 
 
 @router.delete("/{game}/override")
-def delete_override(game: str, path: str | None = None):
+def delete_override(game: str, path: str | None = None, pdir: Path = Depends(profiles_dir_dep)):
     """Clear one override (``?path=...``) or all of them (no path)."""
-    _require_game(game)
+    _require_game(game, pdir)
     clear_override(game, path)
     return {"overrides": get_overrides(game)}
 
 
 @router.post("/{game}/overrides/commit")
-def commit_overrides(game: str):
+def commit_overrides(game: str, pdir: Path = Depends(profiles_dir_dep)):
     """Bake every active override into the authored profile YAML, then clear them. After
     this the values are normal authored config (no longer 'pretty dirty')."""
-    settings = _require_game(game)
+    _require_game(game, pdir)
     ov = get_overrides(game)
     if not ov:
         return {"committed": 0}
-    profile = load_profile(settings.profiles_dir, game)
+    profile = load_profile(pdir, game)
     apply_overrides(profile, game)
-    save_profile(settings.profiles_dir, profile)
+    save_profile(pdir, profile)
     clear_override(game)   # now on disk -> no longer transient
     return {"committed": len(ov)}
 
@@ -102,12 +103,13 @@ def commit_overrides(game: str):
 # ---- manual dataset record (data entry) -------------------------------------------
 
 @router.post("/{game}/dataset/{dataset}/record")
-def record_row(game: str, dataset: str, values: dict = Body(...)):
+def record_row(game: str, dataset: str, values: dict = Body(...), pdir: Path = Depends(profiles_dir_dep)):
     """Write one manual record into a dataset, keyed exactly as the collector would key it.
     Used by a Pretty data-entry form. Wrapped in its own batch so it is independently
     revertable from the node view's dataset history."""
-    settings = _require_game(game)
-    profile = load_profile(settings.profiles_dir, game)
+    _require_game(game, pdir)
+    settings = get_settings()
+    profile = load_profile(pdir, game)
     store = store_for(settings.data_dir, game, dataset, profile=profile)
     store.begin_batch()
     ev = store.record_seen({k: v for k, v in (values or {}).items()})
