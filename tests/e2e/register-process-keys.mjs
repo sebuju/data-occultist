@@ -6,7 +6,7 @@
 // Run:  node tests/e2e/register-process-keys.mjs   (server must be up: data-occultist serve)
 import { chromium } from "playwright";
 
-const URL = process.env.OC_URL || "http://localhost:8000/";
+const URL = process.env.OC_URL || "http://localhost:8000/?sandbox=1";
 const fails = [];
 const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ? "✓" : "✗"} ${msg}`); };
 

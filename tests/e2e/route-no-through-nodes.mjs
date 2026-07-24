@@ -8,7 +8,7 @@
 // Run:  npm run test:e2e        (server must be up:  data-occultist serve)
 import { chromium } from "playwright";
 
-const URL = process.env.OC_URL || "http://localhost:8000/";
+const URL = process.env.OC_URL || "http://localhost:8000/?sandbox=1";
 const INSET = 6;   // shrink each rect by this before testing: a line hugging an edge (legal) is fine;
                    // only a segment crossing the rect INTERIOR counts as "through the node".
 const DATA_SRC = ["win:", "producer:", "ds:", "sub:", "src:"];

@@ -9,7 +9,7 @@
 // Run:  node tests/e2e/lines-on-top.mjs        (server must be up:  data-occultist serve)
 import { chromium } from "playwright";
 
-const URL = process.env.OC_URL || "http://localhost:8000/";
+const URL = process.env.OC_URL || "http://localhost:8000/?sandbox=1";
 const TOL = 2;      // two same-axis segments this close in their fixed coord read as the same lane
 const MIN_OV = 12;  // and must overlap at least this far along the run to count as stacked
 

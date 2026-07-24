@@ -13,13 +13,13 @@
 //   - a pointerdown outside the card commits
 //   - subset filter edits behave the same (they refetch the view, not OCR)
 //
-// DATA SAFETY: the committing cases write each input's EXISTING value back, so the profile PUT is
-// a no-op on disk. Only the reverted cases type a different value.
+// DATA SAFETY: the URL carries ?sandbox=1, so every save in this file lands in a per-boot
+// sandbox copy of the profile (see oc.web.sandbox) — nothing here touches the real YAML.
 //
 // Run:  node tests/e2e/node-txn.mjs        (server must be up:  data-occultist serve)
 import { chromium } from "playwright";
 
-const URL = process.env.OC_URL || "http://localhost:8000/?debug=1&load=1";
+const URL = process.env.OC_URL || "http://localhost:8000/?debug=1&load=1&sandbox=1";
 const SETTLE = 1200;   // > READ_DEBOUNCE_MS (700) + slack: any deferred read would have fired by now
 const fails = [];
 const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ? "✓" : "✗"} ${msg}`); };
@@ -207,12 +207,6 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
     ok(counts().reads >= 1, `commit flushes the read immediately (saw ${reads} within 250ms)`);
     await page.waitForTimeout(SETTLE * 3);
     ok(!(await probe(DET)).busy, "the loader clears once the flushed work settles");
-
-    // put the profile back the way we found it
-    await editInput(DET, detWas);
-    await page.keyboard.press("Enter");
-    await page.waitForTimeout(SETTLE);
-    ok((await probe(DET)).value === detWas, "restored the detector's original value");
 
     // ---- subset node: filters (the case the user named) ----
     console.log("subset filter:");

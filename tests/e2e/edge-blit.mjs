@@ -7,7 +7,7 @@
 // Run:  node tests/e2e/edge-blit.mjs        (server must be up:  data-occultist serve)
 import { chromium } from "playwright";
 
-const URL = process.env.OC_URL || "http://localhost:8000/";
+const URL = process.env.OC_URL || "http://localhost:8000/?sandbox=1";
 
 (async () => {
     const browser = await chromium.launch();
