@@ -461,18 +461,7 @@ class LiveSession:
                     "changed": [{k: v for k, v in c.items() if not str(k).startswith("_")}
                                 for c in (result.changed or [])],
                 })
-        # on_register fires OUTSIDE the lock (a fired sweep/toast must not hold the session lock),
-        # mirroring the collector loop's post-tick on_readout evaluation. set_registers refreshes the
-        # gate cache every tick registers were fed (reg_snapshot non-empty), even with no key move.
-        if reg_events or reg_snapshot:
-            runner = self._trigger_runner()
-            if runner is not None:
-                runner.set_registers(reg_snapshot)
-                runner.set_register_rings(reg_rings)
-                if reg_events:
-                    runner.on_register(reg_events, reg_snapshot)
-                runner.emit_gate_flow()   # animate any gate whose pass/block flipped this tick
-                runner.emit_router_flow()   # log any router whose selected branch changed this tick
+        self._dispatch_register_events(reg_events, reg_snapshot, reg_rings)
         # Refresh the on_input window/rect gate context every tick (not only on a change) so a
         # hook event arriving between ticks reads the freshest window box — cheap (a dict write),
         # mirrors set_registers above. window=None while unrecognised (self._cur resets on a
@@ -484,6 +473,26 @@ class LiveSession:
             runner = self._trigger_runner()
             if runner is not None:
                 runner.set_input_context(self._cur[0], win.client)
+
+    def _dispatch_register_events(self, reg_events: list[dict], reg_snapshot: dict, reg_rings: dict) -> None:
+        """Push a register feed's outcome to the trigger runner — OUTSIDE the caller's lock (a fired
+        sweep/toast must not hold the session lock). ``set_registers``/``set_register_rings`` refresh
+        the gate cache whenever registers were fed at all (``reg_snapshot`` non-empty), even with no
+        key move; ``on_register`` only runs when something actually changed (``reg_events``). Shared
+        by the collector's own per-tick feed (:meth:`_on_tick`) AND a manual action ``set``/
+        ``remove_all`` write (:meth:`apply_register_op`) — rule 7: one funnel, so a hand-set value
+        reaches gates/routers/on_register triggers exactly the same way a live-fed one does."""
+        if not (reg_events or reg_snapshot):
+            return
+        runner = self._trigger_runner()
+        if runner is None:
+            return
+        runner.set_registers(reg_snapshot)
+        runner.set_register_rings(reg_rings)
+        if reg_events:
+            runner.on_register(reg_events, reg_snapshot)
+        runner.emit_gate_flow()     # animate any gate whose pass/block flipped this tick
+        runner.emit_router_flow()   # log any router whose selected branch changed this tick
 
     # ---- readout flow blobs ------------------------------------------------
 
@@ -715,16 +724,17 @@ class LiveSession:
                                            notifier=self._engine.notifier)
         return self._triggers
 
-    def gated_trigger_ids(self) -> list[str]:
-        """Trigger ids currently BLOCKED by their gates (evaluated against the runner's live caches).
-        A display hint for the activity snapshot — empty when no runner is built. Read-only; safe to
-        call from the activity thread while the collector tick thread updates the caches."""
+    def gated_node_ids(self) -> list[str]:
+        """Prefixed graph-node ids currently BLOCKED by an enabled gate (trigger or any other gated
+        kind — evaluated against the runner's live caches). A display hint for the activity snapshot
+        — empty when no runner is built. Read-only; safe to call from the activity thread while the
+        collector tick thread updates the caches."""
         r = self._trigger_runner()
         return r.gated_ids() if r is not None else []
 
     def gate_states(self) -> dict[str, bool]:
         """Per-gate live pass/block map (``{gate_id: holds}``) for the activity snapshot — the graph
-        tints each gate -> trigger line ok (pass) / danger (block). Empty when no runner is built.
+        tints each gate -> target line ok (pass) / danger (block). Empty when no runner is built.
         Read-only; safe to call from the activity thread while the tick thread updates the caches."""
         r = self._trigger_runner()
         return r.gate_states() if r is not None else {}
@@ -1158,6 +1168,90 @@ class LiveSession:
         with self._lock:
             e = (self._registers.get(reg_id) or {}).get(key)
             return self._exposed(reg_id, key, e["values"], times=e.get("times")) if e else None
+
+    def set_register_value(self, reg_id: str, key: str, value):
+        """Append ONE sample to a register key's rolling ring — the manual action 'set value' write.
+        Mirrors the per-key body of :meth:`_feed_registers` exactly (append, truncate to
+        ``RegisterDef.capacity``, push-history record, bump ``writes``, keep ``first_seen`` / refresh
+        ``last_seen``, ``conf=None`` — a process-style write, not a readout one) so a hand-set value
+        is indistinguishable downstream from a genuine feed sample. ``value`` is stored verbatim
+        (pass ``None`` to clear the key's held VALUE while keeping the key itself — the "empty value"
+        semantics, distinct from :meth:`clear_register_keys` which drops the key entirely). Creates
+        the key if absent (register keys are runtime-created by whatever wiring first reports them;
+        a hand-set key is no different). Returns the freshly exposed value (the aggregate fold, or
+        the ring tail) so a caller building an ``on_register`` event doesn't need a second read.
+        Thread-safe."""
+        if not reg_id or not key:
+            return None
+        now = time.time()
+        reg = self._reg_def(reg_id)
+        cap = max(1, int(getattr(reg, "capacity", 1) or 1)) if reg is not None else 1
+        game = self._profile.name
+        with self._lock:
+            m = self._registers.setdefault(reg_id, {})
+            prev = m.get(key)
+            prev_vals = prev["values"] if prev else []
+            prev_times = (prev.get("times") if prev else None) or []
+            full = prev_vals[:]
+            full.append(value)
+            vals = full[-cap:]
+            evicted = full[:-cap]
+            full_t = prev_times[:]
+            full_t.append(now)
+            ts = full_t[-cap:]
+            writes = (prev["writes"] if prev else 0) + 1
+            register_history.record(
+                game, reg_id, ts=datetime.now().isoformat(timespec="milliseconds"),
+                key=key, value=value, ring_index=(writes - 1) % cap,
+                overwritten=(evicted[-1] if evicted else None))
+            exposed = self._exposed(reg_id, key, vals, times=ts)
+            m[key] = {
+                "values": vals,
+                "times": ts,
+                "writes": writes,
+                "conf": None,
+                "first_seen": prev["first_seen"] if prev else now,
+                "last_seen": now,
+            }
+        return exposed
+
+    def apply_register_writes(self, reg_id: str, writes) -> list[str]:
+        """Run a register action's ``set`` op — one :class:`~oc.profile.models.RegisterWrite` row at
+        a time — then push the outcome LIVE: flush the register's ``persist`` mirror (if set) and
+        reach ``on_register`` triggers/gates in the SAME call, so a hand-set value behaves exactly
+        like a genuine feed tick reached it, not "eventually consistent" until the next one. A
+        ``remove`` row drops that key (:meth:`clear_register_keys`) instead of writing it — dropped
+        keys don't generate an ``on_register`` event of their own (mirrors the existing register
+        clear/remove_all ops, which are deliberately quiet), but the persist flush + gate/router
+        snapshot refresh still run afterward so their absence is reflected everywhere at once.
+        Returns every key touched (set or removed), for the action's fire-result reporting."""
+        touched: list[str] = []
+        events: list[dict] = []
+        for w in (writes or []):
+            key = (getattr(w, "key", "") or "").strip()
+            if not key:
+                continue
+            if getattr(w, "remove", False):
+                if key not in self.register_keys(reg_id):
+                    continue   # vanished key silently skipped (mirrors clone/move's _targeted_keys)
+                self.clear_register_keys(reg_id, [key])
+                touched.append(key)
+                continue
+            value = getattr(w, "value", "") or ""
+            exposed = self.set_register_value(reg_id, key, value if value != "" else None)
+            touched.append(key)
+            events.append({"reg": reg_id, "key": key, "value": exposed})
+        if not touched:
+            return touched
+        reg = self._reg_def(reg_id)
+        if reg is not None and getattr(reg, "persist", ""):
+            with self._lock:
+                self._flush_register(reg)
+        with self._lock:
+            reg_snapshot = self._register_snapshot()
+            reg_rings = self._register_rings_snapshot()
+        self._dispatch_register_events(events, reg_snapshot, reg_rings)
+        return touched
 
     def clear_register_keys(self, reg_id: str, keys) -> None:
         """Drop only the named keys from a register's held map (action clear/move slot targeting).

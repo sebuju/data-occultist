@@ -949,37 +949,37 @@ class TriggerRunner:
         held = self._condset_holds(gate.source, gate.conds, gate.logic)
         return (not held) if getattr(gate, "negate", False) else held
 
+    def _node_gated(self, tid: str) -> bool:
+        """Is target id ``tid`` (a trigger/producer/file-source/toast/sound/action/router id)
+        currently BLOCKED? True if any ENABLED gate lists it in :attr:`GateDef.targets` and does not
+        currently hold (AND-across-gates: one failing controlling gate is enough to block). A ``tid``
+        no gate lists is never gated."""
+        for g in getattr(self._profile, "gates", []):
+            if getattr(g, "enabled", True) and tid in getattr(g, "targets", []) \
+               and not self._gate_holds(g):
+                return True
+        return False
+
     def _gates_pass(self, t) -> bool:
-        """Do ALL gates a trigger references hold (AND across gates)? No gates -> pass. A missing gate
-        id is skipped (a dangling ref must not permanently wedge a trigger)."""
-        gate_ids = getattr(t, "gates", None)
-        if not gate_ids:
-            return True
-        by_gate = {g.id: g for g in getattr(self._profile, "gates", [])}
-        for gid in gate_ids:
-            g = by_gate.get(gid)
-            if g is not None and not self._gate_holds(g):
-                return False
-        return True
+        """Does ``t`` (a trigger) pass every gate that names it? Thin alias over :meth:`_node_gated`
+        kept for the existing call sites' phrasing (a "pass" check reads clearer than a "gated"
+        check at a fire-time guard)."""
+        return not self._node_gated(t.id)
 
     def _advance_content_gate_baselines(self, t) -> None:
-        """After ``t`` actually fires, advance the ``_source_prev`` baseline for every wired gate
-        whose source is a ``dataset:<id>``/``subset:<id>`` content-hash — so a ``changed`` gate over
-        one reads "changed since the last FIRE", not "changed this tick" (a dataset/subset has no
-        per-tick pulse the way a readout/register does, so the on_readout/on_register pulse-detectors
-        that normally refresh _source_prev never see it). Only advances on a real, unblocked fire; a
-        gate-blocked or throttled attempt must not move the baseline.
+        """After ``t`` actually fires, advance the ``_source_prev`` baseline for every gate that
+        names ``t`` in its ``targets`` and whose source is a ``dataset:<id>``/``subset:<id>``
+        content-hash — so a ``changed`` gate over one reads "changed since the last FIRE", not
+        "changed this tick" (a dataset/subset has no per-tick pulse the way a readout/register does,
+        so the on_readout/on_register pulse-detectors that normally refresh _source_prev never see
+        it). Only advances on a real, unblocked fire; a gate-blocked or throttled attempt must not
+        move the baseline.
 
         Known limitation: _source_prev is keyed by source ref, so two triggers gated on the SAME
         dataset/subset share one baseline — one firing advances the other's too. Fine for the common
         one-gate/one-trigger toast-dedup case this was built for."""
-        gate_ids = getattr(t, "gates", None)
-        if not gate_ids:
-            return
-        by_gate = {g.id: g for g in getattr(self._profile, "gates", [])}
-        for gid in gate_ids:
-            g = by_gate.get(gid)
-            if g is not None and g.source.startswith(("dataset:", "subset:")):
+        for g in getattr(self._profile, "gates", []):
+            if t.id in getattr(g, "targets", []) and g.source.startswith(("dataset:", "subset:")):
                 self._source_prev[g.source] = self._source_value(g.source)
 
     def _source_node(self, source: str) -> str | None:
@@ -1005,8 +1005,8 @@ class TriggerRunner:
         """Animate the value that flips a gate's decision: a ``data`` blob source -> gate on the tick
         its pass/block result FLIPS. Called each live tick; an unchanged result emits nothing, so a
         steady value never spams the flow layer. First sight of a gate seeds its state without a blob.
-        The gate -> trigger decision is NOT a blob — the graph tints that line ok/danger by live pass/
-        block instead (see :meth:`gate_states`), so nothing streams from a gate to its triggers here.
+        The gate -> target decision is NOT a blob — the graph tints that line ok/danger by live pass/
+        block instead (see :meth:`gate_states`), so nothing streams from a gate to its targets here.
 
         The same flip also feeds the gate's (non-persisted) flip-history satellite — see
         :mod:`oc.collect.gate_history` — so a closed satellite costs nothing and an open one shows
@@ -1070,17 +1070,49 @@ class TriggerRunner:
     def gate_states(self) -> dict[str, bool]:
         """Per-gate live pass/block: ``{gate_id: holds}`` for every ENABLED gate, evaluated against
         the live caches. ``True`` = the gate currently PASSES, ``False`` = it BLOCKS. A display hint —
-        the graph tints each gate -> trigger line ok (pass) / danger (block); disabled gates are
+        the graph tints each gate -> target line ok (pass) / danger (block); disabled gates are
         omitted (the line stays grey, as it does when live is off)."""
         return {g.id: self._gate_holds(g) for g in (getattr(self._profile, "gates", None) or [])
                 if getattr(g, "enabled", True)}
 
+    def _target_node_id(self, tid: str) -> str | None:
+        """The prefixed GRAPH NODE id for a gate target ``tid`` — trigger/producer/file-source/
+        toast/sound/action/router — or None if it names nothing, or the node it names is disabled
+        (a disabled node is never 'firing', so it's never usefully shown as 'gated off' either).
+        Mirrors the front-end model.refNode's bare-id fallback chain, so the server can hand the
+        client a ready-to-use node id (the client stays dumb — see :meth:`gated_ids`)."""
+        def find(items):
+            return next((x for x in items if x.id == tid), None)
+        if (n := find(self._profile.triggers)) is not None:
+            return f"trigger:{tid}" if n.enabled else None
+        if (n := find(self._profile.producers)) is not None:
+            return f"producer:{tid}" if getattr(n, "enabled", True) else None
+        if (n := find(getattr(self._profile, "file_sources", []))) is not None:
+            return f"src:{tid}" if getattr(n, "enabled", True) else None
+        if (n := find(getattr(self._profile, "toasts", []))) is not None:
+            return f"toast:{tid}" if getattr(n, "enabled", True) else None
+        if (n := find(getattr(self._profile, "sounds", []))) is not None:
+            return f"sound:{tid}" if getattr(n, "enabled", True) else None
+        if (n := find(getattr(self._profile, "actions", []))) is not None:
+            return f"action:{tid}" if getattr(n, "enabled", True) else None
+        if (n := find(getattr(self._profile, "routers", []))) is not None:
+            return f"router:{tid}" if getattr(n, "enabled", True) else None
+        return None
+
     def gated_ids(self) -> list[str]:
-        """Ids of enabled, gated triggers whose gates currently BLOCK them (evaluated against the
-        live caches). A display hint: the activity snapshot flags these nodes as 'gated off' while
-        live is running, so a glance at the graph shows which cues are silenced right now."""
-        return [t.id for t in self._profile.triggers
-                if t.enabled and getattr(t, "gates", None) and not self._gates_pass(t)]
+        """Prefixed graph-node ids of every gate TARGET currently BLOCKED by an enabled gate
+        (evaluated against the live caches; de-duped). A display hint: the activity snapshot flags
+        these nodes as 'gated off' while live is running, so a glance at the graph shows which
+        nodes are silenced right now — trigger or any other gated kind alike."""
+        seen: dict[str, None] = {}
+        for g in getattr(self._profile, "gates", []):
+            if not getattr(g, "enabled", True) or self._gate_holds(g):
+                continue
+            for tid in getattr(g, "targets", []):
+                node = self._target_node_id(tid)
+                if node is not None:
+                    seen.setdefault(node, None)
+        return list(seen.keys())
 
     def _resolve_fire(self, t) -> tuple[list[str], list[str]]:
         """Expand ``t.targets`` THROUGH any router into ``(fire_ids, sound_ids)``: server targets
@@ -1089,7 +1121,11 @@ class TriggerRunner:
         conds matches always); a disabled router forwards nothing. Direct sound targets land in
         ``sound_ids`` too, so the cue always carries the full set the client should play. A disabled
         sound is dropped entirely (never played, never a phantom fire_id) — its ``enabled`` flag is
-        honored here since sounds are client-played off the fire cue, not dispatched in ``_fire_targets``."""
+        honored here since sounds are client-played off the fire cue, not dispatched in
+        ``_fire_targets``. A GATED target (an enabled gate names it in ``targets`` and currently
+        blocks) is dropped exactly like a disabled sound/router — this is the one choke point every
+        fire target (producer/file-source/toast/sound/action) and router-expanded target passes
+        through, so one check here covers all of them."""
         by_router = {r.id: r for r in getattr(self._profile, "routers", [])}
         sound_set = {s.id for s in getattr(self._profile, "sounds", [])}
         off_sounds = {s.id for s in getattr(self._profile, "sounds", []) if not getattr(s, "enabled", True)}
@@ -1097,8 +1133,8 @@ class TriggerRunner:
         sound_ids: list[str] = []
 
         def add(tid: str) -> None:
-            if tid in off_sounds:
-                return   # disabled sound: not played, and not a stray fire_id
+            if tid in off_sounds or self._node_gated(tid):
+                return   # disabled sound, or gate-blocked: not played, not a stray fire_id
             if tid in sound_set:
                 if tid not in sound_ids:
                     sound_ids.append(tid)
@@ -1110,8 +1146,8 @@ class TriggerRunner:
             if r is None:
                 add(tid)
                 continue
-            if not getattr(r, "enabled", True):
-                continue
+            if not getattr(r, "enabled", True) or self._node_gated(tid):
+                continue   # disabled or gate-blocked router: forwards nothing
             for b in r.branches or []:
                 if self._condset_holds(r.source, b.conds, b.logic):
                     for x in b.targets or []:

@@ -14,7 +14,7 @@ import { persist } from "./persist.js";
 import { beginDrag } from "./dragresize.js";
 import { onGlobal } from "../inputbus.js";
 import { richPickerPop } from "./rich_picker.js";
-import { tokenGroups, blockPreviewLook } from "./toast_node.js";
+import { tokenGroups, blockPreviewLook, elemOptLabel, elemOptMeta } from "./toast_node.js";
 import { openIconPickerModal } from "./icon_picker.js";
 import { render, autosave, rebuildNode, wireArmedRemove, NUDGE, armConfirm } from "./main.js";
 
@@ -454,9 +454,15 @@ function wireToastImage(sec, x, n) {
         commitFocusedField();   // apply any pending edit to the current element before switching away
         model.setToastImageSel(x.id, idx, j); sel = j;
         sec.querySelectorAll(".tn-img-boxes .tn-box").forEach((b) => b.classList.toggle("sel", j != null && +b.dataset.i === j));
-        const pk = sec.querySelector(".tn-il-pick"); if (pk) pk.value = j == null ? "" : String(j);
+        refreshPickLabel();
         if (syncInspector) syncInspector(j);   // reconcile the existing inspector, don't rebuild it
         drawGuides(j);
+    };
+    // the picker button's own collapsed label — refreshed on selection change AND on every
+    // content keystroke of the selected element, so it never goes stale (the bug this replaces).
+    const refreshPickLabel = () => {
+        const pk = sec.querySelector(".tn-il-pick"); if (!pk) return;
+        pk.textContent = sel == null ? "<(none)>" : `<${elemOptLabel(texts()[sel] || {}, sel)}>`;
     };
     // click on the empty preview (not on a box) deselects the element. Inspector clicks never reach
     // here, so editing an element never deselects it. Left-button only (right-click never deselects).
@@ -537,6 +543,9 @@ function wireToastImage(sec, x, n) {
             setText(sel, key, el.value); autosave(null); refreshPreview();
         }));
         line(".tn-il-content", "content"); line(".tn-il-x", "x"); line(".tn-il-y", "y");
+        // the picker button's label mirrors this element's content live, as-you-type — matches
+        // the as-you-type preview line elsewhere in this file, no round trip needed.
+        sec.querySelector(".tn-il-content")?.addEventListener("input", refreshPickLabel);
         line(".tn-il-size", "size"); line(".tn-il-w", "width"); line(".tn-il-h", "height");
         line(".tn-il-z", "z_index");   // stacking order — only affects paint order, so repreview (no box repaint)
         // per-row reset: restore that row's field(s) to the element defaults, then reconcile the
@@ -686,8 +695,18 @@ function wireToastImage(sec, x, n) {
         if (nj != null) model.setToastImageSel(x.id, idx, nj);   // open the clone
         rebuildNode(n.id); autosave(null);
     });
-    // element picker dropdown — jump to an element, or "(none)" to deselect
-    q(".tn-il-pick")?.addEventListener("change", (e) => selectLine(e.target.value === "" ? null : +e.target.value));
+    // element picker — opens a rich popover listing every element with its anchor/match/cond meta
+    // visible (rebuilt from live state each open, so labels are never stale); jump to one, or
+    // "(none)" to deselect.
+    q(".tn-il-pick")?.addEventListener("click", (e) => richPickerPop({
+        anchor: e.currentTarget,
+        current: sel == null ? "" : String(sel),
+        groups: [[null, [
+            { value: "", label: "(none)", meta: "" },
+            ...texts().map((el, i) => ({ value: String(i), label: elemOptLabel(el, i), meta: elemOptMeta(el, i) })),
+        ]]],
+        onPick: (v) => selectLine(v === "" ? null : +v),
+    }));
     // placement (hero/inline/none) — no layout change, just persist + (nothing to repreview)
     q(".tn-img-place")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "placement", e.target.value); restripeSelect(e.target); autosave(null); });
     // unit toggle (px / % of image) — convert stored coords so the on-screen design is preserved

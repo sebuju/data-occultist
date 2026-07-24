@@ -1,50 +1,75 @@
-// Shared "which register keys" sub-row (CLAUDE.md rule 7). One row per targeted/watched register: a
-// chip list of that register's wired-readout KEYS the owner acts on (default = all keys). Removing a
-// chip narrows the set; the trailing "+" re-adds a key. Backs BOTH the action node (which keys an op
-// clears/moves) and the trigger node (which keys an on_register watch fires on) — same store shape (a
-// `{regId: [keys]}` slots map, [] = all). Rendering AND wiring both live here so the two callers can't
-// drift; extracted from action_node.js/io_wire.js where it used to be action-only.
-import { h, srcRow } from "../dom.js";
-import { sourcesInput } from "./sources_input.js";
+// Register-key list editors for an action node's per-register ops (CLAUDE.md rule 7 — the two
+// shapes below are siblings, kept together so they can't drift). BOTH are hand-typed key lists, not
+// pick-lists: register keys are created at RUNTIME by whatever wiring or manual "set" op first
+// reports them, so a key an op targets may not be wired (or even exist yet) at edit time — a
+// chip-picker sourced from the register's currently-known keys could never express that. Rendering
+// AND wiring both live here so callers can't drift; extracted from action_node.js/io_wire.js where
+// it used to be action-only.
+import { h, frag, labAdd, trashBtn } from "../dom.js";
 import { wireArmedRemove } from "./rules_editor.js";
+import { slideToggle } from "./node_parts.js";
 
-// active keys = the stored slot narrowed to still-wired keys, or ALL keys when the slot is empty
-// ([] = all, the canonical form setActionSlots/setTriggerRegisterSlots persist).
-function activeKeys(keys, targeted) {
-    return (targeted && targeted.length) ? targeted.filter((k) => keys.includes(k)) : keys;
+// Clone/move key-narrowing: N hand-typed key rows (`reg_ops[id].keys`, [] = all — the canonical
+// form setActionRegKeys persists). `hint` = the row's help text. Sibling of regWriteRows below
+// (same free-text-row shape, one field instead of key+value+remove).
+export function keyRows({ regId, keys, hint }) {
+    return frag(
+        labAdd("keys", hint, "ac-kaddrow", "add a key row", true, { reg: regId }),
+        h("div", { class: "ac-krows", dataset: { reg: regId } },
+            keys.map((k, idx) => h("div", { class: "ac-krow", dataset: { reg: regId, idx } },
+                h("input", { class: "gi ac-kval", type: "text", value: k, placeholder: "key name", spellcheck: false }),
+                trashBtn({ cls: "ac-krmrow", title: "remove this row" })))));
 }
 
-// One register's key sub-row. `keys` = all of the register's wired-readout keys; `targeted` = the
-// stored slot ([] = all); `hint` = the row's help text; `label` = the row's left-cell caption (each
-// caller supplies its own so the wording fits its node). The row carries `data-reg` so wireSlotRows
-// knows which register a slot edit targets.
-export function slotRow({ regId, keys, targeted, hint, label }) {
-    const active = activeKeys(keys, targeted);
-    const activeSet = new Set(active);
-    const free = keys.filter((k) => !activeSet.has(k));
-    return srcRow(label ?? "keys", hint,
-        h("div", { class: "sv-slotrow", dataset: { reg: regId } },
-            sourcesInput({
-                chips: active.map((k) => ({ value: k, label: k })),
-                free, addLabel: "+ key", addinCls: "sv-addin sv-slotadd", rmCls: "sv-rmin sv-slotrm",
-                rmTitle: "narrow to fewer keys" })));
+// Bind add/edit/remove handlers for every clone/move key-list block under `scope`. `add(regId)`
+// appends a blank row; `removeRow(regId, idx)`/`setKey(regId, idx, v)` edit one row; `after()` runs
+// after each edit (rebuild + autosave — matches wireRegWriteRows below).
+export function wireKeyRows(scope, { add, removeRow, setKey, after }) {
+    scope.querySelectorAll(".ac-kaddrow").forEach((btn) => btn.addEventListener("click", () => {
+        add(btn.dataset.reg); after();
+    }));
+    scope.querySelectorAll(".ac-krow").forEach((row) => {
+        const regId = row.dataset.reg, idx = +row.dataset.idx;
+        row.querySelector(".ac-kval")?.addEventListener("change", (e) => { setKey(regId, idx, e.target.value); after(); });
+        wireArmedRemove(row, ".ac-krmrow", () => { removeRow(regId, idx); after(); }, { pill: ".ac-krow" });
+    });
 }
 
-// Bind add/remove handlers for every register key sub-row under `scope`. `keysFor(regId)` = all
-// wired-readout keys; `get(regId)` = the stored slot; `set(regId, keys)` persists it ([] = all);
-// `after()` runs after each edit (rebuild + autosave). Shared by wireAction + wireTrigger.
-export function wireSlotRows(scope, { keysFor, get, set, after }) {
-    scope.querySelectorAll(".sv-slotrow").forEach((row) => {
-        const regId = row.dataset.reg;
-        const effective = () => activeKeys(keysFor(regId), get(regId));
-        row.querySelector(".sv-slotadd")?.addEventListener("change", (e) => {
-            if (!e.target.value) return;
-            set(regId, [...effective(), e.target.value]);
-            after();
-        });
-        wireArmedRemove(row, ".sv-slotrm", (val) => {
-            set(regId, effective().filter((k) => k !== val));
-            after();
-        });
+// One register's "set values" editor: N key rows (a register's own action op, not the clone/move
+// key-narrowing above) — each row a hand-typed KEY, a VALUE, and a toggle meaning "remove this key
+// entirely instead of setting it" (empty value ≠ removing the key — the value input's placeholder
+// says so). `rows` = the stored `RegisterWrite` list (`[{key, value, remove}]`). Sibling of keyRows
+// above (a different row shape — key+value+remove vs. key only), mirroring process_node.js's
+// `.pr-maprow` (row + trash, not a `.sv-input` pill).
+// The "+" add lives IN the "set values" label (labAdd), like every other section's add button
+// (headers/query maps, explode list) — not a trailing button inside the rows block.
+export function regWriteRows({ regId, rows }) {
+    return frag(
+        labAdd("set values", "keys this action writes when fired — one row per key",
+            "ac-waddrow", "add a key row", true, { reg: regId }),
+        h("div", { class: "ac-wrows", dataset: { reg: regId } },
+            rows.map((w, idx) => h("div", { class: "ac-wrow", dataset: { reg: regId, idx } },
+                h("input", { class: "gi ac-wkey", type: "text", value: w.key, placeholder: "key name", spellcheck: false }),
+                h("input", { class: "gi ac-wval", type: "text", value: w.value, placeholder: "empty = clears value",
+                    disabled: !!w.remove, spellcheck: false }),
+                slideToggle({ on: !!w.remove, cls: "ac-wrm", title: "remove this key entirely (instead of setting its value)" }),
+                trashBtn({ cls: "ac-wrmrow", title: "remove this row" })))));
+}
+
+// Bind add/edit/remove handlers for every "set values" block under `scope`. `add(regId)` appends a
+// blank row; `removeRow(regId, idx)`/`setKey`/`setValue`/`setRemove(regId, idx, v)` edit one row;
+// `after()` runs after each edit (rebuild + autosave) — a key/remove edit changes what the register
+// node scaffolds (registerDeclaredKeys) and what the value input's disabled state shows, so those
+// need the rebuild; a bare value keystroke does not (autosave only, like any other free-text field).
+export function wireRegWriteRows(scope, { add, removeRow, setKey, setValue, setRemove, after, autosaveOnly }) {
+    scope.querySelectorAll(".ac-waddrow").forEach((btn) => btn.addEventListener("click", () => {
+        add(btn.dataset.reg); after();
+    }));
+    scope.querySelectorAll(".ac-wrow").forEach((row) => {
+        const regId = row.dataset.reg, idx = +row.dataset.idx;
+        row.querySelector(".ac-wkey")?.addEventListener("change", (e) => { setKey(regId, idx, e.target.value); after(); });
+        row.querySelector(".ac-wval")?.addEventListener("change", (e) => { setValue(regId, idx, e.target.value); autosaveOnly(); });
+        row.querySelector(".ac-wrm")?.addEventListener("change", (e) => { setRemove(regId, idx, e.target.checked); after(); });
+        wireArmedRemove(row, ".ac-wrmrow", () => { removeRow(regId, idx); after(); }, { pill: ".ac-wrow" });
     });
 }

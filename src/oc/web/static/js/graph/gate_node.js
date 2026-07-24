@@ -1,9 +1,10 @@
-// Gate node: a boolean guard on a trigger. It TESTS a single live value (a readout, a register
-// slot, or a dataset/subset's content-hash signature — meant for the `changed` op) against an
-// ordered list of conditions combined by and/or, optionally negated. A trigger
-// lists the gates it must satisfy before it fires — the gate never fires anything itself, it only
-// permits/blocks the trigger(s) wired to its out-port. See GateDef (backend). Rendering only —
-// wiring lives in io_wire.js (wireGate), like every other node body.
+// Gate node: a boolean guard on any gateable node — trigger, producer, file-source, toast, sound,
+// action, or router. It TESTS a single live value (a readout, a register slot, or a dataset/
+// subset's content-hash signature — meant for the `changed` op) against an ordered list of
+// conditions combined by and/or, optionally negated. The gate owns the link to every node it
+// gates (`targets`, model.gateTargets) — it never fires anything itself, it only permits/blocks
+// whatever is wired to its out-port. See GateDef (backend). Rendering only — wiring lives in
+// io_wire.js (wireGate), like every other node body.
 import { h, frag, labAdd, labCell, srcRow, trashBtn } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
 import { slideToggle } from "./node_parts.js";
@@ -57,19 +58,29 @@ export function gateParts(g, model) {
         condsBox);
     const negate = srcRow("negate", "pass when the conditions do NOT hold (block-list)",
         slideToggle({ on: !!g.negate, cls: "gate-negate", title: "invert: pass only when the conditions do NOT hold" }));
-    // destination: the trigger(s) this gate is wired to (it permits/blocks their fire). Shown as an
-    // editable picker as well as the out-port; the trigger owns the ref (model.gateTriggers).
-    const wired = model.gateTriggers(g.id);
-    const dest = srcRow("gates", "triggers this gate applies to — it permits or blocks their fire",
+    // destination: every node (trigger, producer, file-source, toast, sound, action, router) this
+    // gate permits/blocks. The gate owns the link (model.gateTargets), so this is the single place
+    // it's edited — no per-kind picker, one uniform list.
+    const wired = model.gateTargets(g.id);
+    const allGateable = () => [
+        ...(model.profile.triggers || []).map((t) => t.id),
+        ...(model.profile.producers || []).map((p) => p.id),
+        ...(model.profile.file_sources || []).map((s) => s.id),
+        ...(model.profile.toasts || []).map((x) => x.id),
+        ...(model.profile.sounds || []).map((x) => x.id),
+        ...(model.profile.actions || []).map((x) => x.id),
+        ...(model.profile.routers || []).map((r) => r.id),
+    ];
+    const dest = srcRow("targets", "nodes this gate applies to — it permits or blocks each one",
         sourcesInput({
-            chips: wired.map((tid) => ({ value: tid, node: `trigger:${tid}` })),
-            free: () => (model.profile.triggers || []).map((t) => t.id).filter((tid) => !wired.includes(tid)),
-            addLabel: "+ trigger", addinCls: "sv-addin gate-adddest", rmCls: "sv-rmin gate-rmdest" }));
+            chips: wired.map((ref) => ({ value: ref, node: model.refNode(ref) })),
+            free: () => allGateable().filter((ref) => !wired.includes(ref)),
+            addLabel: "+ target", addinCls: "sv-addin gate-adddest", rmCls: "sv-rmin gate-rmdest" }));
     return {
         title: h("input", { class: "gi gi-id gate-rename", value: g.id, title: "rename gate" }),
         body: frag(source, dest, logic, ifRow, negate),
         ports: frag(
             h("span", { class: "port in", title: "drag a readout or register here as the tested value" }),
-            h("span", { class: "port out", title: "drag to a trigger this gate should gate" })),
+            h("span", { class: "port out", title: "drag to a node this gate should gate" })),
     };
 }

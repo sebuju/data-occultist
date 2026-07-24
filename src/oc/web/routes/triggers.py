@@ -41,7 +41,7 @@ def list_triggers(game: str):
         out.append({"id": t.id, "kind": t.kind, "interval_s": t.interval_s,
                     "watch": t.watch, "enabled": t.enabled, "targets": targets,
                     "readout_watch": t.readout_watch, "register_watch": t.register_watch,
-                    "gates": t.gates, "throttle_ms": t.throttle_ms})
+                    "throttle_ms": t.throttle_ms})
     return {"game": game, "triggers": out}
 
 

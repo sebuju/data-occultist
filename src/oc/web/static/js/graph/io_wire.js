@@ -23,7 +23,7 @@ import { refreshRegister, populateRegister, REG_AGGREGATES, AGG_DESC } from "./r
 import { KIND_GROUPS, KIND_DESC } from "./trigger_node.js";
 import { richPickerPop } from "./rich_picker.js";
 import { renderProcessHistory } from "./process_history_node.js";
-import { wireSlotRows } from "./reg_slots.js";
+import { wireKeyRows, wireRegWriteRows } from "./reg_slots.js";
 import { makeArmed } from "./armbtn.js";
 import { refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 import { refreshImageBoxes } from "./imaging.js";
@@ -355,14 +355,14 @@ function wireGate(div, n) {
     // source: a single readout / register slot. Adding replaces; the chip trash clears it.
     $(".gate-addsource")?.addEventListener("change", (e) => { model.setGateSource(g.id, e.target.value); rebuildNodeEdges(n.id); autosave(null); });
     wireArmedRemove(div, ".gate-rmsource", () => { model.setGateSource(g.id, ""); rebuildNodeEdges(n.id); autosave(null); });
-    // destination: the trigger(s) this gate applies to — this is the ONLY editor for that link (the
-    // trigger has no gates row). The trigger still owns the ref, so render() to redraw the
-    // gate->trigger edges and refresh the trigger's gated cue.
-    $(".gate-adddest")?.addEventListener("change", (e) => { if (model.addTriggerGate(e.target.value, g.id)) { render(); autosave(null); } });
+    // destination: every node this gate applies to — the gate OWNS this link (model.gateTargets),
+    // so this is the only editor for it. render() redraws the gate->target edges and refreshes the
+    // gated cue on whichever node kind was picked.
+    $(".gate-adddest")?.addEventListener("change", (e) => { if (model.addGateTarget(g.id, e.target.value)) { render(); autosave(null); } });
     // rebuildNode(n.id) FIRST: the armed trash button is the focused element and lives in THIS node,
     // so render()'s consumer sweep (rebuildRefConsumers) would skip rebuilding the gate body and the
     // removed chip would linger. Rebuild our own body directly, then render() to drop the edge.
-    wireArmedRemove(div, ".gate-rmdest", (tid) => { model.removeTriggerGate(tid, g.id); rebuildNode(n.id); render(); autosave(null); });
+    wireArmedRemove(div, ".gate-rmdest", (ref) => { model.removeGateTarget(g.id, ref); rebuildNode(n.id); render(); autosave(null); });
     // and/or slider — rebuild so its label re-renders (and it shows/hides at the >1-condition threshold).
     $(".gate-logic")?.addEventListener("change", (e) => { model.setGateLogic(g.id, e.target.checked ? "and" : "or"); rebuildNode(n.id); autosave(null); });
     // negate — a plain toggle (no structural change), so just save.
@@ -454,20 +454,45 @@ function wireAction(div, n) {
             () => movePos(`action:${oldId}`, `action:${x.id}`),
             () => { render(); autosave(null); });
     });
-    // action kind: rebuild so the dest select + slot rows show/hide; edges follow (dest edge)
+    // action kind: rebuild so the dest select shows/hides; edges follow (dest edge). DATASET
+    // targets only — a register target runs its own op below, independent of this one.
     $(".ac-action")?.addEventListener("change", (e) => { model.setActionKind(x.id, e.target.value); rebuildNodeEdges(n.id); autosave(null); });
     // sources: datasets AND registers, by prefixed ref (value carries "dataset:"/"register:")
     $(".ac-addsrc")?.addEventListener("change", (e) => { if (model.addActionSource(x.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".ac-rmsrc", (val) => { model.removeActionSource(x.id, val); rebuildNodeEdges(n.id); autosave(null); });
-    // slot targeting: one row per register source (shared reg_slots primitive, rule 7) — each scoped
-    // to its register via data-reg so the add/remove edits know which register's key set they narrow.
-    wireSlotRows(div, {
-        keysFor: (regId) => model.registerKeys(regId),
-        get: (regId) => model.actionSlots(x.id, regId),
-        set: (regId, keys) => model.setActionSlots(x.id, regId, keys),
+    $(".ac-dest")?.addEventListener("change", (e) => { model.setActionDest(x.id, e.target.value); drawEdges(); autosave(null); });
+    // per-register op: each register target picks its own op (rebuild so set/clone/move sub-rows
+    // show/hide; edges follow for a per-register clone/move dest).
+    div.querySelectorAll(".ac-regop").forEach((sel) => sel.addEventListener("change", (e) => {
+        model.setActionRegOp(x.id, sel.dataset.reg, e.target.value); rebuildNodeEdges(n.id); autosave(null);
+    }));
+    // dest is one combined dataset/register picker (value already carries the "dataset:"/"register:"
+    // prefix) — picking a NEW kind clears every OTHER register's dest on this node (setActionRegDest),
+    // so rebuild (not just redraw edges) to show those now-empty "into" selects.
+    div.querySelectorAll(".ac-regdest").forEach((sel) => sel.addEventListener("change", (e) => {
+        model.setActionRegDest(x.id, sel.dataset.reg, e.target.value); rebuildNodeEdges(n.id); autosave(null);
+    }));
+    // clone/move key-narrowing: hand-typed rows, one register source running one of those ops
+    // (shared reg_slots primitive, rule 7) — each scoped to its register via data-reg. A key/remove
+    // edit changes what's targeted, so it rebuilds (matches wireRegWriteRows below).
+    wireKeyRows(div, {
+        add: (regId) => model.addActionRegKey(x.id, regId),
+        removeRow: (regId, idx) => model.removeActionRegKey(x.id, regId, idx),
+        setKey: (regId, idx, v) => model.setActionRegKey(x.id, regId, idx, v),
         after: () => { rebuildNode(n.id); autosave(null); },
     });
-    $(".ac-dest")?.addEventListener("change", (e) => { model.setActionDest(x.id, e.target.value); drawEdges(); autosave(null); });
+    // "set values": one row per hand-typed key (shared reg_slots primitive, rule 7) — a key/remove
+    // edit changes what the register node scaffolds + the value input's disabled state, so those
+    // rebuild; a bare value keystroke only autosaves (matches every other free-text field here).
+    wireRegWriteRows(div, {
+        add: (regId) => model.addActionWrite(x.id, regId),
+        removeRow: (regId, idx) => model.removeActionWrite(x.id, regId, idx),
+        setKey: (regId, idx, v) => model.setActionWriteKey(x.id, regId, idx, v),
+        setValue: (regId, idx, v) => model.setActionWriteValue(x.id, regId, idx, v),
+        setRemove: (regId, idx, on) => model.setActionWriteRemove(x.id, regId, idx, on),
+        after: () => { rebuildNode(n.id); autosave(null); },
+        autosaveOnly: () => autosave(null),
+    });
     // timing knobs — persisted only; the SERVER schedules the delay and the repeated sound cues (a
     // backgrounded tab throttles its timers but not its SSE cue delivery), so nothing here runs a clock.
     $(".ac-delay")?.addEventListener("change", (e) => { model.setActionDelay(x.id, e.target.value); autosave(null); });

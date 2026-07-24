@@ -58,6 +58,7 @@ export function richPickerPop({ anchor, groups, current, onPick, hint }) {
     });
 
     const close = anchoredPopover({ anchor, panel: pop });
+    if (!close) return;   // toggle-closed (same anchor clicked again)
     // land the highlight on the current value (fall back to the first row) so Enter with no arrow
     // press re-picks the same option rather than jumping to the top of the list.
     setHl(Math.max(0, vals.indexOf(current)));

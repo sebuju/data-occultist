@@ -55,10 +55,10 @@ def build_activity(game: str, settings) -> dict:
         lst = ls.status()
         if lst.get("running"):
             live = lst
-            # triggers whose gates BLOCK them right now -> the UI flags these nodes 'gated off'
-            # (a live-only cue; empty when idle). See LiveSession.gated_trigger_ids.
-            gated = ls.gated_trigger_ids()
-            # per-gate pass/block -> the graph tints each gate->trigger line ok/danger (empty when
+            # gated nodes (trigger or any other gated kind) BLOCKED right now -> the UI flags these
+            # nodes 'gated off' (a live-only cue; empty when idle). See LiveSession.gated_node_ids.
+            gated = ls.gated_node_ids()
+            # per-gate pass/block -> the graph tints each gate->target line ok/danger (empty when
             # idle -> the lines fall back to grey). See LiveSession.gate_states.
             gate_states = ls.gate_states()
             # game node's OCR-tick debug log, feeding its satellite (see LiveSession.debug_recent) —

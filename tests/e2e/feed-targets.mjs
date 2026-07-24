@@ -29,9 +29,9 @@ function build() {
         producers: [{ id: "prod1", dataset: "ds_b", sources: ["ds_a"] }],
         file_sources: [{ id: "src1", dataset: "ds_b", match: [], fields: [] }],
         triggers: [
-            { id: "trg_ro", kind: "on_readout", readout_watch: ["ro_x"], watch: [], register_watch: [], targets: [], gates: [] },
-            { id: "trg_ds", kind: "on_change", watch: ["ds_a", "sub1"], readout_watch: [], register_watch: [], targets: [], gates: [] },
-            { id: "trg_reg", kind: "on_register", register_watch: ["reg1"], watch: [], readout_watch: [], targets: [], gates: [] },
+            { id: "trg_ro", kind: "on_readout", readout_watch: ["ro_x"], watch: [], register_watch: [], targets: [] },
+            { id: "trg_ds", kind: "on_change", watch: ["ds_a", "sub1"], readout_watch: [], register_watch: [], targets: [] },
+            { id: "trg_reg", kind: "on_register", register_watch: ["reg1"], watch: [], readout_watch: [], targets: [] },
         ],
         gates: [{ id: "gate_ro", source: "readout:ro_x", conds: [{ when: "lt", arg: "3" }], logic: "or" },
                 { id: "gate_reg", source: "register:reg1#ro_x", conds: [] }],

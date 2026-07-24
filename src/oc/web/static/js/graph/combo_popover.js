@@ -16,12 +16,17 @@ import { h } from "../dom.js";
 import { model, pos, nw, nh } from "./state.js";
 import { onOutside } from "../inputbus.js";
 
-let _pop = null, _dismiss = null;
+let _pop = null, _dismiss = null, _anchor = null;
 export function closeCombo() {
     if (!_pop) return;
     _pop.remove(); _pop = null;
     _dismiss?.(); _dismiss = null;
+    _anchor = null;
 }
+// is a rich-picker/combo popover currently open? (both mount through anchoredPopover below, so
+// this one flag covers both) — camera.js consults it to skip wheel-zoom while one is open, since
+// the panel is body-level and pinned at its open-time position, not glued to the anchor on pan/zoom.
+export function comboOpen() { return _pop != null; }
 
 // The shared shell (rule 7): appends `panel` to document.body, clamps it fully on-screen under
 // `anchor` (the exact math ctxmenu / groups popover also use), and wires outside-press/Escape
@@ -30,14 +35,25 @@ export function closeCombo() {
 // contents and hands them here instead of re-deriving the clamp/dismiss boilerplate. Closes
 // whatever popover this shell currently holds open before mounting a new one (single instance);
 // returns a `close()` fn the caller can invoke itself (e.g. after a pick).
+// Clicking the SAME anchor that already has the popover open is a toggle-close, not a reopen —
+// otherwise a trigger button/input can never be used to dismiss its own popover, only
+// outside-press/Escape can. Returns null in that case so the caller (comboPopover/richPickerPop)
+// bails out before building list state or stealing focus into a panel that's no longer mounted.
 export function anchoredPopover({ anchor, panel }) {
+    if (_pop && _anchor === anchor) { closeCombo(); return null; }
     closeCombo();
     document.body.appendChild(panel);
     const a = anchor.getBoundingClientRect(), M = 8, r = panel.getBoundingClientRect();
     panel.style.left = `${Math.max(M, Math.min(a.left, window.innerWidth - r.width - M))}px`;
     panel.style.top = `${Math.max(M, Math.min(a.bottom + 4, window.innerHeight - r.height - M))}px`;
     _pop = panel;
-    _dismiss = onOutside(panel, closeCombo, { event: "mousedown", defer: true, escape: true });
+    _anchor = anchor;
+    // `also: anchor` — the trigger itself must NOT count as "outside": mousedown fires before the
+    // anchor's own click handler, so without this the outside-press dismiss would close the popover
+    // first, then the click handler (seeing it already closed) reopens it fresh — close-then-instant-
+    // reopen, not a toggle. Excluding the anchor here lets the click handler's own toggle check above
+    // be the one thing that closes it.
+    _dismiss = onOutside(panel, closeCombo, { event: "mousedown", defer: true, escape: true, also: anchor });
     return closeCombo;
 }
 
@@ -128,6 +144,6 @@ export function comboPopover({ anchor, options, onPick, placeholder = "search...
         else if (e.key === "Enter") { e.preventDefault(); if (vals[hl] != null) pick(vals[hl]); }
     });
 
-    anchoredPopover({ anchor, panel: pop });   // shared shell: body-append + clamp + outside/Escape dismiss
+    if (!anchoredPopover({ anchor, panel: pop })) return;   // toggle-closed (same anchor clicked again)
     search.focus();   // focus the search field on open (the explicit ask)
 }

@@ -1,0 +1,66 @@
+/* Rich-dropdown trigger buttons — a <button> standing in for a native <select> whose options
+   carry more than a label (rich_picker.js opens the popover: value + a second meta line per
+   row). Every caller (register aggregate fold, trigger/gate kind picker, toast element picker,
+   ...) applies this ONE shared class instead of inventing its own — a new caller adds
+   `.rich-dd-btn` to its button (plus whatever identity class it needs for its own JS hook), it
+   does not add a new CSS class here.
+
+   Reads exactly like the node's other <select> fields: transparent/borderless at rest, --nt
+   text, a soft box on hover/focus. */
+.gnode .rich-dd-btn {
+    background: transparent; border: unset; border-radius: 5px;
+    padding: 0 4px; color: var(--nt); font-size: 11px; line-height: inherit; min-height: 0;
+    transition: background .12s ease, border-color .12s ease;
+
+    text-align: left;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    width: 100%;
+    display: block;
+}
+.gnode .rich-dd-btn:hover {
+    background: color-mix(in oklab, var(--nt) 6%, transparent);
+    outline-color: color-mix(in oklab, var(--nt) 22%, var(--line));
+}
+.gnode .rich-dd-btn:focus {
+    background: var(--bg);
+    outline-color: color-mix(in oklab, var(--nt) 50%, var(--line));
+}
+/* full-width, left-aligned variant — a picker sitting alone on its own row (aggregate fold, kind
+   picker). A picker sharing a row with other controls (the toast element picker's button bar)
+   skips this and sizes itself instead. */
+.rich-dd-btn.rich-dd-block { width: 100%; justify-content: flex-start; text-align: left; }
+
+/* The popover rich-dd-btn opens (rich_picker.js). Builds on the sv-combo-pop/-list/-opt shell in
+   overlays.css (shared with the plain searchable add-combo, combo_popover.js) — loaded first, so
+   this file only adds what the RICH picker needs on top: group headers, a wider panel with
+   two-line (label + meta) rows instead of the add-combo's single-line clip, and a pinned hint
+   area below the scrollable list. */
+.rich-pick-pop { max-width: 420px; }
+.sv-combo-group {
+    padding: 5px 0px 2px;
+    margin: 4px 8px 0px 8px;
+    font-size: var(--fs-xs);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+}
+.rich-pick-opt { display: flex; flex-direction: column; gap: 1px; white-space: normal;
+    overflow: visible; text-overflow: clip; }
+.rich-pick-lbl { color: var(--text); }
+.rich-pick-opt.sel .rich-pick-lbl::before { content: "\203a  "; color: var(--accent); }   /* current selection marker */
+.sv-combo-meta { font-size: var(--fs-xs); color: var(--muted); white-space: normal; }
+/* a fixed area below the scrollable option list (richPickerPop's optional `hint`) — stays pinned
+   while the list above it scrolls, e.g. a syntax legend for the toast token picker. */
+.sv-combo-hint { padding: 5px 8px 3px; border-top: 1px solid var(--float-line); font-size: 10px;
+    line-height: 1.4; color: var(--muted); }
+.sv-combo-hint code { font-size: 10px; padding: 0 2px; border-radius: 3px;
+    background: color-mix(in srgb, currentColor 12%, transparent); }
+/* meta badges on a picker row — e.g. the toast element picker's anchor/match/cond chips (see
+   toast_node.js elemOptMeta). .tn-opt-cond accents a flag worth calling out (disable_if_empty /
+   disable_if_anchor_disabled — the two that silently collapse a toast element). */
+.tn-opt-badge { display: inline-block; font-size: var(--fs-xs); padding: 0 4px; margin: 1px 3px 0 0;
+    border: 1px solid var(--line); border-radius: 3px; color: var(--muted); }
+.tn-opt-badge.tn-opt-cond { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 45%, var(--line)); }

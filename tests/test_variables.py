@@ -88,8 +88,9 @@ def test_disabled_readout_skipped():
 
 def _runner(readout, when, arg, tid="low"):
     gid = f"{tid}_g"
-    trig = TriggerDef(id=tid, kind="on_readout", readout_watch=[readout], gates=[gid])
-    gate = GateDef(id=gid, source=f"readout:{readout}", conds=[GateCond(when=when, arg=str(arg))])
+    trig = TriggerDef(id=tid, kind="on_readout", readout_watch=[readout])
+    gate = GateDef(id=gid, source=f"readout:{readout}", targets=[tid],
+                   conds=[GateCond(when=when, arg=str(arg))])
     p = GameProfile(name="g", windows=[WindowDef(id="w")], triggers=[trig], gates=[gate])
     return TriggerRunner(p, tempfile.gettempdir())
 

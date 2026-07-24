@@ -4630,7 +4630,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - wf_market_live
   enabled: true
@@ -4650,10 +4649,6 @@ triggers:
   readout_watch: []
   register_watch:
   - value_ab_register
-  gates:
-  - gate_value_ab_1
-  - gate_notwf_ab_1
-  - gate_nonblank_ab_1
   targets:
   - ab_sound_1
   enabled: true
@@ -4674,10 +4669,6 @@ triggers:
   readout_watch: []
   register_watch:
   - value_ab_register
-  gates:
-  - gate_value_ab_2
-  - gate_notwf_ab_2
-  - gate_nonblank_ab_2
   targets:
   - ab_sound_2
   enabled: true
@@ -4698,10 +4689,6 @@ triggers:
   readout_watch: []
   register_watch:
   - value_ab_register
-  gates:
-  - gate_value_ab_3
-  - gate_notwf_ab_3
-  - gate_nonblank_ab_3
   targets:
   - ab_sound_3
   enabled: true
@@ -4722,10 +4709,6 @@ triggers:
   readout_watch: []
   register_watch:
   - value_ab_register
-  gates:
-  - gate_value_ab_4
-  - gate_notwf_ab_4
-  - gate_nonblank_ab_4
   targets:
   - ab_sound_4
   enabled: true
@@ -4746,7 +4729,6 @@ triggers:
   - relic_rewards_limit
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_2
   - relic_sound
@@ -4766,7 +4748,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_mod_general
   enabled: true
@@ -4790,7 +4771,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_mod_general
   enabled: true
@@ -4814,7 +4794,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_mod_general
   enabled: true
@@ -4838,7 +4817,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_mod_general
   enabled: true
@@ -4862,7 +4840,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_mod_general
   enabled: true
@@ -4886,7 +4863,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_mod_general
   enabled: true
@@ -4910,7 +4886,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_mod_general
   enabled: true
@@ -4934,7 +4909,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_mod_general
   enabled: true
@@ -4958,7 +4932,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_mod_general
   enabled: true
@@ -4982,7 +4955,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets:
   - toast_mod_aura
   enabled: true
@@ -5006,7 +4978,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets: []
   enabled: true
   throttle_ms: 500.0
@@ -5029,7 +5000,6 @@ triggers:
   watch: []
   readout_watch: []
   register_watch: []
-  gates: []
   targets: []
   enabled: true
   throttle_ms: 500.0
@@ -5053,8 +5023,6 @@ triggers:
   - top_picks_for_relics
   readout_watch: []
   register_watch: []
-  gates:
-  - gate_best_relic_change
   targets:
   - toast_best_relic
   enabled: true
@@ -5077,8 +5045,6 @@ triggers:
   - top_picks_for_relics
   readout_watch: []
   register_watch: []
-  gates:
-  - gate_best_relic_change
   targets:
   - toast_best_relic
   enabled: true
@@ -5103,6 +5069,8 @@ gates:
   logic: or
   negate: false
   enabled: true
+  targets:
+  - trigger_ab_1
 - id: gate_value_ab_2
   source: register:value_ab_register#value_ab_2
   conds:
@@ -5111,6 +5079,8 @@ gates:
   logic: or
   negate: false
   enabled: true
+  targets:
+  - trigger_ab_2
 - id: gate_value_ab_3
   source: register:value_ab_register#value_ab_3
   conds:
@@ -5119,6 +5089,8 @@ gates:
   logic: or
   negate: false
   enabled: true
+  targets:
+  - trigger_ab_3
 - id: gate_value_ab_4
   source: register:value_ab_register#value_ab_4
   conds:
@@ -5127,6 +5099,8 @@ gates:
   logic: or
   negate: false
   enabled: true
+  targets:
+  - trigger_ab_4
 - id: gate_notwf_ab_2
   source: register:warframe_name_live_register#warframe_name_live
   conds:
@@ -5139,6 +5113,8 @@ gates:
   logic: or
   negate: true
   enabled: true
+  targets:
+  - trigger_ab_2
 - id: gate_notwf_ab_3
   source: readout:value_ab_3
   conds:
@@ -5147,6 +5123,8 @@ gates:
   logic: or
   negate: true
   enabled: true
+  targets:
+  - trigger_ab_3
 - id: gate_notwf_ab_4
   source: register:value_ab_register#value_ab_4
   conds:
@@ -5155,6 +5133,8 @@ gates:
   logic: or
   negate: true
   enabled: true
+  targets:
+  - trigger_ab_4
 - id: gate_notwf_ab_1
   source: register:warframe_name_live_register#warframe_name_live
   conds:
@@ -5163,6 +5143,8 @@ gates:
   logic: or
   negate: true
   enabled: true
+  targets:
+  - trigger_ab_1
 - id: gate_nonblank_ab_2
   source: register:value_ab_register#value_ab_2@nonblank
   conds:
@@ -5171,6 +5153,8 @@ gates:
   logic: or
   negate: false
   enabled: true
+  targets:
+  - trigger_ab_2
 - id: gate_nonblank_ab_1
   source: register:value_ab_register#value_ab_1@nonblank
   conds:
@@ -5179,6 +5163,8 @@ gates:
   logic: or
   negate: false
   enabled: true
+  targets:
+  - trigger_ab_1
 - id: gate_nonblank_ab_3
   source: register:value_ab_register#value_ab_3@nonblank
   conds:
@@ -5187,6 +5173,8 @@ gates:
   logic: or
   negate: false
   enabled: true
+  targets:
+  - trigger_ab_3
 - id: gate_nonblank_ab_4
   source: register:value_ab_register#value_ab_4@nonblank
   conds:
@@ -5195,6 +5183,8 @@ gates:
   logic: or
   negate: false
   enabled: true
+  targets:
+  - trigger_ab_4
 - id: gate_best_relic_change
   source: subset:top_picks_for_relics
   conds:
@@ -5203,6 +5193,9 @@ gates:
   logic: or
   negate: false
   enabled: true
+  targets:
+  - toast_when_terminator
+  - toast_when_scrolled
 routers: []
 toasts:
 - id: toast_2
@@ -5223,7 +5216,7 @@ toasts:
     angle: 90
     unit: pct
     texts:
-    - content: ' '
+    - content: '{{subset:relic_rewards_with_price.name[0]}}'
       x: 3
       y: 5
       size: 18
@@ -5234,7 +5227,7 @@ toasts:
       bg_color: ''
       wrap: true
       overflow: false
-      disable_if_empty: true
+      disable_if_empty: false
       disable_if_anchor_disabled: false
       match_w: image
       match_h: ''
@@ -6041,8 +6034,8 @@ layout:
       custH: true
       softH: true
     sub:relic_rewards_limit:
-      x: -80.0
-      y: -5400.0
+      x: -100.0
+      y: -5160.0
       w: 360.0
       h: 260.0
       collapsed: false
@@ -6464,8 +6457,8 @@ layout:
       custH: true
       softH: true
     sound:relic_sound:
-      x: 340.0
-      y: -6560.0
+      x: 320.0
+      y: -6320.0
       w: 360.0
       h: 160.0
       collapsed: false
@@ -6492,8 +6485,8 @@ layout:
       custH: false
       softW: true
     toast:toast_2:
-      x: 340.0
-      y: -6360.0
+      x: 320.0
+      y: -6120.0
       w: 700.0
       h: 1380.0
       collapsed: false
@@ -6502,8 +6495,8 @@ layout:
       softW: true
       softH: true
     sub:relic_rewards_with_price:
-      x: -80.0
-      y: -6340.0
+      x: -100.0
+      y: -6100.0
       w: 360.0
       h: 900.0
       collapsed: false
@@ -7669,7 +7662,7 @@ layout:
       x: -3100.0
       y: -4340.0
       w: 240.0
-      h: 434.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true
@@ -7794,18 +7787,14 @@ layout:
       y: -1640.0
       collapsed: false
     trigger:on_new_relics_offered:
-      x: -80.0
-      y: -6560.0
+      x: -100.0
+      y: -6320.0
       w: 360.0
       h: 192.0
       collapsed: false
       custW: true
       custH: false
       softW: true
-    prochist:process_value_ab:
-      x: -3420.0
-      y: -5260.0
-      collapsed: false
     prev:equipment_window:
       x: -1740.0
       y: -760.0
@@ -8926,7 +8915,6 @@ layout:
     - reghist:value_ab_register
     - register:warframe_name_live_register
     - process:process_warframe_name_live
-    - prochist:process_value_ab
     outline:
       color: '#5aa9e6'
       style: none
@@ -9616,7 +9604,6 @@ layout:
   - rohist:live_game_window:value_ab_4
   - reghist:value_ab_register
   - vt:ds:prices_live
-  - prochist:process_value_ab
   - prev:equipment_window
   - inlog:click_slot_5
   - gamehist

@@ -29,24 +29,9 @@
     overflow: hidden; text-overflow: ellipsis; }
 .sv-combo-opt:hover, .sv-combo-opt.hl { background: var(--accent-bg); }
 .sv-combo-empty { padding: 5px 8px; color: var(--muted); font-style: italic; }
-/* a fixed area below the scrollable option list (richPickerPop's optional `hint`) — stays pinned
-   while the list above it scrolls, e.g. a syntax legend for the toast token picker. */
-.sv-combo-hint { padding: 5px 8px 3px; border-top: 1px solid var(--float-line); font-size: 10px;
-    line-height: 1.4; color: var(--muted); }
-.sv-combo-hint code { font-size: 10px; padding: 0 2px; border-radius: 3px;
-    background: color-mix(in srgb, currentColor 12%, transparent); }
-/* the rich picker (js/graph/rich_picker.js) — a fixed, no-search browse list built on the
-   sv-combo-* shell above, used by the register aggregate fold and the live feed-session dropdown.
-   Wider than the add-combo (meta lines run long) and its rows wrap to two lines (label + meta)
-   instead of the add-combo's single-line clip. */
-.rich-pick-pop { max-width: 420px; }
-.sv-combo-group { padding: 5px 8px 2px; font-size: var(--fs-xs); letter-spacing: .04em;
-    text-transform: uppercase; color: var(--muted); }
-.rich-pick-opt { display: flex; flex-direction: column; gap: 1px; white-space: normal;
-    overflow: visible; text-overflow: clip; }
-.rich-pick-lbl { color: var(--text); }
-.rich-pick-opt.sel .rich-pick-lbl::before { content: "\203a  "; color: var(--accent); }   /* current selection marker */
-.sv-combo-meta { font-size: var(--fs-xs); color: var(--muted); white-space: normal; }
+/* rich_picker.js (register aggregate fold, trigger/gate kind picker, toast element picker, ...)
+   builds on this shell too (group headers, per-row meta, a pinned hint) — that styling lives in
+   rich_dropdown.css alongside its trigger-button class, not here. */
 
 /* modals */
 .modal-backdrop {

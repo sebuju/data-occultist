@@ -260,7 +260,7 @@ export function triggerParts(t, model) {
     // kind: a grouped rich popover (rich_picker.js), same shape as the register aggregate fold —
     // native <option title> tooltips don't render cross-browser, so each kind's meaning is shown
     // as a meta line while browsing (io_wire.js wires the click -> KIND_GROUPS/KIND_DESC -> pick).
-    const kindBtn = h("button", { class: "gi tg-kind-btn", type: "button", title: KIND_DESC[kind] || "" },
+    const kindBtn = h("button", { class: "gi tg-kind-btn rich-dd-btn rich-dd-block", type: "button", title: KIND_DESC[kind] || "" },
         `<${kindLabel(kind)}>`);
 
     return {

@@ -299,11 +299,12 @@ a.node.win:hover { border-color: var(--accent); }
     color: var(--muted); font-size: 11px; margin: 0; }
 .gn-slide-lbl { white-space: nowrap; }
 .gnode.node-disabled { filter: grayscale(1); }
-/* 'gated off' — a trigger currently BLOCKED by its gates while live is running (see activity.js).
-   Deliberately NOT grayscale (that is reserved for node-disabled): the node keeps its colour, dims
-   a little, and gains a dashed ring so it reads as "temporarily silenced", not "turned off". Uses
-   --danger to match the gate -> trigger line tint's blocked colour (routing.js gateStateColor).
-   Uses outline (selection uses border-color + box-shadow, so the two never clash). */
+/* 'gated off' — a node (trigger or any other gated kind) currently BLOCKED by a gate while live is
+   running (see activity.js). Deliberately NOT grayscale (that is reserved for node-disabled): the
+   node keeps its colour, dims a little, and gains a dashed ring so it reads as "temporarily
+   silenced", not "turned off". Uses --danger to match the gate -> target line tint's blocked
+   colour (routing.js gateStateColor). Uses outline (selection uses border-color + box-shadow, so
+   the two never clash). */
 .gnode.node-gated { outline: 2px dashed var(--danger) 70%, transparent; outline-offset: 2px; }
 
 /* item-template preview diagnostics */

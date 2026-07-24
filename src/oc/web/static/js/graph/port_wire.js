@@ -100,14 +100,16 @@ function outPortSpec(n) {
         };
         case "trigger": return {
             // a trigger fires a PRODUCER (sweep), FILE SOURCE (read), TOAST (notify), SOUND (play),
-            // ACTION (dataset op), or ROUTER (branch) — and a GATE it must satisfy before firing
+            // ACTION (dataset op), or ROUTER (branch). Whether a gate must be satisfied first is
+            // wired from the GATE's own out-port (model.addGateTarget), not from here.
             target: ["producer", "filesource", "toast", "sound", "action", "router"],
             onDrop: (pid) => model.addTriggerTarget(n.ref.id, pid),
         };
         case "gate": return {
-            // a gate gates the TRIGGER(s) wired to it — it permits/blocks, never fires anything itself
-            target: ["trigger"],
-            onDrop: (tid) => model.addTriggerGate(tid, n.ref.id),
+            // a gate gates whatever's wired to its out-port — trigger or any other gated kind — it
+            // permits/blocks, never fires anything itself. The gate owns the link (model.gateTargets).
+            target: ["trigger", "producer", "filesource", "toast", "sound", "action", "router"],
+            onDrop: (tid) => model.addGateTarget(n.ref.id, tid),
         };
         case "router": return {
             // a router fires its matching branch's targets. A body drop adds to the LAST branch (a

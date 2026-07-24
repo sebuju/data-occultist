@@ -462,7 +462,8 @@ function drawEdges() {
 // the gate PASSES (line tinted ok/green), `false` = it BLOCKS (danger/red). A gate ABSENT from the
 // map (live off, or the gate disabled) leaves its line grey — no live decision to show.
 let gateStates = new Map();
-// The colour a gate -> trigger line takes from its gate's live decision. Grey when unknown.
+// The colour a gate -> target line takes from its gate's live decision (target = trigger or any
+// other gated kind — the endpoint kind doesn't matter here). Grey when unknown.
 function gateStateColor(l) {
     const gk = l.aId.startsWith("gate:") ? l.aId : l.bId.startsWith("gate:") ? l.bId : null;
     const st = gk ? gateStates.get(gk.slice(5)) : undefined;
@@ -520,7 +521,7 @@ function applyEdgeStyle(rec, l, dis, anySel, selCol) {
     const cs = new Set(l.cls.split(" "));
     const sel = cs.has("sel"), stale = !!l._stale;
     const isFlow = cs.has("flow"), isWatch = cs.has("watch"), isWire = cs.has("wire");
-    // A gate -> trigger line carries no flow blob: it's tinted ok/danger by the gate's live pass/
+    // A gate -> target line carries no flow blob: it's tinted ok/danger by the gate's live pass/
     // block (grey when live is off), and drawn dashed to read as a guard, not a data path.
     const isGate = cs.has("gate");
     // Corridor debug tint on: recolour by WHICH router placed the line, so the wires read against the
@@ -1022,7 +1023,7 @@ export async function routesSettled(maxMs = 4000, quietMs = 250) {
     }
 }
 
-// Push the live per-gate pass/block map (id -> holds); repaint so gate->trigger lines re-tint.
+// Push the live per-gate pass/block map (id -> holds); repaint so gate->target lines re-tint.
 // The caller (activity beat) gates this on an actual change so a steady beat never repaints.
 export function setGateStates(m) { gateStates = m instanceof Map ? m : new Map(Object.entries(m || {})); requestEdges(); }
 

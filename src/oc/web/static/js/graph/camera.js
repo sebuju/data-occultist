@@ -9,6 +9,7 @@ import { nmUpdateViewport } from "./panels/nodemap.js";
 import { redrawNow } from "./edgecanvas.js";
 import { renderNavArrows, navArrowsActive } from "./navarrow.js";
 import { GRID } from "./dragresize.js";
+import { comboOpen } from "./combo_popover.js";
 
 // Minimum on-screen gap between snap-grid dots. When zoom would pack them tighter than this, the
 // spacing coarsens to a larger multiple of the world grid (sparse dots when zoomed out).
@@ -334,6 +335,10 @@ let zoomRaf = null;   // one paint-side update per frame across a wheel-tick bur
 export function onWheel(ev) {
     // Ctrl/Cmd+wheel belongs to the browser (page zoom) — don't hijack it or preventDefault.
     if (ev.ctrlKey || ev.metaKey) return;
+    // a rich/combo dropdown is open — its body-level panel is pinned at its open-time position, so
+    // zooming out from under it (moving the anchor node) would strand it. Skip the zoom; the wheel
+    // is a no-op over the node here (nothing to scroll).
+    if (comboOpen()) return;
     // anything scrollable under the cursor (preview/batches scrollhost, overflowing tables/lists)
     // scrolls its own content; everywhere else the wheel zooms the canvas
     if (scrollableUnder(ev.target)) return;

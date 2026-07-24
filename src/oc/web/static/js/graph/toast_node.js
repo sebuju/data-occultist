@@ -27,6 +27,34 @@ const IMG_UNITS = [["px", "px"], ["pct", "% of image"]];
 // picker modal, occasionally hand-set in YAML) — show just its basename, not the whole path.
 const iconName = (path) => (path ? path.split(/[\\/]/).pop() : "(none)");
 
+// The element picker's label for image text element `e` at index `i` — shared by the button's
+// own collapsed label (toast_node.js) and its rich-picker popover rows (toast_wire.js), so the
+// two can never drift (rule 7: one computation, not two copies).
+export function elemOptLabel(e, i) {
+    return `${i + 1}: ${(e.content || "").trim() || "(empty)"}`;
+}
+
+// A small badge chip for the picker's meta line — plain by default, accented (`cond`) for the
+// two disable_* flags since those are what silently collapse an element (see toast_2's spacer).
+const badge = (text, cond) => h("span", { class: "tn-opt-badge" + (cond ? " tn-opt-cond" : "") }, text);
+
+// The element picker's meta line for element `e` at index `i`: its anchor target, any axis
+// match, and the disable-if-* conditions — the context that explains WHY an element renders (or
+// silently collapses) the way it does, invisible in a plain `<option>` label.
+export function elemOptMeta(e, i, texts = []) {
+    const a = e.anchor || {};
+    const to = (a.to ?? "").toString().trim();
+    const anchorLbl = to === "" ? "↳ img" : `↳ el ${+to + 1}`;
+    const corner = a.corner || "tl", target = a.target || "tl";
+    const chips = [badge(corner === "tl" && target === "tl" ? anchorLbl : `${anchorLbl} ${corner}→${target}`)];
+    const matchLbl = (ref) => (ref === "image" ? "img" : `el ${+ref + 1}`);
+    if (e.match_w) chips.push(badge(`w=${matchLbl(e.match_w)}`));
+    if (e.match_h) chips.push(badge(`h=${matchLbl(e.match_h)}`));
+    if (e.disable_if_empty) chips.push(badge("if-empty", true));
+    if (e.disable_if_anchor_disabled) chips.push(badge("if-anchor", true));
+    return frag(...chips);
+}
+
 // Editor for one generated image (hero banner / inline body image): an enable toggle, a live
 // server-rendered preview, background (solid/gradient) + canvas size, and a list of positioned
 // text lines (content + x/y + size + colour + align). `which` is "hero" | "inline"; every control
@@ -156,10 +184,8 @@ function imageEditor(im, idx, sel) {
             // element. Clicking a box on the preview selects too — the dropdown just mirrors/jumps.
             h("div", { class: "tn-il-bar" },
                 texts.length
-                    ? h("select", { class: "tn-il-pick", title: "select an element (or none to deselect)" },
-                        h("option", { value: "", selected: sel == null }, "(none)"),
-                        texts.map((t, i) => h("option", { value: i, selected: i === sel },
-                            i === sel ? `<${i + 1}: ${(t.content || "").trim() || "(empty)"}>` : `${i + 1}: ${(t.content || "").trim() || "(empty)"}`)))
+                    ? h("button", { class: "gi tn-il-pick rich-dd-btn", type: "button", title: "select an element (or none to deselect)" },
+                        `<${sel == null ? "(none)" : elemOptLabel(texts[sel], sel)}>`)
                     : null,
                 h("button", { class: "tn-img-addtext", title: "add a text element" }, PLUS()),
                 h("button", { class: "tn-img-clone", title: "clone the selected element", disabled: sel == null }, COPY())),

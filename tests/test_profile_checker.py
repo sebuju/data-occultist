@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from oc.profile.checker import check_profile
 from oc.profile.models import (
+    ActionDef,
     Box,
     DatasetDef,
     FieldDef,
@@ -14,6 +15,7 @@ from oc.profile.models import (
     ItemDef,
     ProcessDef,
     ProcessInput,
+    ProducerDef,
     RegionDef,
     RegisterDef,
     RuleThen,
@@ -44,6 +46,79 @@ def test_window_dataset_dangling():
     p = _prof(windows=[WindowDef(id="equip", dataset="missing_ds")])
     issues = check_profile(p)
     assert any(i.severity == "error" and "missing_ds" in i.msg for i in issues)
+
+
+def test_reg_ops_key_not_wired_warns_not_errs():
+    # a clone/move key is hand-typed (keyRows, reg_slots.js) -- register keys are runtime-created,
+    # so targeting one this profile doesn't statically wire is advisory, not an error.
+    p = _prof(
+        datasets=[DatasetDef(id="ds")],
+        windows=[WindowDef(
+            id="win", dataset="ds",
+            fields=[FieldDef(id="f1")],
+            regions=[RegionDef(id="r1", box={"x": 0, "y": 0, "w": 1, "h": 1}, field="f1")],
+            readouts=[{"id": "health", "field": "f1", "box": {"x": 0, "y": 0, "w": 1, "h": 1}}],
+        )],
+        registers=[RegisterDef(id="hp", sources=["readout:health"])],
+        actions=[ActionDef(id="act", sources=["register:hp"],
+                           reg_ops={"hp": {"op": "clone", "dest": "", "keys": ["mana"]}})],
+    )
+    issues = check_profile(p)
+    assert len(issues) == 1
+    assert issues[0].severity == "warn"
+    assert "mana" in issues[0].msg
+
+
+def test_reg_ops_register_dest_missing_register_errs():
+    p = _prof(
+        registers=[RegisterDef(id="hp", sources=[])],
+        actions=[ActionDef(id="act", sources=["register:hp"],
+                           reg_ops={"hp": {"op": "clone", "dest": "register:nope", "keys": []}})],
+    )
+    issues = check_profile(p)
+    assert any(i.severity == "error" and "nope" in i.msg for i in issues)
+
+
+def test_reg_ops_register_dest_self_target_errs():
+    p = _prof(
+        registers=[RegisterDef(id="hp", sources=[])],
+        actions=[ActionDef(id="act", sources=["register:hp"],
+                           reg_ops={"hp": {"op": "clone", "dest": "register:hp", "keys": []}})],
+    )
+    issues = check_profile(p)
+    assert any(i.severity == "error" and "itself" in i.msg for i in issues)
+
+
+def test_reg_ops_register_dest_valid_register_is_clean():
+    p = _prof(
+        registers=[RegisterDef(id="hp", sources=[]), RegisterDef(id="mp", sources=[])],
+        actions=[ActionDef(id="act", sources=["register:hp"],
+                           reg_ops={"hp": {"op": "clone", "dest": "register:mp", "keys": []}})],
+    )
+    assert check_profile(p) == []
+
+
+def test_reg_ops_dataset_dest_prefixed_is_clean():
+    p = _prof(
+        datasets=[DatasetDef(id="ds")],
+        registers=[RegisterDef(id="hp", sources=[])],
+        actions=[ActionDef(id="act", sources=["register:hp"],
+                           reg_ops={"hp": {"op": "clone", "dest": "dataset:ds", "keys": []}})],
+    )
+    assert check_profile(p) == []
+
+
+def test_reg_ops_bare_dest_migrates_to_dataset_prefix_before_checking():
+    # a bare (unprefixed) dest -- the only shape that existed before the register-dest feature --
+    # is coerced to "dataset:<id>" by _migrate_reg_ops on load, so it checks clean against a real
+    # dataset of that name (not flagged as pointing at a missing REGISTER, or malformed).
+    p = _prof(
+        datasets=[DatasetDef(id="ds")],
+        registers=[RegisterDef(id="hp", sources=[])],
+        actions=[ActionDef(id="act", sources=["register:hp"],
+                           reg_ops={"hp": {"op": "clone", "dest": "ds", "keys": []}})],   # bare, no prefix
+    )
+    assert check_profile(p) == []
 
 
 def test_region_field_dangling():
@@ -109,6 +184,26 @@ def test_register_slot_key_dangling_through_process_chain():
     assert len(bad) == 1
     assert "slot_typo" in bad[0].msg
     assert "reg1" in bad[0].msg
+
+
+def test_gate_targets_missing_or_ungateable():
+    p = _prof(
+        producers=[ProducerDef(id="px", dataset="items")],
+        datasets=[DatasetDef(id="items")],
+        gates=[
+            GateDef(id="g_ok", targets=["px"]),
+            GateDef(id="g_bad", targets=["no_such_target"]),
+            GateDef(id="g_ds", targets=["items"]),   # a dataset id is not a gateable kind
+        ],
+    )
+    issues = check_profile(p)
+    assert not any(i.node == "gate:g_ok" for i in issues)
+    bad = [i for i in issues if i.node == "gate:g_bad"]
+    assert len(bad) == 1
+    assert "no_such_target" in bad[0].msg
+    ds = [i for i in issues if i.node == "gate:g_ds"]
+    assert len(ds) == 1
+    assert "items" in ds[0].msg
 
 
 def test_register_source_kind_dangling():

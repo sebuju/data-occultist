@@ -67,11 +67,12 @@ export class GraphModel {
             }
         }
         this.profile.sounds = this.profile.sounds || [];   // browser-played sound nodes (trigger targets)
-        // gates (boolean guards a trigger must satisfy) + routers (branch a live value to targets)
+        // gates (boolean guards a node must satisfy) + routers (branch a live value to targets)
         this.profile.gates = this.profile.gates || [];
         for (const g of this.profile.gates) {
             g.source = g.source || ""; g.conds = g.conds || []; g.logic = g.logic || "or";
             g.negate = !!g.negate; if (g.enabled === undefined) g.enabled = true;
+            g.targets = g.targets || [];   // nodes this gate permits/blocks (trigger or any other gated kind)
         }
         this.profile.routers = this.profile.routers || [];
         for (const r of this.profile.routers) {
@@ -99,7 +100,6 @@ export class GraphModel {
             t.watch = t.watch || []; t.targets = t.targets || [];
             t.readout_watch = t.readout_watch || [];
             t.register_watch = t.register_watch || [];
-            t.gates = t.gates || [];   // value gates that must all pass for this trigger to fire
             if (t.throttle_ms === undefined) t.throttle_ms = null;
             if (t.settle_ms === undefined) t.settle_ms = null;
             if (t.settle_max_ms === undefined) t.settle_max_ms = null;
@@ -111,11 +111,44 @@ export class GraphModel {
             // the server _migrate_sources, for an in-memory profile that never round-tripped).
             if (!x.sources) x.sources = (x.datasets || []).map((d) => `dataset:${d}`);
             delete x.datasets;
-            x.slots = x.slots || {};   // register id -> targeted readout keys (absent/[] = all)
+            x.slots = x.slots || {};   // LEGACY: register id -> targeted readout keys, see reg_ops below
             x.action = x.action || ""; x.dest = x.dest || ""; if (x.enabled == null) x.enabled = true;
             if (x.delay_ms == null) x.delay_ms = 0;        // wait this long after being fired
             if (x.repeat == null) x.repeat = 1;            // how many times to cue sound sources
             if (x.repeat_ms == null) x.repeat_ms = 300;    // gap between those cues
+            x.reg_ops = x.reg_ops || {};   // register id -> its OWN op, independent of the shared action/dest above
+            // a register has no batch grouping, so an old dataset-shaped clone_batches/clone_resolved
+            // (likewise move_*) op always behaved identically for it — always normalize to plain
+            // clone/move, not just on a freshly-folded entry below (an existing reg_ops can carry the
+            // old value directly, e.g. saved before this collapse). dest is similarly always coerced
+            // to a prefixed "dataset:<id>"/"register:<id>" ref (twin of the server _migrate_reg_ops):
+            // before a register's dest could be another register too, EVERY dest was a bare dataset id.
+            for (const op of Object.values(x.reg_ops)) {
+                if (GraphModel.REG_OP_ALIAS[op.op]) op.op = GraphModel.REG_OP_ALIAS[op.op];
+                if (op.dest && !/^(dataset|register):/.test(op.dest)) op.dest = `dataset:${op.dest}`;
+            }
+            // twin of the server _migrate_reg_ops: fold the legacy SHARED action/slots/dest into a
+            // per-register op for any register: source lacking one yet (an in-memory profile that
+            // never round-tripped through the backend). Narrowed legacy clear (slots[rid] non-empty)
+            // becomes a `set` op with a remove row per targeted key (the per-row remove toggle IS
+            // that narrowed-clear now); an unnarrowed clear becomes remove_all; clone/move map
+            // straight across, slots -> keys.
+            if (["clear", "clone_batches", "clone_resolved", "move_batches", "move_resolved"].includes(x.action)) {
+                for (const ref of x.sources) {
+                    const i = ref.indexOf(":");
+                    const kind = i < 0 ? "" : ref.slice(0, i), rid = i < 0 ? ref : ref.slice(i + 1);
+                    if (kind !== "register" || x.reg_ops[rid]) continue;
+                    const narrowed = x.slots[rid] || [];
+                    if (x.action === "clear") {
+                        x.reg_ops[rid] = narrowed.length
+                            ? { op: "set", dest: "", keys: [], writes: narrowed.map((k) => ({ key: k, value: "", remove: true })) }
+                            : { op: "remove_all", dest: "", keys: [], writes: [] };
+                    } else {
+                        x.reg_ops[rid] = { op: GraphModel.REG_OP_ALIAS[x.action] || x.action,
+                            dest: x.dest ? `dataset:${x.dest}` : "", keys: narrowed, writes: [] };
+                    }
+                }
+            }
         }
         this.profile.registers = this.profile.registers || [];
         for (const r of this.profile.registers) {
@@ -311,7 +344,7 @@ export class GraphModel {
         bareList(["dataset"], this.profile.producers, (p) => p.sources);                                   // priced-item sources
         bareList(["dataset", "subset"], this.profile.triggers, (t) => t.watch);                            // on_change watch
         bareList(["producer", "action", "toast", "sound", "filesource", "router"], this.profile.triggers, (t) => t.targets);
-        bareList(["gate"], this.profile.triggers, (t) => t.gates);
+        bareList(["trigger", "producer", "filesource", "toast", "sound", "action", "router"], this.profile.gates, (g) => g.targets);
         bareList(["register"], this.profile.triggers, (t) => t.register_watch);
         bareList(["readout"], this.profile.triggers, (t) => t.readout_watch);
         bareList(["window"], this.profile.triggers, (t) => t.window_watch);                                 // on_item/on_window_*/on_scroll_* watch
@@ -403,6 +436,11 @@ export class GraphModel {
             refField(r, () => r.source, (v) => { r.source = v; });
             bareList(["producer", "action", "toast", "sound", "filesource"], r.branches, (b) => b.targets);
         }
+        // register clone/move DEST: a prefixed ref too ("dataset:<id>" | "register:<id>", never a
+        // "#key" register-slot form) — same refField dispatcher, no new per-kind code needed.
+        for (const x of this.profile.actions || [])
+            for (const rid of Object.keys(x.reg_ops || {}))
+                refField(x, () => x.reg_ops[rid].dest, (v) => { x.reg_ops[rid].dest = v; });
 
         // dict-key sites (register slots) — re-key on rename, drop on delete
         const dictSite = (kinds, owner, key) => sites.push({
@@ -411,7 +449,8 @@ export class GraphModel {
             rekey: (o, n) => { const mp = owner[key] || (owner[key] = {}); if (o in mp) { mp[n] = mp[o]; delete mp[o]; } },
             drop: (id) => { if (owner[key]) delete owner[key][id]; },
         });
-        for (const x of this.profile.actions || []) dictSite(["register"], x, "slots");
+        for (const x of this.profile.actions || []) dictSite(["register"], x, "slots");   // legacy, load-migrated only
+        for (const x of this.profile.actions || []) dictSite(["register"], x, "reg_ops");
 
         return { sites, lists };
     }
@@ -743,6 +782,7 @@ export class GraphModel {
         if (this.processNode(ref)) return `process:${ref}`;
         if (this.gateNode(ref)) return `gate:${ref}`;
         if (this.routerNode(ref)) return `router:${ref}`;
+        if (this.trigger(ref)) return `trigger:${ref}`;   // gate.targets may name a trigger
         const site = this.readoutSite(ref);
         return site ? `ro:${site.win}:${ref}` : null;
     }
@@ -806,10 +846,6 @@ export class GraphModel {
                 const to = this.refNode(pid);
                 if (to) es.push({ from: `trigger:${t.id}`, to, kind: "trigger" });
             }
-            // a gate this trigger must satisfy (trigger -> gate). The gate reads its own tested value
-            // from a readout/register (source -> gate, drawn in the gates loop below).
-            for (const gid of t.gates || [])
-                if (this.gateNode(gid)) es.push({ from: `trigger:${t.id}`, to: `gate:${gid}`, kind: "gate" });
             if (t.kind === "on_change" || t.kind === "on_any_change" || t.kind === "on_new_batch" || t.kind === "on_ready")
                 for (const w of t.watch || []) {
                     const to = this.refNode(w);
@@ -856,11 +892,17 @@ export class GraphModel {
                 for (const wid of t.window_watch || [])
                     if (this.scrollbar(wid)) es.push({ from: `trigger:${t.id}`, to: `sb:${wid}:scrollbar`, kind: "watch" });
         }
-        // a gate READS the live value it tests from a readout/register (source -> gate); the
-        // trigger(s) it gates wire IN from above (trigger -> gate).
+        // a gate READS the live value it tests from a readout/register (source -> gate) and, per
+        // its own live pass/block, PERMITS/BLOCKS every node it names in targets (gate -> target) —
+        // the single edge shape for every gated kind (trigger or otherwise), tinted ok/danger by
+        // the gate's live state (see routing.js gateStateColor).
         for (const g of this.profile.gates || []) {
             const from = this.refNode(g.source);
             if (from) es.push({ from, to: `gate:${g.id}`, kind: "data" });
+            for (const ref of g.targets || []) {
+                const to = this.refNode(ref);
+                if (to) es.push({ from: `gate:${g.id}`, to, kind: "gate" });
+            }
             // flip-history satellite: dotted "img" edge gate -> its recent-flips grid (opt-in)
             if (this.satelliteOn(`gatehist:${g.id}`)) es.push({ from: `gate:${g.id}`, to: `gatehist:${g.id}`, kind: "img" });
         }
@@ -879,13 +921,20 @@ export class GraphModel {
         }
         // an action node ACTS ON its dataset AND register sources, CUES its sound sources and FIRES
         // its chained action sources (all control, hence kind "trigger"), and WRITES into its
-        // clone/move destination dataset (action -> dest, the only data edge here).
+        // clone/move destination(s) (action -> dest, the only data edges here) — the shared dest for
+        // a DATASET target (always a dataset), and each register target's OWN dest (reg_ops) besides
+        // (a prefixed ref, dataset OR another register — refNode resolves either directly).
         for (const x of this.profile.actions || []) {
             for (const s of this.actionSources(x.id)) {
                 const to = this.refNode(s.ref);   // ds: / register: / sound: / action:
                 if (to) es.push({ from: `action:${x.id}`, to, kind: "trigger" });
             }
             if (x.dest && (x.action || "").match(/^(clone|move)_/)) es.push({ from: `action:${x.id}`, to: `ds:${x.dest}`, kind: "data" });
+            for (const o of Object.values(x.reg_ops || {})) {
+                if (!o.dest || (o.op !== "clone" && o.op !== "move")) continue;
+                const to = this.refNode(o.dest);
+                if (to) es.push({ from: `action:${x.id}`, to, kind: "data" });
+            }
             // run-history satellite: dotted "img" edge action -> its recent-runs grid (opt-in)
             if (this.satelliteOn(`acthist:${x.id}`)) es.push({ from: `action:${x.id}`, to: `acthist:${x.id}`, kind: "img" });
         }
@@ -1121,14 +1170,17 @@ export class GraphModel {
         this.profile.triggers = this.profile.triggers || [];
         let n = 1, id = "trigger";
         while (this.trigger(id)) id = `trigger_${++n}`;
-        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], register_watch: [], gates: [], throttle_ms: null, settle_ms: null, settle_max_ms: null, ready_field: "", window_watch: [], item_watch: "" });
+        this.profile.triggers.push({ id, kind, interval_s: 300, watch: [], targets: [], enabled: true, readout_watch: [], register_watch: [], throttle_ms: null, settle_ms: null, settle_max_ms: null, ready_field: "", window_watch: [], item_watch: "" });
         return id;
     }
-    removeTrigger(id) { this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id); }
+    removeTrigger(id) {
+        this.profile.triggers = (this.profile.triggers || []).filter((t) => t.id !== id);
+        this._unwire("trigger", id);   // prune it out of every gate.targets that named it
+    }
     renameTrigger(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.trigger(newId)) return false;
-        this.trigger(oldId).id = newId;
+        this._repoint("trigger", oldId, newId, { decl: true });   // def id + any gate.targets entry
         this._emitRename("trigger", oldId, newId);
         return true;
     }
@@ -1231,30 +1283,33 @@ export class GraphModel {
         t.item_watch = (win && this.item(win, itemId)) ? itemId : "";
     }
 
-    // ---- trigger gates: value guards that must ALL pass for the trigger to fire (see GateDef) ----
-    addTriggerGate(id, gid) {
-        const t = this.trigger(id);
-        if (!t || !gid || !this.gateNode(gid)) return false;
-        t.gates = t.gates || [];
-        if (t.gates.includes(gid)) return false;
-        t.gates.push(gid);
-        return true;
-    }
-    removeTriggerGate(id, gid) { const t = this.trigger(id); if (t) t.gates = (t.gates || []).filter((g) => g !== gid); }
-
     // ---- gate / router nodes: value guards (gate) + value branches (router) ----
     // A gate tests ONE live value (a readout, or a register slot) against an ordered condition list
-    // combined by and/or, optionally negated; a trigger lists the gates it must satisfy. A router
-    // tests one live value and, per branch (first match wins), fires that branch's targets.
+    // combined by and/or, optionally negated, and PERMITS/BLOCKS every node it names in `targets` —
+    // trigger, producer, file-source, toast, sound, action, or router. The gate OWNS this link (one
+    // source of truth); the gated node carries no back-reference. A router tests one live value and,
+    // per branch (first match wins), fires that branch's targets.
     gateNode(id) { return (this.profile.gates || []).find((g) => g.id === id) || null; }
     routerNode(id) { return (this.profile.routers || []).find((r) => r.id === id) || null; }
     gates() { return (this.profile.gates || []).map((g) => g.id); }
     routers() { return (this.profile.routers || []).map((r) => r.id); }
-    // Reverse lookups: which triggers a gate/router is wired TO (the trigger owns the ref, so the
-    // gate/router body shows its destination by scanning triggers). Editing them writes back through
-    // addTriggerGate/addTriggerTarget so there is one source of truth (the trigger).
-    gateTriggers(gid) { return (this.profile.triggers || []).filter((t) => (t.gates || []).includes(gid)).map((t) => t.id); }
     routerTriggers(rid) { return (this.profile.triggers || []).filter((t) => (t.targets || []).includes(rid)).map((t) => t.id); }
+    // Does `ref` name a node kind a gate may target? (trigger/producer/filesource/toast/sound/
+    // action/router — mirrors checker.py's gateable_ids). Used to validate addGateTarget picks.
+    _gateable(ref) {
+        return !!(this.trigger(ref) || this.producerNode(ref) || this.fileSource(ref) ||
+            this.toastNode(ref) || this.soundNode(ref) || this.actionNode(ref) || this.routerNode(ref));
+    }
+    gateTargets(gid) { const g = this.gateNode(gid); return (g && g.targets) || []; }
+    addGateTarget(gid, ref) {
+        const g = this.gateNode(gid);
+        if (!g || !ref || !this._gateable(ref)) return false;
+        g.targets = g.targets || [];
+        if (g.targets.includes(ref)) return false;
+        g.targets.push(ref);
+        return true;
+    }
+    removeGateTarget(gid, ref) { const g = this.gateNode(gid); if (g) g.targets = (g.targets || []).filter((r) => r !== ref); }
     addGate() {
         this.profile.gates = this.profile.gates || [];
         let n = 1, id = "gate";
@@ -1316,12 +1371,20 @@ export class GraphModel {
 
     // ---- action nodes: clear / clone / move a dataset's data when fired (a trigger target) ----
     static ACTION_KINDS = ["", "clear", "compact", "clone_batches", "clone_resolved", "move_batches", "move_resolved"];
+    // Per-REGISTER op (independent of the shared dataset ACTION_KINDS above). "set" writes/removes
+    // individual keys (regWriteRows); "remove_all" drops every held key; "clone" copies keys into
+    // dest keeping the register's own values, "move" also drops them — a register has no batch
+    // grouping, so there's no separate batches/resolved variant like the dataset ops have.
+    static REGISTER_OPS = ["", "set", "remove_all", "clone", "move"];
+    // old dataset-shaped op values a register op can still be carrying (pre-collapse save, or the
+    // legacy shared-action fold below) — always normalized on load, see REG_OP_ALIAS below.
+    static REG_OP_ALIAS = { clone_batches: "clone", clone_resolved: "clone", move_batches: "move", move_resolved: "move" };
     actionNode(id) { return (this.profile.actions || []).find((x) => x.id === id) || null; }
     addAction() {
         this.profile.actions = this.profile.actions || [];
         let n = 1, id = "action";
         while (this.actionNode(id)) id = `action_${++n}`;
-        this.profile.actions.push({ id, action: "", sources: [], slots: {}, dest: "",
+        this.profile.actions.push({ id, action: "", sources: [], slots: {}, dest: "", reg_ops: {},
             delay_ms: 0, repeat: 1, repeat_ms: 300, enabled: true });
         return id;
     }
@@ -1363,23 +1426,80 @@ export class GraphModel {
         const x = this.actionNode(id);
         if (!x) return;
         x.sources = (x.sources || []).filter((r) => r !== ref);
-        // dropping a register source prunes its slot targeting (orphan entry otherwise)
-        if (ref.startsWith("register:") && x.slots) delete x.slots[ref.slice("register:".length)];
-    }
-    // Targeted readout keys for one register source ([] / absent = all of that register's keys).
-    actionSlots(id, regId) { const x = this.actionNode(id); return (x && x.slots && x.slots[regId]) || []; }
-    // Narrow (or reset to "all") a register source's targeted keys. Storing [] when the set covers
-    // every wired key (or is empty) is the canonical "all" — keeps YAML clean and avoids drift.
-    setActionSlots(id, regId, keys) {
-        const x = this.actionNode(id);
-        if (!x) return;
-        x.slots = x.slots || {};
-        const uniq = [...new Set(keys || [])];
-        const all = this.registerKeys(regId);
-        if (!uniq.length || (uniq.length === all.length && all.every((k) => uniq.includes(k)))) delete x.slots[regId];
-        else x.slots[regId] = uniq;
+        // dropping a register source drops its whole op too (orphan entry otherwise)
+        if (ref.startsWith("register:") && x.reg_ops) delete x.reg_ops[ref.slice("register:".length)];
     }
     setActionDest(id, v) { const x = this.actionNode(id); if (x) x.dest = v || ""; }
+    // ---- per-register op: independent of the shared dataset action/dest above (REGISTER_OPS) ----
+    // Get-or-create one register target's op entry, defaulted so every getter below can read
+    // straight off it without a null-check chain.
+    _regOp(x, regId) {
+        x.reg_ops = x.reg_ops || {};
+        return (x.reg_ops[regId] = x.reg_ops[regId] || { op: "", dest: "", keys: [], writes: [] });
+    }
+    actionRegOp(id, regId) { const x = this.actionNode(id); return (x && x.reg_ops && x.reg_ops[regId]?.op) || ""; }
+    // Setting "" drops the whole entry (keeps YAML clean, mirrors setActionKind or a register never
+    // having had an op) — any other value creates/updates it.
+    setActionRegOp(id, regId, op) {
+        const x = this.actionNode(id);
+        if (!x || !GraphModel.REGISTER_OPS.includes(op)) return;
+        if (!op) { if (x.reg_ops) delete x.reg_ops[regId]; return; }
+        this._regOp(x, regId).op = op;
+    }
+    // dest is a PREFIXED ref ("dataset:<id>" or "register:<id>") — self-describing, no separate
+    // kind field. Every register's dest on one node still shares ONE kind (not mixed): setting a
+    // dest of a NEW kind clears every OTHER register's dest on this node first (an id from the old
+    // kind would otherwise dangle, pointing at the wrong kind of entity).
+    actionRegDest(id, regId) { const x = this.actionNode(id); return (x && x.reg_ops && x.reg_ops[regId]?.dest) || ""; }
+    setActionRegDest(id, regId, ref) {
+        const x = this.actionNode(id);
+        if (!x) return;
+        ref = ref || "";
+        const kind = ref.slice(0, ref.indexOf(":"));
+        if (kind === "dataset" || kind === "register") {
+            for (const [rid, op] of Object.entries(x.reg_ops || {})) {
+                if (rid === regId || !op.dest) continue;
+                if (op.dest.slice(0, op.dest.indexOf(":")) !== kind) op.dest = "";
+            }
+        }
+        this._regOp(x, regId).dest = ref;
+    }
+    // Targeted keys for clone/move ([] / absent = all of that register's keys) — the reg_ops
+    // analogue of the old shared `slots`, now scoped per register instead of per whole node.
+    actionRegKeys(id, regId) { const x = this.actionNode(id); return (x && x.reg_ops && x.reg_ops[regId]?.keys) || []; }
+    // Narrow (or reset to "all") a register source's targeted keys. Storing [] when the set covers
+    // every wired key (or is empty) is the canonical "all" — keeps YAML clean and avoids drift.
+    setActionRegKeys(id, regId, keys) {
+        const x = this.actionNode(id);
+        if (!x) return;
+        const uniq = [...new Set(keys || [])];
+        const all = this.registerKeys(regId);
+        const op = this._regOp(x, regId);
+        op.keys = (!uniq.length || (uniq.length === all.length && all.every((k) => uniq.includes(k)))) ? [] : uniq;
+    }
+    // Per-row edits for the clone/move key-narrowing list (hand-typed — a register's currently-wired
+    // keys are only a convenience label, not a constraint; see keyRows in reg_slots.js for why).
+    // Each builds on the whole-list setter above so its "covers every wired key -> []" canonicalization
+    // stays the single source of truth.
+    addActionRegKey(id, regId) { this.setActionRegKeys(id, regId, [...this.actionRegKeys(id, regId), ""]); }
+    removeActionRegKey(id, regId, idx) {
+        const ks = this.actionRegKeys(id, regId).slice(); ks.splice(idx, 1);
+        this.setActionRegKeys(id, regId, ks);
+    }
+    setActionRegKey(id, regId, idx, v) {
+        const ks = this.actionRegKeys(id, regId).slice();
+        if (idx < 0 || idx >= ks.length) return;
+        ks[idx] = v || "";
+        this.setActionRegKeys(id, regId, ks);
+    }
+    // ---- per-register "set values" rows: one row per key (hand-typed — register keys are runtime-
+    // created, so never a pick-list) ----
+    actionWrites(id, regId) { const x = this.actionNode(id); return (x && x.reg_ops && x.reg_ops[regId]?.writes) || []; }
+    addActionWrite(id, regId) { const x = this.actionNode(id); if (x) this._regOp(x, regId).writes.push({ key: "", value: "", remove: false }); }
+    removeActionWrite(id, regId, idx) { const x = this.actionNode(id); if (x && x.reg_ops?.[regId]) x.reg_ops[regId].writes.splice(idx, 1); }
+    setActionWriteKey(id, regId, idx, v) { const w = this.actionNode(id)?.reg_ops?.[regId]?.writes?.[idx]; if (w) w.key = v || ""; }
+    setActionWriteValue(id, regId, idx, v) { const w = this.actionNode(id)?.reg_ops?.[regId]?.writes?.[idx]; if (w) w.value = v || ""; }
+    setActionWriteRemove(id, regId, idx, on) { const w = this.actionNode(id)?.reg_ops?.[regId]?.writes?.[idx]; if (w) w.remove = !!on; }
     // Does the chain starting at `from` reach `target`? Guards addActionSource from closing a cycle
     // (a -> b -> a would cascade forever were the server not also guarding).
     _actionReaches(from, target) {
@@ -1488,6 +1608,23 @@ export class GraphModel {
             else if (s.kind === "process") keys.push(...this.processOutputKeys(s.id));
         }
         return [...new Set(keys)];
+    }
+    // registerKeys() ∪ every hand-typed key an action's "set values" op declares for this register
+    // (reg_ops[id].writes[*].key) — a manual key is never wired, so registerKeys() alone can't see
+    // it; the register node's own body renders THIS list (registerDeclaredKeys), not registerKeys,
+    // so a key an action is about to write shows up (as an empty ∅ slot) before it's ever fired.
+    registerDeclaredKeys(id) {
+        const keys = this.registerKeys(id);
+        const seen = new Set(keys);
+        for (const x of this.profile.actions || []) {
+            const op = x.reg_ops?.[id];
+            if (op?.op !== "set") continue;
+            for (const w of op.writes || []) {
+                const k = (w.key || "").trim();
+                if (k && !seen.has(k)) { seen.add(k); keys.push(k); }
+            }
+        }
+        return keys;
     }
     addRegisterSource(id, ref) {
         const x = this.registerNode(id);

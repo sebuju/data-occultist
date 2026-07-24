@@ -63,11 +63,11 @@ let actSpin = null;          // the reused first-load spinner, shown until the f
 // register id -> newest push ts last seen on the beat, so the membank repaints the instant a value
 // lands (live OR a teach-UI test feed), not only while liveCollecting. See updateTriggerNodes.
 const _lastRegPush = new Map();
-// trigger ids currently flagged 'gated off' (their .gnode carries `node-gated`) — tracked so each
-// beat only ADDS/REMOVES the class that actually changed (reconcile in place, rule 1). Live-only:
-// the snapshot's `gated` is empty when the collector is idle, which clears every cue.
+// prefixed graph-node ids currently flagged 'gated off' (their .gnode carries `node-gated`) —
+// tracked so each beat only ADDS/REMOVES the class that actually changed (reconcile in place, rule
+// 1). Live-only: the snapshot's `gated` is empty when the collector is idle, which clears every cue.
 let _gatedNodes = new Set();
-// last-pushed gate pass/block signature — the gate->trigger line tints ride the beat too, but a
+// last-pushed gate pass/block signature — the gate->target line tints ride the beat too, but a
 // canvas repaint only fires when a gate actually flips (rule 1: a steady beat repaints nothing).
 let _gateSig = "";
 
@@ -289,14 +289,16 @@ function playFire(ev) {
 // ticks). Timed kinds show a live "idle (next in: …)"; an on_readout crosses shows the saved
 // value it compares against; every other kind shows plain idle / firing now.
 function updateTriggerNodes(data) {
-    // 'gated off' cue: flag every trigger node whose gates currently block it (live-only; the
-    // snapshot's `gated` is empty when idle -> clears all). Reconcile via the tracked set so a
-    // steady beat writes ZERO classes (rule 1): only a gate flipping adds/removes its node's class.
+    // 'gated off' cue: flag every node (trigger or any other gated kind) currently blocked by a
+    // gate (live-only; the snapshot's `gated` is empty when idle -> clears all). Server sends
+    // already-prefixed graph node ids (see TriggerRunner.gated_ids), so this stays dumb. Reconcile
+    // via the tracked set so a steady beat writes ZERO classes (rule 1): only a gate flipping
+    // adds/removes its node's class.
     const gatedSet = new Set(data.gated || []);
-    for (const id of _gatedNodes) if (!gatedSet.has(id)) nodeEls.get(`trigger:${id}`)?.classList.remove("node-gated");
-    for (const id of gatedSet) if (!_gatedNodes.has(id)) nodeEls.get(`trigger:${id}`)?.classList.add("node-gated");
+    for (const id of _gatedNodes) if (!gatedSet.has(id)) nodeEls.get(id)?.classList.remove("node-gated");
+    for (const id of gatedSet) if (!_gatedNodes.has(id)) nodeEls.get(id)?.classList.add("node-gated");
     _gatedNodes = gatedSet;
-    // gate->trigger line tint: push the per-gate pass/block only when it actually changed, so a
+    // gate->target line tint: push the per-gate pass/block only when it actually changed, so a
     // steady beat triggers no canvas repaint (rule 1). Empty when idle -> lines fall back to grey.
     const gs = data.gate_states || {};
     const sig = Object.keys(gs).sort().map((k) => k + (gs[k] ? "1" : "0")).join(",");

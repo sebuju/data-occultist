@@ -592,16 +592,17 @@ def test_on_ready_honours_throttle(tmp_path):
 
 def _register_profile(watch, gates=(), **trig):
     """``watch`` = register ids the trigger watches (the pulse). ``gates`` = list of dicts
-    ``{id, source, conds:[(when, arg), ...], logic?, negate?}`` — the value predicate(s)."""
+    ``{id, source, conds:[(when, arg), ...], logic?, negate?}`` — the value predicate(s), each
+    wired to gate the ``regwatch`` trigger via its own ``targets``."""
     gdefs = [GateDef(id=g["id"], source=g["source"], logic=g.get("logic", "or"),
-                     negate=g.get("negate", False),
+                     negate=g.get("negate", False), targets=["regwatch"],
                      conds=[GateCond(when=w, arg=str(a)) for w, a in g["conds"]]) for g in gates]
     return GameProfile(
         name="g",
         producers=[ProducerDef(id="px", dataset="prices", mode="orders", sources=["inv"])],
         gates=gdefs,
         triggers=[TriggerDef(id="regwatch", kind="on_register", targets=["px"],
-                             register_watch=watch, gates=[g["id"] for g in gates], **trig)],
+                             register_watch=watch, **trig)],
     )
 
 

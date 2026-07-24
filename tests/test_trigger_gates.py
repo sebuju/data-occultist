@@ -1,7 +1,8 @@
-"""Gates (a trigger's value predicate, lifted into reusable nodes) + routers (fan-out by a live
-value). The trigger's kind supplies the PULSE; a gate supplies the LEVEL; fire = pulse AND every
-gate holds. A router forwards a fire to the first branch whose conds hold. All evaluated server-side
-against the runner's live caches — no game knowledge. See TriggerRunner._gates_pass / _resolve_fire.
+"""Gates (a boolean predicate wired to the node(s) it permits/blocks via GateDef.targets) + routers
+(fan-out by a live value). A gated trigger's kind supplies the PULSE; a gate supplies the LEVEL;
+fire = pulse AND every gate naming this trigger holds. A router forwards a fire to the first branch
+whose conds hold. All evaluated server-side against the runner's live caches — no game knowledge.
+See TriggerRunner._gates_pass / _node_gated / _resolve_fire.
 """
 
 import tempfile
@@ -19,8 +20,8 @@ def _runner(profile):
     return TriggerRunner(profile, tempfile.gettempdir(), clock=lambda: 0.0)
 
 
-def _gate(gid, source, *conds, logic="or", negate=False):
-    return GateDef(id=gid, source=source, logic=logic, negate=negate,
+def _gate(gid, source, *conds, logic="or", negate=False, targets=()):
+    return GateDef(id=gid, source=source, logic=logic, negate=negate, targets=list(targets),
                    conds=[GateCond(when=w, arg=str(a)) for w, a in conds])
 
 
@@ -54,12 +55,17 @@ def test_cond_holds_numeric_text_and_edge():
     assert not tr._cond_holds(C(when="changed", arg=""), 8, 8)     # static
 
 
-# ---- _gates_pass: allow / block / and / or / missing ---------------------------------------------
+# ---- _gates_pass: allow / block / and / or / no controlling gate ---------------------------------
 
-def _gp(gates, trig_gates, snapshot):
+def _gp(gates, gate_ids_targeting_t, snapshot):
+    """Build a trigger "t" gated by whichever of `gates` has its id listed in
+    `gate_ids_targeting_t` (mirrors the old TriggerDef.gates call shape for these tests, but the
+    link is now expressed as GateDef.targets)."""
+    for g in gates:
+        if g.id in gate_ids_targeting_t:
+            g.targets = list(g.targets) + ["t"]
     prof = GameProfile(name="g", gates=gates,
-                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"],
-                                            gates=trig_gates)])
+                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"])])
     tr = _runner(prof)
     tr.set_registers(snapshot)
     return tr._gates_pass(prof.triggers[0])
@@ -78,7 +84,7 @@ def test_gates_pass_block_list_negate():
 
 
 def test_gates_pass_and_across_gates():
-    # multiple gates on a trigger AND together
+    # multiple gates targeting a trigger AND together
     ga = _gate("ga", "register:r#a", ("lt", "3"))
     gb = _gate("gb", "register:r#b", ("lt", "3"))
     assert _gp([ga, gb], ["ga", "gb"], {"r": {"a": 2, "b": 2}})
@@ -93,8 +99,8 @@ def test_gate_internal_or_and_logic():
     assert not _gp([g_and], ["ga"], {"r": {"a": 10}})   # fails the lt cond
 
 
-def test_missing_or_disabled_gate_passes():
-    assert _gp([], ["ghost"], {})                                    # dangling ref -> pass (never wedge)
+def test_no_controlling_gate_or_disabled_gate_passes():
+    assert _gp([], ["ghost"], {})                                    # no gate names "t" -> pass
     g = _gate("gd", "register:r#a", ("lt", "3"))
     g.enabled = False
     assert _gp([g], ["gd"], {"r": {"a": 99}})                        # disabled -> no-op pass
@@ -124,9 +130,9 @@ def test_source_value_resolves_count_facet():
 
 def test_gate_on_recent_value_count():
     # "gate when the key holds more than one recent value" = count at least 2, over the ring.
-    g = _gate("gc", "register:r#a@count", ("gte", "2"))
-    prof = GameProfile(name="g", gates=[g], triggers=[
-        TriggerDef(id="t", kind="on_register", register_watch=["r"], gates=["gc"])])
+    g = _gate("gc", "register:r#a@count", ("gte", "2"), targets=["t"])
+    prof = GameProfile(name="g", gates=[g],
+                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"])])
     tr = _runner(prof)
     tr.set_register_rings({"r": {"a": [4.0]}})            # one held -> blocked
     assert not tr._gates_pass(prof.triggers[0])
@@ -136,9 +142,9 @@ def test_gate_on_recent_value_count():
 
 def test_gate_on_distinct_value_count():
     # distinct counts UNIQUE non-blank values -> "the key has seen 2+ different values" (unstable).
-    g = _gate("gd", "register:r#a@distinct", ("gte", "2"))
-    prof = GameProfile(name="g", gates=[g], triggers=[
-        TriggerDef(id="t", kind="on_register", register_watch=["r"], gates=["gd"])])
+    g = _gate("gd", "register:r#a@distinct", ("gte", "2"), targets=["t"])
+    prof = GameProfile(name="g", gates=[g],
+                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"])])
     tr = _runner(prof)
     tr.set_register_rings({"r": {"a": [4.0, 4.0, 4.0]}})  # all the same -> 1 distinct -> blocked
     assert not tr._gates_pass(prof.triggers[0])
@@ -192,32 +198,62 @@ def test_disabled_sound_dropped_from_cue():
     assert tr._resolve_fire(prof.triggers[0]) == (["producer_x"], ["on"])
 
 
+def test_gated_producer_target_dropped_from_resolve_fire():
+    # a gate over a non-trigger kind (producer) blocks it at the same _resolve_fire choke point.
+    g = _gate("gb", "register:r#a", ("lt", "3"), targets=["producer_x"])
+    prof = GameProfile(
+        name="g", gates=[g],
+        triggers=[TriggerDef(id="t", kind="interval", targets=["producer_x", "bob"])],
+        sounds=[SoundDef(id="bob")],
+    )
+    tr = _runner(prof)
+    tr.set_registers({"r": {"a": 99}})     # 99 not < 3 -> gate blocks producer_x
+    assert tr._resolve_fire(prof.triggers[0]) == ([], ["bob"])
+    tr.set_registers({"r": {"a": 1}})      # 1 < 3 -> gate passes
+    assert tr._resolve_fire(prof.triggers[0]) == (["producer_x"], ["bob"])
+
+
+def test_gated_router_forwards_nothing_while_blocked():
+    g = _gate("gb", "register:r#a", ("lt", "3"), targets=["rt"])
+    prof = GameProfile(
+        name="g", gates=[g],
+        routers=[RouterDef(id="rt", source="register:r2#frame", branches=[
+            RouterBranch(conds=[], targets=["px"])])],
+        triggers=[TriggerDef(id="t", kind="interval", targets=["rt"])],
+    )
+    tr = _runner(prof)
+    tr.set_registers({"r": {"a": 99}, "r2": {"frame": "x"}})   # gate blocks the router
+    assert tr._resolve_fire(prof.triggers[0]) == ([], [])
+    tr.set_registers({"r": {"a": 1}, "r2": {"frame": "x"}})    # gate passes -> router forwards
+    assert tr._resolve_fire(prof.triggers[0]) == (["px"], [])
+
+
 # ---- manual fire (via _emit_fire) bypasses gates -------------------------------------------------
 
-def test_gated_ids_reports_currently_blocked_triggers():
-    # the live 'gated off' cue: gated_ids lists enabled+gated triggers whose gates block them now.
-    g = _gate("gb", "register:r#a", ("lt", "3"))
+def test_gated_ids_reports_currently_blocked_nodes():
+    # the live 'gated off' cue: gated_ids lists prefixed node ids currently blocked by a gate.
+    g = _gate("gb", "register:r#a", ("lt", "3"), targets=["t"])
     prof = GameProfile(name="g", gates=[g], triggers=[
-        TriggerDef(id="t", kind="on_register", register_watch=["r"], gates=["gb"]),
-        TriggerDef(id="u", kind="interval"),                       # no gates -> never gated
+        TriggerDef(id="t", kind="on_register", register_watch=["r"]),
+        TriggerDef(id="u", kind="interval"),                       # no gate names it -> never gated
     ])
     tr = _runner(prof)
     tr.set_registers({"r": {"a": 99}})     # 99 not < 3 -> t is blocked
-    assert tr.gated_ids() == ["t"]
+    assert tr.gated_ids() == ["trigger:t"]
     tr.set_registers({"r": {"a": 1}})      # 1 < 3 -> t passes
     assert tr.gated_ids() == []
 
 
 def test_emit_gate_flow_only_on_flip():
-    # The source->gate data blob fires only when the decision flips; the gate->trigger hop is NOT a
+    # The source->gate data blob fires only when the decision flips; the gate->target hop is NOT a
     # blob anymore (the line is tinted ok/danger by gate_states instead), so no watch blob is emitted.
     import oc.store.flow_events as fl
     blobs = []
     off = fl.subscribe(lambda game, kind, src, dst, n: blobs.append((kind, src, dst)))
     try:
-        g = _gate("gb", "register:reg#a", ("lt", "3"))
+        g = _gate("gb", "register:reg#a", ("lt", "3"), targets=["t"])
         prof = GameProfile(name="g", gates=[g], triggers=[
-            TriggerDef(id="t", kind="on_register", register_watch=["reg"], gates=["gb"])])
+            TriggerDef(id="t", kind="on_register", register_watch=["reg"])])
         tr = _runner(prof)
         tr.set_registers({"reg": {"a": 5}})
         tr.emit_gate_flow()                     # first sight (blocked) -> seed, no blob
@@ -228,15 +264,15 @@ def test_emit_gate_flow_only_on_flip():
         tr.set_registers({"reg": {"a": 2}})
         tr.emit_gate_flow()                     # flip to pass -> data blob source->gate only
         assert ("data", "register:reg", "gate:gb") in blobs
-        assert not any(kind == "watch" for kind, *_ in blobs)   # no gate->trigger blob
+        assert not any(kind == "watch" for kind, *_ in blobs)   # no gate->target blob
     finally:
         off()
 
 
 def test_gate_states_reports_pass_block():
-    g = _gate("gb", "register:reg#a", ("lt", "3"))
+    g = _gate("gb", "register:reg#a", ("lt", "3"), targets=["t"])
     prof = GameProfile(name="g", gates=[g], triggers=[
-        TriggerDef(id="t", kind="on_register", register_watch=["reg"], gates=["gb"])])
+        TriggerDef(id="t", kind="on_register", register_watch=["reg"])])
     tr = _runner(prof)
     tr.set_registers({"reg": {"a": 5}})         # 5 not < 3 -> gate BLOCKS
     assert tr.gate_states() == {"gb": False}
@@ -249,10 +285,9 @@ def test_gate_states_reports_pass_block():
 def test_emit_fire_bypasses_gates():
     # gates are checked in _route_fire (the AUTO path); a direct _emit_fire (manual "fire now")
     # must fire regardless of a blocking gate.
-    g = _gate("gb", "register:r#a", ("lt", "3"))
+    g = _gate("gb", "register:r#a", ("lt", "3"), targets=["t"])
     prof = GameProfile(name="g", gates=[g],
-                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"],
-                                            gates=["gb"])])
+                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"])])
     fired = []
     tr = TriggerRunner(prof, tempfile.gettempdir(),
                        fire=lambda pn, items: fired.append(pn.id), clock=lambda: 0.0)
@@ -265,9 +300,9 @@ def test_emit_fire_bypasses_gates():
 
 def test_emit_gate_flow_writes_gate_history_on_flip():
     from oc.collect import gate_history
-    g = _gate("gb", "register:reg#a", ("lt", "3"))
+    g = _gate("gb", "register:reg#a", ("lt", "3"), targets=["t"])
     prof = GameProfile(name="test_gate_hist", gates=[g], triggers=[
-        TriggerDef(id="t", kind="on_register", register_watch=["reg"], gates=["gb"])])
+        TriggerDef(id="t", kind="on_register", register_watch=["reg"])])
     gate_history.clear(prof.name)
     tr = _runner(prof)
     tr.set_registers({"reg": {"a": 5}})
@@ -337,10 +372,9 @@ def test_dataset_sig_stable_across_bookkeeping_only_writes(tmp_path):
 def test_dataset_gate_changed_blocks_until_content_moves(tmp_path):
     ds = DatasetStore(tmp_path, "g", "items")
     ds.begin_batch(); ds.record_seen({"name": "Soma Prime"}); ds.save()
-    g = _gate("gd", "dataset:items", ("changed", ""))
+    g = _gate("gd", "dataset:items", ("changed", ""), targets=["t"])
     prof = GameProfile(name="g", datasets=[DatasetDef(id="items")], gates=[g],
-                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"],
-                                            gates=["gd"])])
+                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"])])
     tr = TriggerRunner(prof, tmp_path, clock=lambda: 0.0)
     # first evaluation: no baseline yet -> "changed" holds (None -> hash) -> fires, baseline set.
     assert tr._route_fire(prof.triggers[0], "auto", items=None) is True
@@ -355,10 +389,9 @@ def test_subset_gate_changed_blocks_until_visible_output_moves(tmp_path):
     ds = DatasetStore(tmp_path, "g", "items")
     ds.begin_batch(); ds.record_seen({"name": "Soma Prime", "updated": "t1"}); ds.save()
     sub = SubsetDef(id="view", sources=[JoinSource(dataset="items")], hidden_columns=["updated"])
-    g = _gate("gd", "subset:view", ("changed", ""))
+    g = _gate("gd", "subset:view", ("changed", ""), targets=["t"])
     prof = GameProfile(name="g", datasets=[DatasetDef(id="items")], subsets=[sub], gates=[g],
-                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"],
-                                            gates=["gd"])])
+                       triggers=[TriggerDef(id="t", kind="on_register", register_watch=["r"])])
     tr = TriggerRunner(prof, tmp_path, clock=lambda: 0.0)
     # first evaluation: no baseline yet -> fires, baseline set.
     assert tr._route_fire(prof.triggers[0], "auto", items=None) is True

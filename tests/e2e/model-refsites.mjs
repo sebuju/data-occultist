@@ -26,10 +26,11 @@ function build() {
         file_sources: [{ id: "src1", dataset: "ds_a", match: [], fields: [] }],
         triggers: [{ id: "trg1", kind: "on_register", targets: ["prod1", "act1"],
             watch: ["ds_a", "sub1"], readout_watch: ["ro_x"],
-            register_watch: ["reg1"], gates: ["gate1"], window_watch: ["win1"] },
+            register_watch: ["reg1"], window_watch: ["win1"] },
             { id: "trg_item", kind: "on_item", targets: [], window_watch: ["win1"], item_watch: "item1" }],
-        gates: [{ id: "gate1", source: "register:reg1#ro_x", conds: [{ when: "lt", arg: "3" }] }],
-        actions: [{ id: "act1", sources: ["dataset:ds_a", "register:reg1"], slots: { reg1: ["ro_x"] }, dest: "ds_b" }],
+        gates: [{ id: "gate1", source: "register:reg1#ro_x", conds: [{ when: "lt", arg: "3" }], targets: ["trg1"] }],
+        actions: [{ id: "act1", sources: ["dataset:ds_a", "register:reg1"], slots: { reg1: ["ro_x"] }, dest: "ds_b",
+            reg_ops: { reg1: { op: "clone", dest: "dataset:ds_b", keys: ["ro_x"], writes: [] } } }],
         registers: [{ id: "reg1", sources: ["readout:ro_x"], persist: "ds_a" }],
         toasts: [{ id: "toast1", sources: ["dataset:ds_a", "subset:sub1", "readout:ro_x"],
             title: "{{dataset:ds_a.f1|sum}} / {{dataset:ds_b}}",
@@ -56,6 +57,7 @@ const trgItem = (m) => P(m).triggers[1];
     eq(P(m).file_sources[0].dataset, "ds_z", "file-source feeder repointed");
     eq(trg(m).watch, ["ds_z", "sub1"], "trigger watch repointed (subset untouched)");
     eq(act(m).sources, ["dataset:ds_z", "register:reg1"], "action dataset source repointed, register source untouched");
+    eq(act(m).reg_ops.reg1.dest, "dataset:ds_b", "action reg_ops dest (ds_b) untouched by a ds_a rename");
     eq(reg(m).persist, "ds_z", "register persist repointed");
     eq(toast(m).sources[0], "dataset:ds_z", "toast dataset source repointed");
     eq(toast(m).title, "{{dataset:ds_z.f1|sum}} / {{dataset:ds_b}}",
@@ -74,8 +76,25 @@ const trgItem = (m) => P(m).triggers[1];
     eq(act(m).sources, ["dataset:ds_a", "register:reg9"], "action register source repointed, dataset source untouched");
     ok(act(m).slots.reg9 && !act(m).slots.reg1, "action slots dict re-keyed reg1->reg9");
     eq(act(m).slots.reg9, ["ro_x"], "action slot keys preserved across register rename");
+    ok(act(m).reg_ops.reg9 && !act(m).reg_ops.reg1, "action reg_ops dict re-keyed reg1->reg9");
+    eq(act(m).reg_ops.reg9, { op: "clone", dest: "dataset:ds_b", keys: ["ro_x"], writes: [] },
+        "action reg_ops entry preserved (op/dest/keys) across register rename");
     eq(trg(m).register_watch, ["reg9"], "trigger register_watch repointed");
     eq(gate(m).source, "register:reg9#ro_x", "gate source register repointed (#key preserved)");
+}
+
+// ---- reg_ops dest as ANOTHER REGISTER ("register:<id>") -- rename/delete of the DEST register
+// itself must repoint/blank it, same as a "dataset:<id>" dest does for a dataset ----
+{
+    const m = build();
+    // reg1 is act1's SOURCE; wire a second register "reg2" as its clone dest.
+    P(m).registers.push({ id: "reg2", sources: [] });
+    act(m).reg_ops.reg1.dest = "register:reg2";
+    ok(m.renameRegister("reg2", "reg9"), "renameRegister (dest register) returns true");
+    eq(act(m).reg_ops.reg1.dest, "register:reg9", "register-kind reg_ops dest repointed on DEST register rename");
+    eq(act(m).sources, ["dataset:ds_a", "register:reg1"], "source register ref untouched by the DEST register's rename");
+    m.removeRegister("reg9");
+    eq(act(m).reg_ops.reg1.dest, "", "register-kind reg_ops dest blanked on DEST register delete (no orphan)");
 }
 
 // ---- rename subset: subset refs move, dataset-only sites untouched ----
@@ -142,6 +161,19 @@ const trgItem = (m) => P(m).triggers[1];
     eq(trgItem(m).item_watch, "item1", "on_item's item_watch untouched by a WINDOW rename");
 }
 
+// ---- rename trigger/producer: gate.targets (the gate OWNS the link) carries + prunes ----
+{
+    const m = build();
+    eq(gate(m).targets, ["trg1"], "gate.targets seeded from fixture");
+    ok(m.renameTrigger("trg1", "trg9"), "renameTrigger returns true");
+    eq(gate(m).targets, ["trg9"], "gate.targets repointed on trigger rename");
+    m.addGateTarget("gate1", "prod1");
+    ok(m.renameProducer("prod1", "prod9"), "renameProducer returns true (2nd rename)");
+    eq(gate(m).targets, ["trg9", "prod9"], "gate.targets repointed on producer rename too");
+    m.removeTrigger("trg9");
+    eq(gate(m).targets, ["prod9"], "gate.targets pruned on trigger delete (no dangling ref)");
+}
+
 // ---- rename/delete item: on_item's item_watch tracks it (window-scoped, not the generic registry) ----
 {
     const m = build();
@@ -165,6 +197,7 @@ const trgItem = (m) => P(m).triggers[1];
     m.removeDataset("ds_b");
     eq(P(m).producers[0].dataset, "", "producer feeder blanked");
     eq(act(m).dest, "", "action dest blanked");
+    eq(act(m).reg_ops.reg1.dest, "", "action reg_ops dest blanked too (same dataset delete)");
     ok(!m.datasets().includes("ds_b"), "datasets() no longer lists ds_b");
     eq(toast(m).title, "{{dataset:ds_a.f1|sum}} / ", "toast ds_b token stripped, ds_a token untouched");
 }
@@ -182,6 +215,7 @@ const trgItem = (m) => P(m).triggers[1];
     m.removeRegister("reg1");
     eq(act(m).sources, ["dataset:ds_a"], "register source pruned (no 'register:' ghost)");
     ok(!act(m).slots.reg1, "action slot dropped");
+    ok(!act(m).reg_ops.reg1, "action reg_ops entry dropped (no orphan)");
     eq(trg(m).register_watch, [], "trigger register_watch cleared");
     eq(gate(m).source, "", "gate source register pruned (no 'register:' ghost)");
 }

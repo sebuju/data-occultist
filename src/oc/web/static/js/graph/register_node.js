@@ -353,7 +353,7 @@ export function registerParts(x, model) {
                 // browsed in a grouped rich popover (rich_picker.js) instead of a plain <select> —
                 // each mode's meaning is visible while choosing (io_wire.js wires the click -> pick).
                 (x.capacity ?? 1) > 1 && kv("aggregate",
-                    h("button", { class: "gi reg-agg-btn", type: "button",
+                    h("button", { class: "gi reg-agg-btn rich-dd-btn rich-dd-block", type: "button",
                         title: "collapse the ring to one exposed/persisted value (raw samples stay shown)" },
                         `<${aggLabel(x.aggregate || "")}>`)),
                 // per-mode tuning knob (RegisterDef.aggregate_arg) — only shown for a fold that has
@@ -367,10 +367,12 @@ export function registerParts(x, model) {
     };
 }
 
-// Ordered keys a register scaffolds a slot for, from its WIRING alone (no data): each wired readout's
-// id, plus each wired process's declared output keys. The register's own view onto the shared SSOT
-// `model.registerKeys` (rule 7) — the stable slot order both populate + the refresh fallback pin to.
-const scaffoldKeys = (id) => model.registerKeys(id);
+// Ordered keys a register scaffolds a slot for: each wired readout's id, each wired process's
+// declared output keys (`model.registerKeys`, the shared wiring SSOT — rule 7), PLUS every key an
+// action's "set values" op declares for this register (`model.registerDeclaredKeys`) — a hand-typed
+// manual key is never wired, so it needs its own slot too, showing ∅ until something actually sets
+// it. The stable slot order both populate + the refresh fallback pin to.
+const scaffoldKeys = (id) => model.registerDeclaredKeys(id);
 
 // Populate the SCAFFOLD only — one empty ∅ value-slot per wired key (readout ids + process output
 // keys), NO server fetch and NO preview borrow. Used on boot and on a source add/remove: the register
@@ -391,17 +393,19 @@ export function populateRegister(id) {
 
 // Fetch + render a register's held map into its node body. No-op when the node isn't in the DOM.
 // renderBank reconciles the slots in place (rule 1). The rendered slots are EXACTLY the current
-// scaffold keys (wired readout ids + process output keys) — NOT whatever the server still holds: the
-// live session's held map accumulates keys and is only wiped by "clear data", so a readout that got
-// unwired or a process output key that got renamed lingers there. Showing only the scaffold keys
-// drops those stale slots (the renamed/old key vanishes) instead of piling them up. A scaffold key
-// with no matching server row shows ∅ — a register holds a value ONLY once something genuinely
-// fed it (the live collector, or a test/feed tool writing feed=1); it must never borrow the wired
+// scaffold keys (wired readout ids + process output keys, PLUS any key an action's "set values" op
+// declares) — NOT whatever the server still holds: the live session's held map accumulates keys and
+// is only wiped by "clear data", so a readout that got unwired, a process output key that got
+// renamed, or a manual key whose write-row got deleted all linger there. Showing only the scaffold
+// keys drops those stale slots instead of piling them up. A scaffold key with no matching server row
+// shows ∅ — a register holds a value ONLY once something genuinely fed it (the live collector, a
+// manual action set/remove, or a test/feed tool writing feed=1); it must never borrow the wired
 // readout node's own /api/preview read, or a slot fills merely from toggling live off.
 export function refreshRegister(id) {
     const host = nodeEls.get(`register:${id}`)?.querySelector(".data-host");
     if (!host) return;
-    // the register's full wired key set (readout ids + process output keys), in stable wiring order.
+    // the register's full scaffold key set (wired readout/process keys + declared manual keys), in
+    // stable order.
     const wired = scaffoldKeys(id);
     // pass the node's LIVE fold selection + its tuning knob: the server folds the ring with them
     // right away (its own profile is frozen mid-run, so the stored mode/arg lags the select). The

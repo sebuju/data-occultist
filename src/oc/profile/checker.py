@@ -59,7 +59,6 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
     subset_ids = {s.id for s in p.subsets}
     producer_ids = {x.id for x in p.producers}
     file_source_ids = {x.id for x in p.file_sources}
-    gate_ids = {x.id for x in p.gates}
     router_ids = {x.id for x in p.routers}
     toast_ids = {x.id for x in p.toasts}
     sound_ids = {x.id for x in p.sounds}
@@ -74,8 +73,10 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
     registers_by_id: dict[str, RegisterDef] = {x.id: x for x in p.registers}
     processes_by_id: dict[str, ProcessDef] = {x.id: x for x in p.processes}
 
+    trigger_ids = {t.id for t in p.triggers}
     ds_or_sub = dataset_ids | subset_ids
     trigger_targets = producer_ids | file_source_ids | toast_ids | sound_ids | action_ids | router_ids
+    gateable_ids = trigger_targets | trigger_ids   # every kind a GateDef.targets entry may name
 
     dup_check("window", [w.id for w in p.windows])
     dup_check("dataset", [d.id for d in p.datasets])
@@ -224,9 +225,13 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
         if fs.dataset and fs.dataset not in dataset_ids:
             err(node, f"writes to missing dataset '{fs.dataset}'")
 
-    # ---- gates: source value ----
+    # ---- gates: source value + targets (any trigger/producer/file-source/toast/sound/action/router) ----
     for g in p.gates:
-        check_source_ref(f"gate:{g.id}", g.source)
+        node = f"gate:{g.id}"
+        check_source_ref(node, g.source)
+        for tid in g.targets:
+            if tid not in gateable_ids:
+                err(node, f"targets missing/ungateable '{tid}'")
 
     # ---- routers: source value + branch targets ----
     for r in p.routers:
@@ -237,7 +242,7 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
                 if t not in trigger_targets:
                     err(f"{node} branch:{i}", f"forwards to missing target '{t}'")
 
-    # ---- triggers: watch lists, gates, targets ----
+    # ---- triggers: watch lists, targets (gating validated above, on the owning GateDef) ----
     for t in p.triggers:
         node = f"trigger:{t.id}"
         # on_ready watches PRODUCER ids (fires when a sweep finishes); every other
@@ -253,9 +258,6 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
         for reg in t.register_watch:
             if reg not in register_ids:
                 err(node, f"watches missing register '{reg}'")
-        for gid in t.gates:
-            if gid not in gate_ids:
-                err(node, f"gated by missing gate '{gid}'")
         for tgt in t.targets:
             if tgt not in trigger_targets:
                 err(node, f"fires missing target '{tgt}'")
@@ -328,6 +330,31 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
             for key in slot_keys:
                 if exposed and key not in exposed:
                     err(node, f"slots reference missing key '{key}' on register '{reg_id}'")
+        for reg_id, op in a.reg_ops.items():
+            if reg_id not in register_ids:
+                err(node, f"reg_ops reference missing register '{reg_id}'")
+                continue
+            # dest is a prefixed ref ("dataset:<id>" / "register:<id>") -- _migrate_reg_ops
+            # (models.py) guarantees every non-empty dest already carries one of those two prefixes
+            # (it coerces a bare/unrecognised one to "dataset:" on load), so there's no third kind
+            # to guard against here.
+            if op.dest:
+                dest_kind, dest_id, _ = _parse_ref(op.dest) or ("dataset", op.dest, None)
+                if dest_kind == "register":
+                    if dest_id == reg_id:
+                        err(node, f"reg_ops on register '{reg_id}' clones/moves into itself")
+                    elif dest_id not in register_ids:
+                        err(node, f"reg_ops on register '{reg_id}' writes to missing destination register '{dest_id}'")
+                elif dest_id not in dataset_ids:
+                    err(node, f"reg_ops on register '{reg_id}' writes to missing destination dataset '{dest_id}'")
+            # advisory only (warn, not err): unlike `slots` above, a clone/move key here is hand-
+            # typed by design (keyRows, reg_slots.js) — register keys are runtime-created, so a key
+            # not currently wired may still be legitimate (fed by another action's "set", or wired
+            # later). Still flagged so a genuine typo against a known key doesn't go unnoticed.
+            exposed = register_keys(reg_id, set())
+            for key in op.keys:
+                if exposed and key not in exposed:
+                    warn(node, f"reg_ops on register '{reg_id}' targets key '{key}' not currently wired to it")
 
     # ---- registers: wired sources (readout/process/register), persist sink ----
     for r in p.registers:

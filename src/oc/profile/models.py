@@ -1073,22 +1073,22 @@ class GateCond(BaseModel):
 
 
 class GateDef(BaseModel):
-    """A reusable boolean PREDICATE over one live value — the trigger's condition, lifted out of the
-    trigger into its own node so the trigger carries only its event (see :class:`TriggerDef`). A
-    trigger names gate ids in :attr:`TriggerDef.gates`; the trigger fires only when EVERY named gate
-    passes (AND across gates), so a gate is an upstream allow/block on the fire.
+    """A reusable boolean PREDICATE over one live value, wired to the node(s) it permits/blocks via
+    :attr:`targets` — the gate OWNS the link (one source of truth), not the gated node. A gated node
+    (trigger, producer, file-source, toast, sound, action, or router) only proceeds when EVERY gate
+    listing it holds (AND across gates); a target named by no gate is never blocked.
 
     ``source`` is a ref to the live value the gate tests — ``readout:<id>`` or
     ``register:<id>#<key>`` (the same grammar registers/processes source from), or
     ``dataset:<id>`` / ``subset:<id>`` — a content-hash signature of the dataset's current rows /
     the subset's visible output, meant for the ``changed`` op (fires only when the content differs
-    from the last time this gate's trigger fired; see
+    from the last time a gated trigger of this gate fired; see
     :meth:`~oc.collect.triggers.TriggerRunner._dataset_sig` /
     :meth:`~oc.collect.triggers.TriggerRunner._subset_sig`). ``conds`` are the
     conditions; ``logic`` (``or`` = any holds | ``and`` = all hold) combines them; ``negate`` flips
     the result (a block-list: pass when the conds do NOT hold), so a short list can exclude a few
     values rather than enumerate the rest. Evaluated server-side against the runner's live caches —
-    game-dumb, no capture knowledge. Reusable: one gate can gate many triggers."""
+    game-dumb, no capture knowledge. Reusable: one gate can gate many targets."""
 
     id: str
     source: str = ""      # readout:<id> | register:<id>#<key> | dataset:<id> | subset:<id>
@@ -1096,6 +1096,10 @@ class GateDef(BaseModel):
     logic: str = "or"                         # or (any holds) | and (all hold)
     negate: bool = False                      # flip the combined result (block-list)
     enabled: bool = True
+    # bare ids of the nodes this gate permits/blocks — trigger, producer, file-source, toast,
+    # sound, action, or router ids. The single source of truth for the gate<->node link (the gated
+    # node itself carries no back-reference). Empty = this gate blocks nothing yet.
+    targets: list[str] = Field(default_factory=list)
 
 
 class RouterBranch(BaseModel):
@@ -1195,8 +1199,9 @@ class TriggerDef(BaseModel):
     ``targets``, exactly like a toast or sound.
 
     The trigger carries only its EVENT (``kind`` + the watch lists that declare what it watches). The
-    VALUE predicate — "fire only when this reading meets this condition" — lives in :attr:`gates`
-    (see :class:`GateDef`): the trigger fires when its event pulses this tick AND every gate holds.
+    VALUE predicate — "fire only when this reading meets this condition" — lives on any
+    :class:`GateDef` that names this trigger's id in its ``targets``: the trigger fires when its
+    event pulses this tick AND every such gate holds.
     """
 
     id: str
@@ -1213,9 +1218,6 @@ class TriggerDef(BaseModel):
     # for kind="on_register": the register ids this trigger watches (chips + edges) — an exposed key
     # moving in any of them pulses the trigger this tick. The per-key conditions are gates now.
     register_watch: list[str] = Field(default_factory=list)
-    # gate ids (see GateDef) — the trigger's value predicate. Fires only when EVERY named gate holds
-    # (AND across gates). Empty = no predicate: the event alone fires it.
-    gates: list[str] = Field(default_factory=list)
     targets: list[str] = Field(default_factory=list)  # producer / file-source / toast / sound / action / router ids this trigger fires
     enabled: bool = True
     # minimum time (milliseconds) between actual fires — a global rate limit across ALL kinds.
@@ -1506,28 +1508,78 @@ class SoundDef(BaseModel):
     enabled: bool = True
 
 
+class RegisterWrite(BaseModel):
+    """One key row of a register ``set`` op (:class:`RegisterOp`). ``key`` is a hand-typed register
+    key — register keys are created at RUNTIME (fed by whatever wiring first reports them), so this
+    is free text, never a pick-list. ``value`` is free text APPENDED to that key's rolling ring as
+    one sample, exactly like a normal feed read (`"" ` -> append an explicit ``None``, which clears
+    the key's held VALUE but leaves the key itself in place — NOT the same as removing it).
+    ``remove`` drops the key from the register's held map entirely (``value`` is ignored)."""
+
+    key: str = ""
+    value: str = ""
+    remove: bool = False
+
+
+class RegisterOp(BaseModel):
+    """One register target's own operation on an :class:`ActionDef` — independent of the shared
+    dataset ``action``/``dest``/``slots`` (a dataset target and a register target on the same
+    action node can now run entirely different ops).
+
+    ``op`` ∈ "" (none) | set | remove_all | clone | move.
+
+    * ``set``        — apply each :class:`RegisterWrite` row: a non-remove row appends ``value``
+                       (or ``None`` when blank) to that key's ring; a ``remove`` row drops the key.
+                       Runs fully live — flushes the register's ``persist`` dataset (if set) and
+                       re-evaluates ``on_register`` triggers/gates immediately, not on the next tick.
+    * ``remove_all``  — drop every key currently held (ignores ``keys`` narrowing).
+    * ``clone`` / ``move`` — write ``keys`` (or all held keys when empty) into ``dest``; ``clone``
+      keeps the register's own held values, ``move`` also drops those keys. A register has no batch
+      grouping (unlike a dataset target's ``clone_batches``/``clone_resolved``/``move_batches``/
+      ``move_resolved``), so there is only ever one op for each. ``dest`` is a PREFIXED ref —
+      ``"dataset:<id>"`` or ``"register:<id>"`` — so the kind is self-describing, no separate field
+      needed: ``"dataset:<id>"`` writes ``{name:<readout id>, value:<latest>}`` rows (the
+      register->dataset snapshot); ``"register:<id>"`` applies each targeted key's latest value as a
+      live :class:`RegisterWrite` on that register (same funnel as ``set`` above: ring-append,
+      persist flush, ``on_register`` re-evaluation, all immediate). A ``"register:<reg_id>"`` dest
+      naming ITSELF (cloning/moving into itself) is a no-op.
+
+    ``keys`` narrows clone/move to a subset of the register's wired keys (``[]`` = all — the old
+    per-action ``slots`` shape, now scoped per register instead of shared across the whole node).
+    """
+
+    op: str = ""
+    dest: str = ""                          # PREFIXED ref for clone/move — "dataset:<id>" or "register:<id>"
+    keys: list[str] = Field(default_factory=list)      # [] = all held keys (clone/move only)
+    writes: list[RegisterWrite] = Field(default_factory=list)   # per-key rows (set only)
+
+
 class ActionDef(BaseModel):
     """An *action node*: does something to everything wired into ``sources`` when fired — a dataset
-    operation (clear, or clone/move data into ``dest``), a browser sound cue, and/or a downstream
-    action node. A trigger names its ``id`` in ``targets`` (like a toast/sound/producer), so any
-    trigger condition can act on datasets — the shared :func:`oc.store.dataset_ops.fire_dataset_target`
-    funnel does the work, both from the collector dispatch and the web fire-now route.
+    operation (clear, or clone/move data into ``dest``), a register operation, a browser sound cue,
+    and/or a downstream action node. A trigger names its ``id`` in ``targets`` (like a
+    toast/sound/producer), so any trigger condition can act on datasets/registers — the shared
+    :func:`oc.store.dataset_ops.fire_dataset_target` / :func:`oc.collect.register_ops.fire_register_target`
+    funnels do the work, both from the collector dispatch and the web fire-now route.
 
-    ``action`` ∈ "" (none) | clear | clone_batches | clone_resolved | move_batches | move_resolved.
+    ``action`` ∈ "" (none) | clear | clone_batches | clone_resolved | move_batches | move_resolved —
+    applies to DATASET sources only. clear wipes it; clone/move copy it into ``dest`` (batches =
+    preserve batch grouping; resolved = collapse current records into one new batch; move also
+    clears the source).
 
     ``sources`` are prefixed refs — ``"dataset:<id>"`` or ``"register:<id>"`` (the ToastDef.sources
-    shape) — so one action can act on datasets AND registers. For a DATASET source: clear wipes it;
-    clone/move copy it into ``dest`` (batches = preserve batch grouping; resolved = collapse current
-    records into one new batch; move also clears the source). For a REGISTER source: clear wipes the
-    targeted keys; clone/move write the targeted keys' LATEST held values into ``dest`` as
-    ``{name:<readout id>, value:<latest>}`` rows (move then clears those keys) — a register has no
-    batch grouping, so clone_batches / clone_resolved behave identically for it.
+    shape) — so one action can act on datasets AND registers. A REGISTER source's own operation
+    lives in ``reg_ops`` (see :class:`RegisterOp`) — independent of the dataset ``action``/``dest``,
+    so a dataset clear and a register set can coexist on the same node.
 
-    ``slots`` narrows a register source to a subset of its wired-readout keys — ``{register id ->
-    [readout key, ...]}``. An absent / empty list means ALL of that register's keys.
+    A register's clone/move ``dest`` (``RegisterOp.dest``) can itself be either a dataset (the
+    register->dataset snapshot) or another register (a register->register copy/move) — self-describing
+    via its own ``"dataset:<id>"``/``"register:<id>"`` prefix, no separate kind field needed. Every
+    register's dest on one node still shares ONE kind (not mixed per-register): setting a dest of a
+    NEW kind clears every OTHER register's dest on this node first, since an id from the old kind
+    would otherwise dangle pointing at the wrong kind of entity.
 
-    ``sources`` also holds two NON-dataset kinds, which the dataset-op fields (``action`` / ``slots``
-    / ``dest``) simply don't apply to:
+    ``sources`` also holds two NON-dataset, NON-register kinds:
 
     * ``"sound:<id>"`` — a sound node cued to the browser when this node runs, ``repeat`` times
       ``repeat_ms`` apart. The cue rides the same :func:`oc.store.fire_events.publish_fire` bus a
@@ -1541,13 +1593,16 @@ class ActionDef(BaseModel):
     """
 
     id: str
-    action: str = ""                        # "" | clear | clone_batches | clone_resolved | move_batches | move_resolved
+    action: str = ""                        # "" | clear | clone_batches | clone_resolved | move_batches | move_resolved — DATASET sources only
     # prefixed refs "dataset:<id>" / "register:<id>" / "sound:<id>" / "action:<id>" — everything this
-    # node operates on when fired (dataset ops, browser sound cues, and chained action nodes)
+    # node operates on when fired (dataset ops, register ops, browser sound cues, chained actions)
     sources: list[str] = Field(default_factory=list)
-    # register id -> targeted readout keys (absent/empty = all of that register's keys)
+    # LEGACY: register id -> targeted readout keys, folded into reg_ops[id].keys by _migrate_reg_ops.
+    # Kept only so old YAML still validates; new profiles use reg_ops exclusively.
     slots: dict[str, list[str]] = Field(default_factory=dict)
-    dest: str = ""                          # destination dataset for clone/move actions
+    dest: str = ""                          # destination dataset for clone/move actions — DATASET sources only
+    # register id -> that register's own op (independent of the shared action/dest/slots above)
+    reg_ops: dict[str, RegisterOp] = Field(default_factory=dict)
     delay_ms: int = Field(default=0, ge=0, le=600_000)      # wait before running (0 = run now)
     repeat: int = Field(default=1, ge=1, le=99)             # how many times to cue the sound sources
     repeat_ms: int = Field(default=300, ge=10, le=10_000)   # gap between those cues
@@ -1564,6 +1619,62 @@ class ActionDef(BaseModel):
             data["sources"] = [f"dataset:{d}" for d in (data.get("datasets") or [])]
         if isinstance(data, dict):
             data.pop("datasets", None)
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_reg_ops(cls, data):
+        """Fold the legacy SHARED ``action``/``slots``/``dest`` into a per-register ``reg_ops`` entry
+        for each ``register:<id>`` source that doesn't already have one — so an old profile where a
+        register rode the dataset-shaped fields keeps behaving EXACTLY the same way. Legacy
+        ``clear`` narrowed to specific keys (``slots[reg_id]`` non-empty) becomes a ``set`` op with a
+        ``remove`` row per targeted key (the new per-row remove toggle IS that narrowed-clear, now
+        expressed as data instead of a slot filter); a bare/unnarrowed legacy ``clear`` becomes
+        ``remove_all``. ``clone_*``/``move_*`` map straight across (aliased to plain ``clone``/
+        ``move`` — see below), ``keys`` taking over ``slots``'s old narrowing job. The
+        sources-fold runs only for register sources missing a ``reg_ops`` entry, so a new-style
+        profile (or a register already migrated) passes through unchanged there — but the alias
+        normalization below always runs, since a register's own ``reg_ops[id].op`` can carry the
+        old dataset-shaped value directly (not just via this fold). ``dest`` is similarly always
+        normalized to a prefixed ``"dataset:<id>"``/``"register:<id>"`` ref: before dest could be a
+        register too, EVERY ``dest`` (saved or freshly folded from the legacy shared field) was a
+        bare dataset id."""
+        if not isinstance(data, dict):
+            return data
+        # a register has no batch grouping, so a dataset-shaped "clone_batches"/"clone_resolved"
+        # (likewise move_*) always behaved identically for it — collapsed to plain clone/move.
+        # Runs unconditionally (not gated on the legacy-fold guard below) so an existing reg_ops
+        # entry already carrying the old value gets fixed too, not just a freshly-folded one.
+        op_alias = {"clone_batches": "clone", "clone_resolved": "clone", "move_batches": "move", "move_resolved": "move"}
+        for op_data in (data.get("reg_ops") or {}).values():
+            if not isinstance(op_data, dict):
+                continue
+            if op_data.get("op") in op_alias:
+                op_data["op"] = op_alias[op_data["op"]]
+            dest = op_data.get("dest") or ""
+            if dest and not (dest.startswith("dataset:") or dest.startswith("register:")):
+                op_data["dest"] = f"dataset:{dest}"
+        legacy_action = data.get("action") or ""
+        if legacy_action not in {"clear", "clone_batches", "clone_resolved", "move_batches", "move_resolved"}:
+            return data
+        reg_ops = dict(data.get("reg_ops") or {})
+        slots = data.get("slots") or {}
+        for ref in (data.get("sources") or []):
+            kind, _, rid = ref.partition(":")
+            if kind != "register" or rid in reg_ops:
+                continue
+            narrowed = list(slots.get(rid, []))
+            if legacy_action == "clear":
+                if narrowed:
+                    reg_ops[rid] = {"op": "set", "writes": [{"key": k, "remove": True} for k in narrowed]}
+                else:
+                    reg_ops[rid] = {"op": "remove_all"}
+            else:
+                legacy_dest = data.get("dest") or ""
+                reg_ops[rid] = {"op": op_alias.get(legacy_action, legacy_action),
+                                "dest": f"dataset:{legacy_dest}" if legacy_dest else "", "keys": narrowed}
+        if reg_ops:
+            data["reg_ops"] = reg_ops
         return data
 
 
