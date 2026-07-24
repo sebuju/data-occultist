@@ -5979,8 +5979,8 @@ atlas:
 layout:
   nodes:
     game:
-      x: -3840.0
-      y: -2940.0
+      x: -3860.0
+      y: -3100.0
       w: 260.0
       h: 320.0
       collapsed: false
@@ -5989,8 +5989,8 @@ layout:
       softW: false
       softH: true
     dict:wiki:
-      x: -3020.0
-      y: -2540.0
+      x: -3040.0
+      y: -2700.0
       w: 320.0
       h: 360.0
       collapsed: false
@@ -5998,8 +5998,8 @@ layout:
       custH: true
       softW: true
     ds:master:
-      x: -1560.0
-      y: -2940.0
+      x: -1580.0
+      y: -3100.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6007,8 +6007,8 @@ layout:
       custH: true
       softH: true
     ds:prices_live:
-      x: -480.0
-      y: -1640.0
+      x: -500.0
+      y: -1800.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6016,8 +6016,8 @@ layout:
       custH: true
       softH: true
     sub:live_prices_joined:
-      x: -60.0
-      y: -2940.0
+      x: -80.0
+      y: -3100.0
       w: 360.0
       h: 920.0
       collapsed: false
@@ -6025,8 +6025,8 @@ layout:
       custH: true
       softH: true
     producer:wf_market_live:
-      x: -480.0
-      y: -2940.0
+      x: -500.0
+      y: -3100.0
       w: 360.0
       h: 1260.0
       collapsed: false
@@ -6052,8 +6052,8 @@ layout:
       custH: true
       softH: true
     ds:mods:
-      x: -1560.0
-      y: -2700.0
+      x: -1580.0
+      y: -2860.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6062,8 +6062,8 @@ layout:
       softW: true
       softH: true
     ds:mod_catalog:
-      x: -1980.0
-      y: -1900.0
+      x: -2000.0
+      y: -2060.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6072,8 +6072,8 @@ layout:
       softW: true
       softH: true
     producer:mod_catalog_producer:
-      x: -1980.0
-      y: -2940.0
+      x: -2000.0
+      y: -3100.0
       w: 360.0
       h: 1000.0
       collapsed: false
@@ -6082,120 +6082,120 @@ layout:
       softW: true
       softH: true
     win:mod_window:
-      x: -100.0
-      y: -760.0
+      x: -120.0
+      y: -960.0
       collapsed: false
     item:mod_window:mod:
-      x: -1620.0
-      y: -760.0
+      x: -1640.0
+      y: -960.0
       collapsed: false
     win:equipment_window:
-      x: -2300.0
-      y: -760.0
+      x: -2320.0
+      y: -960.0
       w: 500.0
       h: 1227.0
       collapsed: false
       custW: true
       custH: false
     sb:equipment_window:scrollbar:
-      x: -2580.0
-      y: -140.0
+      x: -2600.0
+      y: -340.0
       w: 240.0
       h: 260.0
       collapsed: false
       custW: true
       custH: true
     item:equipment_window:arcane:
-      x: -3840.0
-      y: 240.0
+      x: -3860.0
+      y: 40.0
       w: 540.0
       h: 1066.0
       collapsed: false
       custW: true
       custH: false
     item:equipment_window:normal:
-      x: -3840.0
-      y: -760.0
+      x: -3860.0
+      y: -960.0
       w: 540.0
       h: 957.0
       collapsed: false
       custW: true
       custH: false
     det:equipment_window:detect_1:
-      x: -2580.0
-      y: -460.0
+      x: -2600.0
+      y: -660.0
       w: 240.0
       h: 260.0
       collapsed: false
       custW: true
       custH: false
     item:mod_window:drop_item:
-      x: -1620.0
-      y: 80.0
+      x: -1640.0
+      y: -120.0
       w: 380.0
       h: 815.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:normal:name:
-      x: -3260.0
-      y: -420.0
+      x: -3280.0
+      y: -620.0
       w: 320.0
       h: 420.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:normal:count:
-      x: -3260.0
-      y: -760.0
+      x: -3280.0
+      y: -960.0
       collapsed: false
     fld:equipment_window:arcane:name:
-      x: -3260.0
-      y: 960.0
+      x: -3280.0
+      y: 760.0
       w: 320.0
       h: 360.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:arcane:arcane_level:
-      x: -3260.0
-      y: 240.0
+      x: -3280.0
+      y: 40.0
       w: 320.0
       h: 340.0
       collapsed: false
       custW: true
       custH: true
     fld:equipment_window:arcane:count:
-      x: -3260.0
-      y: 600.0
+      x: -3280.0
+      y: 400.0
       w: 320.0
       h: 340.0
       collapsed: false
       custW: false
       custH: false
     fld:mod_window:mod:mod_name:
-      x: -1200.0
-      y: -320.0
+      x: -1220.0
+      y: -520.0
       collapsed: false
     fld:mod_window:mod:mod_drain:
-      x: -860.0
-      y: -760.0
+      x: -880.0
+      y: -960.0
       w: 420.0
       h: 300.0
       collapsed: false
       custW: true
       custH: true
     fld:mod_window:mod:mod_count:
-      x: -1200.0
-      y: -760.0
+      x: -1220.0
+      y: -960.0
       collapsed: false
     tell:mod_window:drop_item:tell_3:
-      x: -1220.0
-      y: 80.0
+      x: -1240.0
+      y: -120.0
       collapsed: false
     trigger:owned_refresh:
-      x: -900.0
-      y: -2940.0
+      x: -920.0
+      y: -3100.0
       w: 360.0
       h: 363.0
       collapsed: false
@@ -6257,8 +6257,8 @@ layout:
       custH: false
       softW: true
     producer:producer:
-      x: -2400.0
-      y: -2940.0
+      x: -2420.0
+      y: -3100.0
       w: 360.0
       h: 1000.0
       collapsed: false
@@ -6266,8 +6266,8 @@ layout:
       custH: true
       softH: true
     ds:relic_contents:
-      x: -2400.0
-      y: -1900.0
+      x: -2420.0
+      y: -2060.0
       w: 360.0
       h: 160.0
       collapsed: false
@@ -6366,16 +6366,16 @@ layout:
       softW: true
       softH: true
     det:mod_window:detect_h:
-      x: -360.0
-      y: -760.0
+      x: -380.0
+      y: -960.0
       w: 240.0
       h: 260.0
       collapsed: false
       custW: false
       custH: false
     det:equipment_window:detect_h:
-      x: -2580.0
-      y: -760.0
+      x: -2600.0
+      y: -960.0
       w: 240.0
       h: 278.0
       collapsed: false
@@ -6435,8 +6435,8 @@ layout:
       y: -7660.0
       collapsed: false
     sub:master_prime_parts:
-      x: 360.0
-      y: -2940.0
+      x: 340.0
+      y: -3100.0
       w: 360.0
       h: 900.0
       collapsed: false
@@ -6444,12 +6444,12 @@ layout:
       custH: true
       softH: true
     ds:ee_log:
-      x: -3440.0
-      y: -1660.0
+      x: -3460.0
+      y: -1820.0
       collapsed: false
     src:log_ee:
-      x: -3840.0
-      y: -1660.0
+      x: -3860.0
+      y: -1820.0
       w: 360.0
       h: 560.0
       collapsed: false
@@ -6476,8 +6476,8 @@ layout:
       custH: false
       softH: true
     dict:relics:
-      x: -3020.0
-      y: -2120.0
+      x: -3040.0
+      y: -2280.0
       w: 320.0
       h: 360.0
       collapsed: false
@@ -6623,8 +6623,8 @@ layout:
       softW: true
       softH: true
     atlas:
-      x: -3840.0
-      y: -2540.0
+      x: -3860.0
+      y: -2700.0
       w: 720.0
       h: 780.0
       collapsed: false
@@ -7421,17 +7421,17 @@ layout:
       custH: false
       softW: true
     ro:live_game_window:warframe_name_live:
-      x: -2360.0
+      x: -2380.0
       y: -4340.0
       w: 240.0
-      h: 400.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     rohist:live_game_window:warframe_name_live:
-      x: -2080.0
+      x: -2100.0
       y: -4340.0
       w: 300.0
       h: 440.0
@@ -7639,17 +7639,17 @@ layout:
       softW: true
       softH: true
     ro:live_game_window:value_ab_1:
-      x: -3840.0
+      x: -3860.0
       y: -4340.0
       w: 240.0
-      h: 380.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true
       softW: true
-      softH: true
+      softH: false
     rohist:live_game_window:value_ab_1:
-      x: -3560.0
+      x: -3580.0
       y: -4340.0
       w: 420.0
       h: 440.0
@@ -7659,7 +7659,7 @@ layout:
       softW: true
       softH: true
     ro:live_game_window:value_ab_2:
-      x: -3100.0
+      x: -3120.0
       y: -4340.0
       w: 240.0
       h: 440.0
@@ -7669,7 +7669,7 @@ layout:
       softW: true
       softH: false
     rohist:live_game_window:value_ab_2:
-      x: -2820.0
+      x: -2840.0
       y: -4340.0
       w: 420.0
       h: 440.0
@@ -7679,17 +7679,17 @@ layout:
       softW: true
       softH: true
     ro:live_game_window:value_ab_3:
-      x: -3840.0
+      x: -3860.0
       y: -3860.0
       w: 240.0
-      h: 380.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true
       softW: true
-      softH: true
+      softH: false
     rohist:live_game_window:value_ab_3:
-      x: -3560.0
+      x: -3580.0
       y: -3860.0
       w: 420.0
       h: 440.0
@@ -7699,17 +7699,17 @@ layout:
       softW: true
       softH: true
     ro:live_game_window:value_ab_4:
-      x: -3100.0
+      x: -3120.0
       y: -3860.0
       w: 240.0
-      h: 380.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true
       softW: true
-      softH: true
+      softH: false
     rohist:live_game_window:value_ab_4:
-      x: -2820.0
+      x: -2840.0
       y: -3860.0
       w: 420.0
       h: 440.0
@@ -7779,12 +7779,12 @@ layout:
       softW: true
       softH: true
     sub:distinct_relic_items:
-      x: -900.0
-      y: -2720.0
+      x: -920.0
+      y: -2880.0
       collapsed: false
     vt:ds:prices_live:
-      x: -60.0
-      y: -1640.0
+      x: -80.0
+      y: -1800.0
       collapsed: false
     trigger:on_new_relics_offered:
       x: -100.0
@@ -7796,8 +7796,8 @@ layout:
       custH: false
       softW: true
     prev:equipment_window:
-      x: -1740.0
-      y: -760.0
+      x: -1760.0
+      y: -960.0
       collapsed: false
     sub:relics_owned:
       x: -2100.0
@@ -7966,8 +7966,8 @@ layout:
       y: -1580.0
       collapsed: false
     gamehist:
-      x: -3540.0
-      y: -2940.0
+      x: -3560.0
+      y: -3100.0
       w: 840.0
       h: 320.0
       collapsed: false
