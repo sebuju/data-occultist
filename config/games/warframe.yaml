@@ -5061,6 +5061,62 @@ triggers:
   input_rect: []
   input_window: ''
   input_double_ms: 350.0
+- id: sweep_f1
+  kind: on_input
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  targets:
+  - sweep_arm
+  enabled: true
+  ready_field: ''
+  window_watch: []
+  item_watch: ''
+  input_event: down
+  input_button: key:f1
+  input_mods: []
+  input_rect: []
+  input_window: equipment_window
+  input_double_ms: 350.0
+- id: sweep_advance
+  kind: on_window_tick
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  targets:
+  - sweep_step
+  enabled: true
+  ready_field: ''
+  window_watch:
+  - equipment_window
+  item_watch: ''
+  input_event: down
+  input_button: ''
+  input_mods: []
+  input_rect: []
+  input_window: ''
+  input_double_ms: 350.0
+- id: sweep_bottom
+  kind: on_scroll_bottom
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  targets:
+  - sweep_stop
+  enabled: true
+  ready_field: ''
+  window_watch:
+  - equipment_window
+  item_watch: ''
+  input_event: down
+  input_button: ''
+  input_mods: []
+  input_rect: []
+  input_window: ''
+  input_double_ms: 350.0
 gates:
 - id: gate_value_ab_1
   source: register:value_ab_register#value_ab_1
@@ -5197,6 +5253,16 @@ gates:
   targets:
   - toast_when_terminator
   - toast_when_scrolled
+- id: sweep_go
+  source: register:sweep#done
+  conds:
+  - when: not_equal
+    arg: '1'
+  logic: or
+  negate: false
+  enabled: true
+  targets:
+  - sweep_advance
 routers: []
 toasts:
 - id: toast_2
@@ -5734,7 +5800,62 @@ sounds:
     repeat: 3
   volume: 0.7
   enabled: true
-actions: []
+actions:
+- id: sweep_arm
+  action: ''
+  sources:
+  - register:sweep
+  slots: {}
+  dest: ''
+  reg_ops:
+    sweep:
+      op: set
+      dest: ''
+      keys: []
+      writes:
+      - key: done
+        value: ''
+        remove: false
+  input_events: []
+  delay_ms: 0
+  repeat: 1
+  repeat_ms: 300
+  enabled: true
+- id: sweep_step
+  action: ''
+  sources:
+  - window:equipment_window
+  slots: {}
+  dest: ''
+  reg_ops: {}
+  input_events:
+  - token: scroll:down
+    repeat: 1
+    delay_ms: 150
+  delay_ms: 0
+  repeat: 1
+  repeat_ms: 300
+  enabled: true
+- id: sweep_stop
+  action: ''
+  sources:
+  - register:sweep
+  slots: {}
+  dest: ''
+  reg_ops:
+    sweep:
+      op: set
+      dest: ''
+      keys: []
+      writes:
+      - key: done
+        value: '1'
+        remove: false
+  input_events: []
+  delay_ms: 0
+  repeat: 1
+  repeat_ms: 300
+  enabled: true
 registers:
 - id: loadout_register
   sources:
@@ -5769,6 +5890,15 @@ registers:
   enabled: true
   capacity: 5
   aggregate: common
+  aggregate_arg: 0.0
+  ignore_empty: false
+  persist: ''
+- id: sweep
+  sources: []
+  title: ''
+  enabled: true
+  capacity: 1
+  aggregate: ''
   aggregate_arg: 0.0
   ignore_empty: false
   persist: ''
@@ -6083,12 +6213,12 @@ layout:
       softW: true
       softH: true
     win:mod_window:
-      x: -180.0
-      y: -960.0
+      x: 200.0
+      y: -900.0
       collapsed: false
     item:mod_window:mod:
-      x: -1380.0
-      y: -960.0
+      x: -1000.0
+      y: -900.0
       collapsed: false
     win:equipment_window:
       x: -2520.0
@@ -6134,8 +6264,8 @@ layout:
       softW: true
       softH: true
     item:mod_window:drop_item:
-      x: -1380.0
-      y: 100.0
+      x: -1000.0
+      y: 160.0
       w: 380.0
       h: 815.0
       collapsed: false
@@ -6178,8 +6308,8 @@ layout:
       custW: false
       custH: false
     fld:mod_window:mod:mod_name:
-      x: -940.0
-      y: -300.0
+      x: -580.0
+      y: -240.0
       w: 320.0
       h: 300.0
       collapsed: false
@@ -6187,8 +6317,8 @@ layout:
       custH: true
       softH: true
     fld:mod_window:mod:mod_drain:
-      x: -940.0
-      y: -640.0
+      x: -580.0
+      y: -580.0
       w: 320.0
       h: 300.0
       collapsed: false
@@ -6196,8 +6326,8 @@ layout:
       custH: true
       softW: true
     fld:mod_window:mod:mod_count:
-      x: -940.0
-      y: -960.0
+      x: -580.0
+      y: -900.0
       w: 320.0
       h: 280.0
       collapsed: false
@@ -6205,8 +6335,8 @@ layout:
       custH: true
       softH: true
     tell:mod_window:drop_item:tell_3:
-      x: -940.0
-      y: 100.0
+      x: -560.0
+      y: 160.0
       collapsed: false
     trigger:owned_refresh:
       x: -920.0
@@ -6381,8 +6511,8 @@ layout:
       softW: true
       softH: true
     det:mod_window:detect_h:
-      x: -520.0
-      y: -960.0
+      x: -120.0
+      y: -900.0
       w: 280.0
       h: 407.0
       collapsed: false
@@ -7817,6 +7947,77 @@ layout:
       x: -1960.0
       y: -960.0
       collapsed: false
+    register:sweep:
+      x: -2880.0
+      y: 400.0
+      w: 280.0
+      h: 300.0
+      collapsed: false
+      custW: true
+      custH: false
+      softW: false
+    gate:sweep_go:
+      x: -1900.0
+      y: 400.0
+      w: 300.0
+      h: 140.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    trigger:sweep_f1:
+      x: -2220.0
+      y: 400.0
+      collapsed: false
+    trigger:sweep_advance:
+      x: -2220.0
+      y: 700.0
+      w: 280.0
+      h: 220.0
+      collapsed: false
+      custW: false
+      custH: true
+      softH: true
+    trigger:sweep_bottom:
+      x: -2220.0
+      y: 960.0
+      w: 280.0
+      h: 220.0
+      collapsed: false
+      custW: false
+      custH: true
+      softH: true
+    action:sweep_arm:
+      x: -2560.0
+      y: 400.0
+      w: 300.0
+      h: 260.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    action:sweep_step:
+      x: -2560.0
+      y: 700.0
+      w: 300.0
+      h: 220.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
+    action:sweep_stop:
+      x: -2560.0
+      y: 960.0
+      w: 300.0
+      h: 220.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
     sub:relics_owned:
       x: -2100.0
       y: -9880.0
@@ -8871,7 +9072,14 @@ layout:
     - fld:equipment_window:arcane:name
     - fld:equipment_window:arcane:arcane_level
     - fld:equipment_window:arcane:count
-    - acthist:action
+    - register:sweep
+    - gate:sweep_go
+    - trigger:sweep_f1
+    - trigger:sweep_advance
+    - trigger:sweep_bottom
+    - action:sweep_arm
+    - action:sweep_step
+    - action:sweep_stop
     outline:
       color: '#8a91a0'
       style: none
