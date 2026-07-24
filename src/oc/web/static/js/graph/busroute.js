@@ -276,14 +276,24 @@ function storeTMerge(st, pts) {
 // against a global occupancy map: a lane can't be placed within MIN_SEP of another occupied lane over
 // an overlapping span. Occupancy is bucketed by rounded coordinate for fast neighbour lookup.
 
-function makeLanes(corridors, laneGap) {
+// A corridor's boarding weight: how much extra ride-cost a bottleneck channel charges over a wide
+// trunk, so the search prefers roomy corridors instead of treating every hop as equally attractive.
+// Purely a function of the corridor's own `cap` (lane count) — no live occupancy, no manual input.
+// cap >= trunkCap -> 0 (a free trunk); cap === 1 -> narrowW (the narrowest possible bottleneck).
+function corridorWeight(cap, narrowW, trunkCap) {
+    if (!narrowW || trunkCap <= 1) return 0;
+    const frac = (trunkCap - cap) / (trunkCap - 1);
+    return Math.max(0, narrowW * Math.min(1, frac));
+}
+function makeLanes(corridors, laneGap, narrowW, trunkCap) {
     return corridors.map((c, idx) => {
         const lo = c.axis === "v" ? c.x : c.y, hi = c.axis === "v" ? c.x + c.w : c.y + c.h;
         const center = (lo + hi) / 2, cap = Math.max(1, c.cap), gap = c.gap || laneGap, gridLanes = [];
         for (let slot = 0; slot < cap; slot++) gridLanes.push(center + (slot - (cap - 1) / 2) * gap);
         const laneLo = gridLanes[0], laneHi = gridLanes[gridLanes.length - 1];   // extremes, BEFORE the centre-out sort
         gridLanes.sort((p, q) => Math.abs(p - center) - Math.abs(q - center));   // centre-out
-        return { ...c, idx, gridLanes, laneLo, laneHi, laneMid: center };
+        const weight = corridorWeight(cap, narrowW, trunkCap);
+        return { ...c, idx, gridLanes, laneLo, laneHi, laneMid: center, weight };
     });
 }
 // c's centre along its THIN axis — the coordinate at which a perpendicular corridor crosses it.
@@ -413,8 +423,12 @@ function buildBusNet(lanes) {
     // lane extremes per corridor, so the search can price a ramp without holding the lane objects
     const laneLo = new Float64Array(N), laneHi = new Float64Array(N);
     for (let i = 0; i < N; i++) { laneLo[i] = lanes[i].laneLo; laneHi[i] = lanes[i].laneHi; }
+    // per-corridor boarding weight (bottleneck penalty) — see corridorWeight; 0 for every corridor
+    // when narrowW is off, so this is a no-op unless the knob is tuned on.
+    const weight = new Float64Array(N);
+    for (let i = 0; i < N; i++) weight[i] = lanes[i].weight || 0;
     return {
-        N, E, base, nbr, owner, rev, perpC, axisV, laneLo, laneHi,
+        N, E, base, nbr, owner, rev, perpC, axisV, laneLo, laneHi, weight,
         heap: makeHeap(Math.max(64, E)),
         g: new Float64Array(E + 1), prev: new Int32Array(E + 1), seen: new Int32Array(E + 1), gen: 0,
     };
@@ -426,6 +440,8 @@ function buildBusNet(lanes) {
 // the cost of a hop depends on where the wire BOARDED u, not on u alone. That makes the search state a
 // directed hop (the flat slot), not a corridor. Each hop also pays `hopCost`, a flat turn penalty: a
 // corner costs real estate and readability, so distance alone shouldn't buy three jogs to save a few px.
+// It also pays `weight[v]`, a per-corridor bottleneck charge (corridorWeight) so a narrow channel isn't
+// as attractive as a wide trunk running parallel to it — 0 unless `narrowW` is tuned on.
 //
 // A goal corridor is terminal but its exit cost varies per state, so the first goal popped isn't
 // necessarily the cheapest — keep the best total and stop once the heap's minimum can no longer beat
@@ -436,7 +452,7 @@ function buildBusNet(lanes) {
 // call, so it would add the same constant to every path and change nothing. Boarding is priced where
 // it actually discriminates — the start-bus score in resolveNode.) Returns [idx...] or null.
 function busPathDist(net, start, srcLong, goalSet, tcx, tcy, blocked, hopCost) {
-    const { E, base, nbr, owner, rev, perpC, axisV, laneLo, laneHi, heap, g, prev, seen } = net;
+    const { E, base, nbr, owner, rev, perpC, axisV, laneLo, laneHi, weight, heap, g, prev, seen } = net;
     if (blocked.has(start)) return null;
     const gen = ++net.gen;
     const tgtLong = (u) => (axisV[u] ? tcy : tcx);
@@ -459,7 +475,7 @@ function busPathDist(net, start, srcLong, goalSet, tcx, tcy, blocked, hopCost) {
         for (let t = base[u], end = base[u + 1]; t < end; t++) {
             const v = nbr[t];
             if (blocked.has(v)) continue;
-            const ng = k + Math.abs(perpC[v] - inL) + hopCost;
+            const ng = k + Math.abs(perpC[v] - inL) + hopCost + weight[v];
             const ns = rev[t];
             if (seen[ns] === gen && ng >= g[ns]) continue;
             g[ns] = ng; seen[ns] = gen; prev[ns] = s;
@@ -709,13 +725,13 @@ function resolveNode(aId, lines, lanes, net, grid, committed, reachCache, index,
  *          ._stats = {facing,routed,unrouted}; ._unrouted = [{key, at}] (no-bus-route offenders)
  */
 export function busRoute(links, nodeRects, corridors, opts = {}) {
-    const cfg = { laneGap: 12, facePad: 6, hopCost: 120, minSep: MIN_SEP, faceBias: 200, ...opts };
+    const cfg = { laneGap: 12, facePad: 6, hopCost: 120, minSep: MIN_SEP, faceBias: 200, narrowW: 0, trunkCap: 4, ...opts };
     // hopCost MUST stay > 0. BFS could never repeat a corridor (its visited gate); a distance search
     // can, and a repeated corridor would double-reserve a lane and break buildRoute1's corner walk.
     // With a strictly positive turn penalty no optimal path revisits one: re-entering a corridor is
     // always beaten by riding it straight through, which is no longer AND drops two turns.
     cfg.hopCost = Math.max(1e-6, cfg.hopCost);
-    const lanes = makeLanes(corridors, cfg.laneGap);
+    const lanes = makeLanes(corridors, cfg.laneGap, cfg.narrowW, cfg.trunkCap);
     const net = buildBusNet(lanes);                       // bus network: which corridors cross + search scratch
     const grid = new Map();                                // global grid-lane occupancy (axis:coord -> spans)
     const index = buildNodeIndex(nodeRects, 256);          // spatial index for band/reachability queries
@@ -730,9 +746,12 @@ export function busRoute(links, nodeRects, corridors, opts = {}) {
     // classify: a clear line-of-sight pair is a straight shot (deferred until AFTER the bus lines);
     // everything else is bus-routed.
     const straights = [];
+    const degree = new Map();                              // nodeId -> total lines touching it, EITHER end
+    const bump = (id) => degree.set(id, (degree.get(id) || 0) + 1);
     for (const l of links) {
         const a = l.ra || nodeRects[l.aId], b = l.rb || nodeRects[l.bId];
         if (!a || !b) continue;
+        bump(l.aId); bump(l.bId);
         const g = facingGeom(a, b, nodeRects);
         // a PINNED source (watch/trigger: the line must leave its own port's face) only takes the
         // straight shot if the shot happens to leave that face — otherwise it rides the buses, which
@@ -741,8 +760,12 @@ export function busRoute(links, nodeRects, corridors, opts = {}) {
         else (byNode.get(l.aId) || byNode.set(l.aId, []).get(l.aId)).push({ ...l, a, b, pin: l.pinSrc || null });
     }
 
-    // BUS lines FIRST: busiest source nodes first so they claim lanes before scraps.
-    const nodeOrder = [...byNode.entries()].sort((p, q) => q[1].length - p[1].length);
+    // BUS lines FIRST: busiest nodes first so they claim lanes before scraps — "busiest" by TOTAL
+    // degree (both ends), not just how many lines this node sources. A hub with 10 incoming/0
+    // outgoing routed last under a source-only count; it's still the node whose lane choices matter
+    // most. Only nodes that own at least one bus-routed (non-straight) line appear in byNode at all,
+    // so the sort is over that set — degree just re-orders it, never adds/drops a node.
+    const nodeOrder = [...byNode.entries()].sort((p, q) => (degree.get(q[0]) || 0) - (degree.get(p[0]) || 0));
     for (const [aId, lines] of nodeOrder) {
         const stubs = resolveNode(aId, lines, lanes, net, grid, committed, reachCache, index, nodeRects, cfg);
         for (const l of lines) {

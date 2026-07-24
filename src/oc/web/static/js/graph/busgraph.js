@@ -34,7 +34,7 @@ import { insetEndpoint } from "./faces.js";
  * @param {Object} opts
  * @param {Array<{x,y,w,h}>} [opts.blockRects]      group headings — hard no-go for the corridor carve
  *                                                  AND for the wires themselves
- * @param {Object} [opts.bus]                       {margin, laneGap, minLen, hopCost, facePad}
+ * @param {Object} [opts.bus]                       {margin, laneGap, minLen, hopCost, facePad, narrowW, trunkCap}
  * @param {Function} [opts.fallback]                (missingEdges) -> Map(key -> {pts,p1,d1,p2,d2}),
  *                                                  called ONLY if busRoute left something unrouted
  * @param {Function} [opts.deconflict]              (routes) -> routes, applied ONLY when the fallback
@@ -51,7 +51,7 @@ export function busRouteGraph(nodes, edges, opts = {}) {
     // only cares that two wires are distinguishable at all, the rendered canvas needs them readably
     // apart (scripts/route_metrics.mjs calls < 9px ambiguous). tightGap tracks minSep, or a bottleneck
     // corridor packs lanes closer than a lane may legally sit anyway.
-    const cfg = { margin: 9, laneGap: 12, minLen: 280, hopCost: 120, facePad: 6, minSep: 10, tightGap: 10, faceBias: 200, ...bus };
+    const cfg = { margin: 9, laneGap: 12, minLen: 280, hopCost: 2000, facePad: 6, minSep: 10, tightGap: 10, faceBias: 200, narrowW: 2000, trunkCap: 4, ...bus };
 
     const nodeRects = {};
     for (const n of nodes) nodeRects[n.id] = { x: n.x, y: n.y, w: n.w, h: n.h };
