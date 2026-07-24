@@ -7,7 +7,7 @@
 /* ---- view container ---- */
 #pretty { position: absolute; inset: 0; overflow: auto; background: #14161b; display: none; }
 #pretty.active { display: block; }
-body.pretty-mode #graph { display: none; }
+body.pretty-mode #graph { visibility: hidden; }
 body.pretty-mode .pw-dirtybar { display: none; }
 body.pretty-mode #seltoolbar { display: none; }
 

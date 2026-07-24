@@ -26,7 +26,7 @@
 // Geometry recomputes from live member rects every render, so a box always hugs its members.
 
 import { beginDrag, GRID, snap } from "./dragresize.js";   // shared drag-loop primitive
-import { sizesFrozen } from "./state.js";   // drag in progress -> reuse measured title extents, don't re-measure
+import { sizesFrozen, graphHidden } from "./state.js";   // drag in progress -> reuse measured title extents, don't re-measure
 import { h, svg, TRASH, trashBtn } from "../dom.js";
 import { onOutside } from "../inputbus.js";
 import { setGroups } from "./edgecanvas.js";
@@ -655,9 +655,13 @@ function placeTitle(tel, align) { tel.style.justifyContent = align === "center" 
 // ---- rendering ------------------------------------------------------------
 // ONE render pass per tier: reconcile the layer's children by id, size + style each box the same
 // way, then let the tier add its own bits (group title band, sub legend, super watermark).
-export function renderGroups() { renderTier(GROUP); renderTier(SUPER); renderTier(SUB); pushCanvasGroups(); }
-function renderSuperGroups() { renderTier(SUPER); pushCanvasGroups(); }
-function renderSubGroups() { renderTier(SUB); pushCanvasGroups(); }
+// #graph is hidden (pretty view up) — every entry point funnels through these three, so this is
+// the one choke point: skip the DOM measure/size pass and the canvas box push, nothing to paint
+// while invisible. visibility:hidden (pretty.css) keeps real layout, so this is purely about not
+// doing pointless work for a view nobody can see — same reasoning as routing.js's drawEdges gate.
+export function renderGroups() { if (graphHidden()) return; renderTier(GROUP); renderTier(SUPER); renderTier(SUB); pushCanvasGroups(); }
+function renderSuperGroups() { if (graphHidden()) return; renderTier(SUPER); pushCanvasGroups(); }
+function renderSubGroups() { if (graphHidden()) return; renderTier(SUB); pushCanvasGroups(); }
 
 // Feed the under-canvas the resolved box fill+border for every tier. Draw order = paint order:
 // super (bottom) < group < sub (top), matching the #sgroups/#ggroups/#subgroups DOM z-order.
@@ -728,7 +732,12 @@ function groupBeforeSize(rec, el) {
     // height can't change while a drag is up (its text and font are fixed), so reuse the last one —
     // same reasoning as the node size freeze this flag comes from (state.js).
     if (sizesFrozen() && rec._titleH) return rec._titleH;
-    return (rec._titleH = tel.offsetHeight || TITLE_H);
+    // Defense in depth, not the primary guard (that's the graphHidden() gate on renderGroups()
+    // above): offsetHeight reads 0 for any element an ancestor currently hides via display:none,
+    // for whatever reason. A real cached height must never be clobbered by that bogus 0 — fall
+    // back to TITLE_H only when nothing has been measured yet.
+    if (tel.offsetHeight) rec._titleH = tel.offsetHeight;
+    return rec._titleH || TITLE_H;
 }
 // The box FILL + BORDER colour expressions per tier — the identity hue ("themed" = any scheme
 // whose outline differs from the neutral default). Shared by the DOM afterSize styling and the
@@ -774,7 +783,11 @@ function groupAfterSize(rec, el) {
         // _titleH read in groupBeforeSize this stays one layout pass per group render, not a new one.
         // Skipped while a drag holds sizes frozen: alignment and text are fixed for its duration, so
         // the cached extent is still valid and re-reading it would flush layout every frame.
-        if (!(sizesFrozen() && rec._titleW > 0)) { rec._titleX = tel.offsetLeft; rec._titleW = tel.offsetWidth; }
+        // offsetWidth reads 0 while hidden (see groupBeforeSize) — never clobber a real cached
+        // extent with that; titleRects() falls back to the full band width when _titleW is unset,
+        // a WIDER (never narrower) obstacle, so a stale 0 would wrongly widen every group's title
+        // obstacle the instant #graph is hidden.
+        if (!(sizesFrozen() && rec._titleW > 0) && tel.offsetWidth) { rec._titleX = tel.offsetLeft; rec._titleW = tel.offsetWidth; }
     }
     // Canvas renderer draws the box fill + border (solid accent when ctrl-selected, else dashed)
     // itself (under-canvas); blank the DOM box so it doesn't double-render. Title band stays DOM.
@@ -792,7 +805,10 @@ function subBeforeSize(rec, el) {
         if (lbl.textContent !== rec.title) lbl.textContent = rec.title;
     } else if (tel) { tel.remove(); tel = null; }
     if (tel && sizesFrozen() && rec._titleH) return rec._titleH;   // frozen mid-drag — see groupBeforeSize
-    return (rec._titleH = tel ? (tel.offsetHeight || 0) : 0);
+    if (!tel) return (rec._titleH = 0);   // no title band at all — genuinely 0, not a hidden-measurement artifact
+    // offsetHeight reads 0 while hidden (see groupBeforeSize) — never clobber a real cached height with that.
+    if (tel.offsetHeight) rec._titleH = tel.offsetHeight;
+    return rec._titleH || 0;
 }
 function subAfterSize(rec, el) {
     // dimmer, denser echo of the group Option-A look: soft-tinted inset well + faint wash + a mint/
