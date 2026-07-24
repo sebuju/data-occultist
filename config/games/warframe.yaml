@@ -244,7 +244,7 @@ windows:
       sep: '['
     - when: always
       then: dictionary
-      dict_mode: correct
+      dict_mode: correct_drop
       dict_id: wiki
       fuzzy: 0.82
     min_confidence: 0.5
@@ -390,7 +390,7 @@ windows:
     tolerance: 60
     scale: 1.0
     min_frac: 0.0
-  live: false
+  live: true
   enabled: true
   item_fields:
   - id: name
@@ -2372,6 +2372,7 @@ window_priority:
 - relic_refinement
 - mission_rewards
 - arsenal_warframe
+- equipment_window
 datasets:
 - id: master
   aggregate: latest
@@ -6082,15 +6083,15 @@ layout:
       softW: true
       softH: true
     win:mod_window:
-      x: -120.0
+      x: -180.0
       y: -960.0
       collapsed: false
     item:mod_window:mod:
-      x: -1640.0
+      x: -1380.0
       y: -960.0
       collapsed: false
     win:equipment_window:
-      x: -2320.0
+      x: -2520.0
       y: -960.0
       w: 500.0
       h: 1227.0
@@ -6098,13 +6099,14 @@ layout:
       custW: true
       custH: false
     sb:equipment_window:scrollbar:
-      x: -2600.0
-      y: -340.0
-      w: 240.0
+      x: -2860.0
+      y: -60.0
+      w: 260.0
       h: 260.0
       collapsed: false
       custW: true
       custH: true
+      softW: true
     item:equipment_window:arcane:
       x: -3860.0
       y: 40.0
@@ -6122,23 +6124,25 @@ layout:
       custW: true
       custH: false
     det:equipment_window:detect_1:
-      x: -2600.0
-      y: -660.0
-      w: 240.0
-      h: 260.0
+      x: -2860.0
+      y: -500.0
+      w: 280.0
+      h: 407.0
       collapsed: false
       custW: true
-      custH: false
+      custH: true
+      softW: true
+      softH: true
     item:mod_window:drop_item:
-      x: -1640.0
-      y: -120.0
+      x: -1380.0
+      y: 100.0
       w: 380.0
       h: 815.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:normal:name:
-      x: -3280.0
+      x: -3260.0
       y: -620.0
       w: 320.0
       h: 420.0
@@ -6146,11 +6150,11 @@ layout:
       custW: false
       custH: false
     fld:equipment_window:normal:count:
-      x: -3280.0
+      x: -3260.0
       y: -960.0
       collapsed: false
     fld:equipment_window:arcane:name:
-      x: -3280.0
+      x: -3260.0
       y: 760.0
       w: 320.0
       h: 360.0
@@ -6158,7 +6162,7 @@ layout:
       custW: false
       custH: false
     fld:equipment_window:arcane:arcane_level:
-      x: -3280.0
+      x: -3260.0
       y: 40.0
       w: 320.0
       h: 340.0
@@ -6166,7 +6170,7 @@ layout:
       custW: true
       custH: true
     fld:equipment_window:arcane:count:
-      x: -3280.0
+      x: -3260.0
       y: 400.0
       w: 320.0
       h: 340.0
@@ -6174,24 +6178,35 @@ layout:
       custW: false
       custH: false
     fld:mod_window:mod:mod_name:
-      x: -1220.0
-      y: -520.0
+      x: -940.0
+      y: -300.0
+      w: 320.0
+      h: 300.0
       collapsed: false
+      custW: false
+      custH: true
+      softH: true
     fld:mod_window:mod:mod_drain:
-      x: -880.0
-      y: -960.0
-      w: 420.0
+      x: -940.0
+      y: -640.0
+      w: 320.0
       h: 300.0
       collapsed: false
       custW: true
       custH: true
+      softW: true
     fld:mod_window:mod:mod_count:
-      x: -1220.0
+      x: -940.0
       y: -960.0
+      w: 320.0
+      h: 280.0
       collapsed: false
+      custW: false
+      custH: true
+      softH: true
     tell:mod_window:drop_item:tell_3:
-      x: -1240.0
-      y: -120.0
+      x: -940.0
+      y: 100.0
       collapsed: false
     trigger:owned_refresh:
       x: -920.0
@@ -6366,21 +6381,24 @@ layout:
       softW: true
       softH: true
     det:mod_window:detect_h:
-      x: -380.0
+      x: -520.0
       y: -960.0
-      w: 240.0
-      h: 260.0
-      collapsed: false
-      custW: false
-      custH: false
-    det:equipment_window:detect_h:
-      x: -2600.0
-      y: -960.0
-      w: 240.0
-      h: 278.0
+      w: 280.0
+      h: 407.0
       collapsed: false
       custW: true
       custH: false
+      softW: true
+    det:equipment_window:detect_h:
+      x: -2860.0
+      y: -960.0
+      w: 280.0
+      h: 426.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
     item:relic_refinement:not_owned:
       x: 1420.0
       y: -7700.0
@@ -7796,7 +7814,7 @@ layout:
       custH: false
       softW: true
     prev:equipment_window:
-      x: -1760.0
+      x: -1960.0
       y: -960.0
       collapsed: false
     sub:relics_owned:
@@ -8048,6 +8066,20 @@ layout:
       custH: true
       softW: true
       softH: true
+    vt:ds:master:
+      x: -1580.0
+      y: -2640.0
+      collapsed: false
+    vt:sub:live_prices_joined:
+      x: 740.0
+      y: -3100.0
+      w: 760.0
+      h: 900.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
   tables:
     warframe:ds:master:
       sorts:
@@ -8089,14 +8121,14 @@ layout:
         volume: 53
     view:live_prices_joined:
       widths:
-        volume: 53
-        price_min: 67
-        price_median: 84
+        volume: 81
+        price_min: 81
+        price_median: 81
         live_sellers: 110
         live_median: 103
-        count: 41
-        name: 189
-        total: 99
+        count: 81
+        name: 284
+        total: 126
       order:
       - name
       - count
@@ -8108,7 +8140,7 @@ layout:
       - total
       sorts:
       - col: price_median
-        dir: -1
+        dir: 1
     ds:mods:
       order:
       - mod_name
@@ -8669,6 +8701,21 @@ layout:
         count: 63
         item: 167
         relic: 88
+    acthist:action:
+      widths:
+        when: 169
+        by: 70
+        ran: 58
+        sounds: 58
+        chained: 58
+    inlog:trigger:
+      widths:
+        when: 151
+        event: 40
+        button: 52
+        mods: 40
+        pos: 65
+        result: 45
   open_images:
   - atlas
   - live_game_window
@@ -8797,6 +8844,7 @@ layout:
     - sub:master_prime_parts
     - sub:distinct_relic_items
     - vt:ds:prices_live
+    - vt:sub:live_prices_joined
     outline:
       color: '#8a91a0'
       style: none
@@ -8823,6 +8871,7 @@ layout:
     - fld:equipment_window:arcane:name
     - fld:equipment_window:arcane:arcane_level
     - fld:equipment_window:arcane:count
+    - acthist:action
     outline:
       color: '#8a91a0'
       style: none
@@ -8895,6 +8944,7 @@ layout:
     - producer:producer
     - producer:mod_catalog_producer
     - ds:mod_catalog
+    - vt:ds:master
     outline:
       color: '#8a91a0'
       style: none
@@ -9609,6 +9659,9 @@ layout:
   - gamehist
   - vt:sub:relics_owned_contents_priced
   - vt:sub:top_picks_for_relics
+  - vt:ds:master
+  - vt:sub:live_prices_joined
+  - acthist:action
   sub_groups:
   - id: subgroup_5
     parent: group_22
@@ -9673,25 +9726,6 @@ layout:
     titleColor: '#e69a5a'
     titleAlign: left
     schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
-  - id: subgroup_35
-    parent: group_19
-    title: ''
-    members:
-    - win:equipment_window
-    - det:equipment_window:detect_h
-    - det:equipment_window:detect_1
-    - sb:equipment_window:scrollbar
-    - prev:equipment_window
-    outline:
-      color: '#5aa9e6'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#15202c'
-    titleBg: ''
-    titleColor: '#5aa9e6'
-    titleAlign: left
-    schemeId: blue
   schemes:
   - id: s_73972008-70b7-4159-add1-51fb9c3fd516
     name: loadout_groups
