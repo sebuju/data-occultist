@@ -33,14 +33,17 @@ import { createCachedLayer, stats, flags, resetStats } from "./edgecache.js";
 let edges = [];        // [{ pts, straight, stroke, alpha, width, lineCap, dash, capStart, capEnd, selColor }]
 let groups = [];       // [{ x,y,w,h, tier, outline, fill, dashed }]
 let corridors = [];    // [{ axis:'v'|'h', x,y,w,h }] — bus channels, debug tint (routing.js ROUTE.corridors)
+let obstacles = [];     // [{x,y,w,h}] — hard obstacle rects (group title headings) fed to the router,
+                        // debug outline only while ROUTE.corridors is on (routing.js showObstacles)
 let edgeOpts = { radius: 14 };
 
-export function setEdges(list, opts) { edges = list || []; if (opts) edgeOpts = opts; over?.markDirty(); requestRedraw(); }
+export function setEdges(list, opts, dirty = true) { edges = list || []; if (opts) edgeOpts = opts; if (dirty) over?.markDirty(); requestRedraw(); }
 export function setGroups(list) { groups = list || []; under?.markDirty(); requestRedraw(); }
 // Bus corridors, drawn as a flat tint on the SAME under-layer as the group boxes (they belong behind
 // the node cards, like a group box does — a second cached layer for two fillRects would be a copy of
 // createCachedLayer, not a use of it).
 export function setCorridors(list) { corridors = list || []; under?.markDirty(); requestRedraw(); }
+export function setObstacles(list) { obstacles = list || []; under?.markDirty(); requestRedraw(); }
 // For paths that mutate edge geometry IN PLACE without going through setEdges (the morph tick in
 // routing.js writes rec.pts directly): invalidate the wire cache so the next frame direct-draws.
 export function invalidateEdges() { over?.markDirty(); requestRedraw(); }
@@ -170,27 +173,31 @@ function drawEdges(ctx, worldRect) {
 function drawUnder(ctx, worldRect) {
     drawGroups(ctx, worldRect);
     if (corridors.length) drawCorridors(ctx, worldRect);
+    if (obstacles.length) drawObstacles(ctx, worldRect);
 }
 
-// Translucent strip per channel, graded by how FULL it is — lanes used of lanes available. Green =
-// room to spare, yellow = filling, red = saturated (that last one is the channel about to start
-// refusing wires, pushing them to the A* fallback). Fill only, no border: at a few hundred corridors
-// an outline reads as another wire rather than as an edge.
-const COR_RAMP = [[63, 185, 80], [232, 195, 58], [255, 77, 77]];   // green -> yellow -> red
-// Two-stop lerp: 0..0.5 green->yellow, 0.5..1 yellow->red. Alpha is a touch above the old flat tint
-// so the hue is actually legible at 10% coverage.
-function corFill(load) {
-    const t = load <= 0 ? 0 : load >= 1 ? 1 : load;
-    const seg = t < 0.5 ? 0 : 1, f = t < 0.5 ? t * 2 : (t - 0.5) * 2;
-    const a = COR_RAMP[seg], b = COR_RAMP[seg + 1];
-    const r = Math.round(a[0] + (b[0] - a[0]) * f), g = Math.round(a[1] + (b[1] - a[1]) * f), bl = Math.round(a[2] + (b[2] - a[2]) * f);
-    return `rgba(${r},${g},${bl},0.14)`;
-}
+// Translucent strip per channel, flat colour by AXIS (not load — a gradient across every corridor
+// was noise). Fill only, no border: at a few hundred corridors an outline reads as another wire
+// rather than as an edge.
+const COR_V = "rgba(79,163,255,0.14)";   // vertical corridors
+const COR_H = "rgba(232,195,58,0.14)";   // horizontal corridors
 function drawCorridors(ctx, worldRect) {
     for (const c of corridors) {
         if (worldRect && !bboxHits([c.x, c.y, c.x + c.w, c.y + c.h], worldRect, 0)) continue;
-        ctx.fillStyle = corFill((c.used || 0) / Math.max(1, c.cap || 1));
+        ctx.fillStyle = c.axis === "v" ? COR_V : COR_H;
         ctx.fillRect(c.x, c.y, c.w, c.h);
+    }
+}
+
+// Hard obstacle rects fed to the router (group title headings, blockRects) — debug-only outline so a
+// carve gone wrong (a corridor sliced across a heading) is visible. Stroke, not fill: these already
+// sit under a group's own fill/border and a solid tint would just blot it out.
+function drawObstacles(ctx, worldRect) {
+    ctx.strokeStyle = "rgba(255,140,0,0.8)";
+    ctx.lineWidth = 1.5;
+    for (const o of obstacles) {
+        if (worldRect && !bboxHits([o.x, o.y, o.x + o.w, o.y + o.h], worldRect, 0)) continue;
+        ctx.strokeRect(o.x + 0.75, o.y + 0.75, o.w - 1.5, o.h - 1.5);
     }
 }
 

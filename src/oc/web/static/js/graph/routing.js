@@ -16,7 +16,7 @@ import { faceKeep, faceToward, faceMidpoint, faceCss, OPPOSITE_FACE } from "./fa
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot, urlFlag, freezeNodeSizes, thawNodeSizes } from "./state.js";
 import { persist } from "./persist.js";
 import { selectedNodeId, wire, startWire, canDisable, nodeTypeOf } from "./main.js";
-import { setEdges, invalidateEdges, setCorridors } from "./edgecanvas.js";
+import { setEdges, invalidateEdges, setCorridors, setObstacles } from "./edgecanvas.js";
 import { typeColor, grayscale, cssVar } from "./colors.js";
 import { h } from "../dom.js";
 
@@ -358,6 +358,7 @@ function placePortDots(links) {
 
 const MORPH_MS = 150, MORPH_N = 32;
 let tweenRoutes = false;     // set by runRouting so the NEXT draw morphs the lines that changed
+let lastRadius = null;       // last ROUTE.radius passed to setEdges — dirty-check (edgeOpts lives in edgecanvas.js, not readable here)
 
 // Has the routed geometry for a record moved enough to repaint/morph? (compares against its last
 // adopted shape, stored on the display record as `_geo`/`_routed`.)
@@ -518,6 +519,11 @@ const VIA_COLOR = { bus: "#4fa3ff", facing: "#e8c33a", fallback: "#ff4d4d" };
 // Resolve a link's paint style (colour/dash/caps + the three dim states) into its record. Mirrors
 // the graph.css cascade: caps by declaration order (later wins), dim alpha by specificity
 // (stale !important > sel !important > sel-inactive .1 > dis .4).
+function dashEq(a, b) { return a.length === b.length && a.every((v, i) => v === b[i]); }
+
+// Assigns the resolved style onto `rec`, compare-before-write so the caller can tell whether
+// anything the canvas draw callback actually reads changed — a repaint with identical style AND
+// geometry must not bust the raster cache (edgecanvas.setEdges' dirty flag rides this).
 function applyEdgeStyle(rec, l, dis, anySel, selCol) {
     const cs = new Set(l.cls.split(" "));
     const sel = cs.has("sel"), stale = !!l._stale;
@@ -531,12 +537,11 @@ function applyEdgeStyle(rec, l, dis, anySel, selCol) {
     const color = ROUTE.corridors && l._via ? VIA_COLOR[l._via] || VIA_COLOR.fallback
         : isGate ? gateStateColor(l) : l.srcType ? typeColor(l.srcType) : kindColor(cs);
     const gray = dis || stale || (anySel && !sel);
-    rec.stroke = gray ? grayscale(color) : color;
-    rec.alpha = stale ? 0.3 : sel ? 1 : (anySel && !sel) ? 0.1 : dis ? 0.4 : 1;
-    rec.width = 1.8;
-    rec.dash = cs.has("img") ? [2, 4] : isWire ? [4, 4] : isGate ? [6, 4] : [];
-    rec.lineCap = isWatch ? "round" : "butt";
-    rec.selColor = selCol;
+    const stroke = gray ? grayscale(color) : color;
+    const alpha = stale ? 0.3 : sel ? 1 : (anySel && !sel) ? 0.1 : dis ? 0.4 : 1;
+    const width = 1.8;
+    const dash = cs.has("img") ? [2, 4] : isWire ? [4, 4] : isGate ? [6, 4] : [];
+    const lineCap = isWatch ? "round" : "butt";
     let capEnd = "squarecap";
     if (cs.has("toview")) capEnd = "flowarrow";
     if (isFlow) capEnd = "flowarrow";
@@ -545,7 +550,14 @@ function applyEdgeStyle(rec, l, dis, anySel, selCol) {
     let capStart = "squarecap";
     if (isFlow || isWatch) capStart = sel ? "portcap-sel" : "portcap";
     if (isWire) { capStart = null; capEnd = null; }
-    rec.capStart = capStart; rec.capEnd = capEnd;
+
+    const changed = rec.stroke !== stroke || rec.alpha !== alpha || rec.width !== width
+        || rec.lineCap !== lineCap || rec.selColor !== selCol || rec.capStart !== capStart
+        || rec.capEnd !== capEnd || !rec.dash || !dashEq(rec.dash, dash);
+
+    rec.stroke = stroke; rec.alpha = alpha; rec.width = width; rec.dash = dash;
+    rec.lineCap = lineCap; rec.selColor = selCol; rec.capStart = capStart; rec.capEnd = capEnd;
+    return changed;
 }
 
 function cancelMorphC(rec) { if (rec && rec._raf) { cancelAnimationFrame(rec._raf); rec._raf = null; } }
@@ -577,21 +589,27 @@ function startMorphC(rec, toPts) {
 function paintCanvas(links, disSet, anySel) {
     const used = new Set();
     const selCol = cssVar("--sel");
+    // Track whether anything the draw callback reads actually changed this pass, so a repaint
+    // with identical geometry+style (e.g. the forced pass on return from pretty view) doesn't
+    // bust the raster cache (edgecanvas.js setEdges' dirty flag).
+    let dirty = lastRadius !== ROUTE.radius;
+    lastRadius = ROUTE.radius;
     for (const l of links) {
         used.add(l.key);
         let rec = canvasRecs.get(l.key);
-        if (!rec) { rec = { key: l.key }; canvasRecs.set(l.key, rec); }
+        if (!rec) { rec = { key: l.key }; canvasRecs.set(l.key, rec); dirty = true; }
         l._rec = rec;
-        applyEdgeStyle(rec, l, disSet.has(l.aId) || disSet.has(l.bId), anySel, selCol);
+        if (applyEdgeStyle(rec, l, disSet.has(l.aId) || disSet.has(l.bId), anySel, selCol)) dirty = true;
         const c = routeCache.get(l.key);
         if (c && c.pts.length >= 2) {
-            if (tweenRoutes && rec._routed && geoChanged(rec, c.pts)) startMorphC(rec, c.pts);
-            else if (!rec._raf && geoChanged(rec, c.pts)) setRoutedC(rec, c.pts);
+            if (tweenRoutes && rec._routed && geoChanged(rec, c.pts)) { startMorphC(rec, c.pts); dirty = true; }
+            else if (!rec._raf && geoChanged(rec, c.pts)) { setRoutedC(rec, c.pts); dirty = true; }
         } else if (!rec.pts) {
             setElbowC(rec, l);   // brand-new line: provisional elbow until the router runs
+            dirty = true;
         }
     }
-    for (const [k, rec] of canvasRecs) if (!used.has(k)) { cancelMorphC(rec); canvasRecs.delete(k); }
+    for (const [k, rec] of canvasRecs) if (!used.has(k)) { cancelMorphC(rec); canvasRecs.delete(k); dirty = true; }
     const list = [...canvasRecs.values()];
     if (wire) {
         const dx = Math.max(30, (wire.x2 - wire.x1) / 2);
@@ -599,8 +617,9 @@ function paintCanvas(links, disSet, anySel) {
         wireRec.stroke = cssVar("--accent"); wireRec.alpha = 1; wireRec.selColor = selCol;
         wireRec.pts = sampleCubic([wire.x1, wire.y1], [wire.x1 + dx, wire.y1], [wire.x2 - dx, wire.y2], [wire.x2, wire.y2], 24);
         list.push(wireRec);
-    } else wireRec = null;
-    setEdges(list, { radius: ROUTE.radius });
+        dirty = true;   // live drag wire redraws every frame
+    } else if (wireRec) { wireRec = null; dirty = true; }
+    setEdges(list, { radius: ROUTE.radius }, dirty);
 }
 
 // Coalesce edge redraws under a drag: each requestEdges() queues at most ONE redraw per
@@ -651,6 +670,11 @@ const ROUTE = {
         hopCost: 120,   // cost of one 90-degree turn onto the next bus, in px of ride distance
         faceBias: 200,  // px charged for boarding off the face pointing AWAY from the target (0 straight
                         // at it); stops a line leaving the wrong side when a nearer corridor sits behind it
+        narrowW: 0,     // max px charged for BOARDING the narrowest (cap=1) corridor; fades to 0 at
+                        // trunkCap lanes. Off (0) by default — a per-corridor bottleneck penalty so
+                        // wires prefer a wide trunk over a skinny parallel gap once tuned on.
+                        // window.__route.bus.narrowW=200; __reroute()
+        trunkCap: 4,    // corridor lane-count at/above which narrowW's penalty is fully faded out
     },
     hier: false,        // FLAT one global pass (routeGraph + a single deCollide) is the default — it routes
                         // the whole graph together, far cleaner than the per-group GATE funnelling. Set
@@ -663,6 +687,13 @@ const ROUTE = {
     cell: 10,           // grid resolution (world px) — fine enough to squeeze a line between two others
     clearWanted: 5,     // cells of breathing room a line prefers around nodes
     radius: 14,         // corner rounding for "curve"
+    titleDown: 40,      // px to grow each group title's obstacle rect DOWNWARD past its measured text
+                        // (groups.titleRects) — top edge stays put, only height grows. Feeds both the
+                        // general line-avoid obstacle list AND the bus corridor carve (blockRects).
+                        // window.__route.titleDown=40; __reroute()
+    superUp: 40,        // px to grow each SUPER-GROUP label band's obstacle rect UPWARD, into the box
+                        // (the band sits at the box's BOTTOM, so clearing it means growing up, not down).
+                        // window.__route.superUp=40; __reroute()
 };
 // internal handles: tweak ROUTE in the console, __reroute() to force a recompute
 // (e.g. after flipping __route.corners to "square").
@@ -805,6 +836,10 @@ function showCorridors(cors) {
     setCorridors(lastCorridors);
 }
 
+// Hard obstacle rects (group title headings) fed to the router this pass — outlined only while
+// ROUTE.corridors debug is on, cleared otherwise so flipping the flag off actually removes them.
+function showObstacles(rects) { setObstacles(ROUTE.corridors ? (rects || []) : []); }
+
 // ---- corridor debug readout ----------------------------------------------------------------
 // A passive badge, mounted only while ROUTE.corridors is on: the followability audit of the last
 // pass plus which router placed what. Built once and updated in place (rule 1) — it refreshes per
@@ -831,7 +866,7 @@ function showRouteStats(grade, cors) {
 function obstacleRects({ boxes = true } = {}) {
     const out = [];
     for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) out.push(r); }
-    for (const t of groups.titleRects()) out.push(t);   // lines prefer not to cross a group title
+    for (const t of groups.titleRects(ROUTE.titleDown)) out.push(t);   // lines prefer not to cross a group title
     // group boxes: in hier mode a box IS a hard obstacle + drives every gate, so a box move/resize
     // (even without a routed node's own rect changing) must invalidate the route cache. deCollide
     // passes {boxes:false} — it takes the boxes as CONTAINERS (clamp, not freeze) instead.
@@ -984,17 +1019,20 @@ function runRouting() {
     // super-group: block the label's x-span from the group content down to the label — closing the
     // gap between the group and its watermark entirely so no line can slot between them. Only the
     // label's WIDTH is blocked (band sides stay open canvas the lines may cross).
+    // ROUTE.superUp grows the band's TOP edge upward, into the box content — mirrors titleDown but
+    // reversed: this band sits at the BOTTOM of its box, so "further clear of it" means further UP.
     for (const b of groups.superGroupBoxes()) {
         const r = b.labelRect;
-        if (r) titleBands.push({ x0: r.x, y0: b.box.y + b.box.h - b.bandH, x1: r.x + r.w, y1: r.y + r.h });
-        else if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
+        if (r) titleBands.push({ x0: r.x, y0: b.box.y + b.box.h - b.bandH - ROUTE.superUp, x1: r.x + r.w, y1: r.y + r.h });
+        else if (b.bandH > 0) titleBands.push({ x0: b.box.x, y0: b.box.y + b.box.h - b.bandH - ROUTE.superUp, x1: b.box.x + b.box.w, y1: b.box.y + b.box.h });
     }
     // Every heading a wire — and, for the bus router, a CORRIDOR — must not cross: each group's own
     // title strip plus the band rects above. titleBands alone is not enough: it deliberately omits a
     // GATED group's header (the A* path catches that one via `walls`/deCollide instead), which left
     // corridors carved straight across group titles.
-    const blockRects = groups.titleRects()
+    const blockRects = groups.titleRects(ROUTE.titleDown)
         .concat(titleBands.map((b) => ({ x: b.x0, y: b.y0, w: b.x1 - b.x0, h: b.y1 - b.y0 })));
+    showObstacles(blockRects);
     const config = { clearance: ROUTE.cell * 2, laneGap: ROUTE.cell, bench: ROUTE.bench };
     // hierarchical: collapse each group to a hard box and funnel its crossing lines through gates.
     // groupOf() returns the group RECORD; hierRoute/gates key off the group id.

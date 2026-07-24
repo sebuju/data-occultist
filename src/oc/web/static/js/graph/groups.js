@@ -975,7 +975,10 @@ export function superGroupBoxes() {
 // _titleX/_titleW are measured in groupAfterSize. Until a group has rendered once they are unset, and
 // the fallback is the FULL band — wider than needed, never narrower, so an unmeasured group can never
 // leak a wire across its title.
-export function titleRects() {
+// `extraDown` grows the obstacle DOWNWARD from the title's own bottom edge, past the measured text —
+// the title's top (y) never moves, only h grows, so a wire/corridor gets pushed further clear of the
+// heading than the text alone accounts for. 0 by default (routing.js ROUTE.titleDown).
+export function titleRects(extraDown = 0) {
     const out = [];
     for (const g of groups) {
         const th = g._titleH || TITLE_H;
@@ -984,7 +987,7 @@ export function titleRects() {
         const measured = g._titleW > 0;
         const x = measured ? box.x + (g._titleX || 0) : box.x;
         const w = measured ? Math.min(g._titleW, box.w) : box.w;
-        out.push({ x, y: box.y, w, h: th });
+        out.push({ x, y: box.y, w, h: th + extraDown });
     }
     return out;
 }
