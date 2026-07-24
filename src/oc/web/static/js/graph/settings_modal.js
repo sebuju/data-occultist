@@ -11,6 +11,7 @@ import { fmtBytes } from "../bytefmt.js";
 import { applyLiveInterval } from "./panels/livewin.js";
 import { buildBackups } from "./backups.js";
 import { createGame, loadGame } from "./main.js";
+import { richPickerPop } from "./rich_picker.js";
 
 // Show the topbar kill-GPU button only while a GPU OCR session is actually LOADED
 // (holding VRAM) — `ocr.gpu_active`, not merely "GPU is selected". The heartbeat hub
@@ -44,26 +45,37 @@ const CAPTURE_LABELS = {
 };
 
 async function wireCaptureControls(root) {
-    const fgSel = root.querySelector("#captureFg"), bgSel = root.querySelector("#captureBg");
-    if (!fgSel || !bgSel) return;
+    const fgBtn = root.querySelector("#captureFg"), bgBtn = root.querySelector("#captureBg");
+    if (!fgBtn || !bgBtn) return;
     try {
         const st = await api.captureBackend.getBackend();
-        // Both grabbers pick from the same plain-backend list (sub_names).
-        const opts = () => (st.sub_names || []).map((n) => h("option", { value: n }, CAPTURE_LABELS[n] || n));
-        fgSel.replaceChildren(...opts());
-        bgSel.replaceChildren(...opts());
-        function sync(s) {
-            if (s.foreground) fgSel.value = s.foreground;
-            if (s.background) bgSel.value = s.background;
-        }
+        const label = (n) => CAPTURE_LABELS[n] || n;
+        // Both grabbers pick from the same plain-backend list (sub_names), fetched once above —
+        // the picker reads it live at click time (a thunk would refetch; this list never changes
+        // mid-session, so the one fetch is enough).
+        const names = st.sub_names || [];
+        const sync = (s) => {
+            if (s.foreground) fgBtn.textContent = `<${label(s.foreground)}>`;
+            if (s.background) bgBtn.textContent = `<${label(s.background)}>`;
+        };
         sync(st);
-        const change = async () => {
-            const done = timed(`capture: ${fgSel.value} fg / ${bgSel.value} bg`);
-            try { sync(await api.captureBackend.setBackend({ foreground: fgSel.value, background: bgSel.value })); done(); }
+        const change = async (foreground, background) => {
+            const done = timed(`capture: ${foreground} fg / ${background} bg`);
+            try { sync(await api.captureBackend.setBackend({ foreground, background })); done(); }
             catch (e) { done(String(e.message || e), "err"); }
         };
-        fgSel.addEventListener("change", change);
-        bgSel.addEventListener("change", change);
+        const cur = (btn) => (btn.textContent.match(/^<(.*)>$/) || [, ""])[1];
+        const curName = (btn) => names.find((n) => label(n) === cur(btn)) || names[0];
+        fgBtn.addEventListener("click", () => richPickerPop({
+            anchor: fgBtn, current: curName(fgBtn),
+            groups: [[null, names.map((n) => ({ value: n, label: label(n) }))]],
+            onPick: (v) => change(v, curName(bgBtn)),
+        }));
+        bgBtn.addEventListener("click", () => richPickerPop({
+            anchor: bgBtn, current: curName(bgBtn),
+            groups: [[null, names.map((n) => ({ value: n, label: label(n) }))]],
+            onPick: (v) => change(curName(fgBtn), v),
+        }));
     } catch { /* ignore */ }
 }
 
@@ -72,25 +84,38 @@ async function wireOcrControls(root) {
     if (!sel) return;
     try {
         const st = await api.ocr.getDevice();
-        const gpuOpt = sel.querySelector('option[value="gpu"]');
-        const autoOpt = sel.querySelector('option[value="auto"]');
-        const GPU_LBL = gpuOpt ? gpuOpt.textContent : "GPU";
-        const AUTO_LBL = autoOpt ? autoOpt.textContent : "Auto";
+        const DEVICE_OPTS = [["auto", "Auto (CPU; GPU for precapture)"], ["cpu", "CPU"], ["gpu", "GPU"]];
+        let deviceGate = { noCuda: false, noEngine: false };   // set by gateDevice, read by the picker
         // GPU + Auto need CUDA AND an engine that honours it. No CUDA install -> "(n/a)";
         // an engine that can't use CUDA (OpenVINO runs CPU/iGPU) -> "(n/a: OpenVINO)". Either
         // way the device switch would be a no-op, so grey them out. Re-run when the engine
         // changes (cuda_capable is per-engine).
         function gateDevice(s) {
-            const noCuda = !s.gpu_available, noEngine = s.cuda_capable === false;
-            if (gpuOpt) {
-                gpuOpt.disabled = noCuda || noEngine;
-                gpuOpt.textContent = noCuda ? "GPU (n/a)" : noEngine ? "GPU (n/a: OpenVINO)" : GPU_LBL;
-            }
-            if (autoOpt) {
-                autoOpt.disabled = noCuda || noEngine;
-                autoOpt.textContent = noEngine ? "Auto (n/a: OpenVINO)" : AUTO_LBL;
-            }
+            deviceGate = { noCuda: !s.gpu_available, noEngine: s.cuda_capable === false };
         }
+        const deviceLabel = (v) => {
+            const base = (DEVICE_OPTS.find(([dv]) => dv === v) || [, v])[1];
+            const { noCuda, noEngine } = deviceGate;
+            if (v === "gpu") return noCuda ? "GPU (n/a)" : noEngine ? "GPU (n/a: OpenVINO)" : base;
+            if (v === "auto") return noEngine ? "Auto (n/a: OpenVINO)" : base;
+            return base;
+        };
+        const setDeviceLabel = (v) => { sel.dataset.v = v; sel.textContent = `<${deviceLabel(v)}>`; };
+        sel.addEventListener("click", () => richPickerPop({
+            anchor: sel, current: sel.dataset.v || "auto",
+            groups: [[null, DEVICE_OPTS.map(([v]) => ({
+                value: v, label: deviceLabel(v),
+                disabled: v !== "cpu" && (deviceGate.noCuda || deviceGate.noEngine),
+            }))]],
+            onPick: async (v) => {
+                setDeviceLabel(v);
+                const done = timed(`OCR device → ${v}`);
+                // Keep the user's pick; only correct it if the server reports a different MODE.
+                // (Never fall back to the live device — under "auto" that's cpu and would yank it.)
+                try { const r = await api.ocr.setDevice(v); if (r.mode) setDeviceLabel(r.mode); syncKillGpu(r); syncCompute(r); done(); }
+                catch (e) { done(String(e.message || e), "err"); }
+            },
+        }));
         // "running on" line: the ACTUAL compute target, so DirectML (iGPU) never reads as
         // "cpu". Prefers a live session (gpu_active/dml_active); falls back to what the config
         // WILL run on the next read when the lazy session isn't built yet.
@@ -109,35 +134,34 @@ async function wireOcrControls(root) {
             if (computeRow.hidden) computeRow.hidden = false;
         }
         gateDevice(st);
-        sel.value = st.mode || st.device;   // the select reflects the MODE, not the live device
+        setDeviceLabel(st.mode || st.device);   // the button reflects the MODE, not the live device
         syncKillGpu(st);
         syncCompute(st);
-        sel.addEventListener("change", async () => {
-            const done = timed(`OCR device → ${sel.value}`);
-            // Keep the user's pick; only correct it if the server reports a different MODE. (Never
-            // fall back to the live device — under "auto" that's cpu and would yank the dropdown.)
-            try { const r = await api.ocr.setDevice(sel.value); if (r.mode) sel.value = r.mode; syncKillGpu(r); syncCompute(r); done(); }
-            catch (e) { done(String(e.message || e), "err"); }
-        });
 
         // Backend-specific knobs: the state reports null for anything the live engine
         // lacks, so a control only appears when it would actually do something.
         const engRow = root.querySelector("#ocrEngineRow"), engSel = root.querySelector("#ocrEngine");
         if (engRow && st.engine_type && (st.engine_types || []).length) {
             engRow.hidden = false;
-            engSel.replaceChildren(...st.engine_types.map((n) => h("option", { value: n }, n)));
-            engSel.value = st.engine_type;
-            engSel.addEventListener("change", async () => {
-                const done = timed(`OCR engine → ${engSel.value}`);
-                // GPU/Auto availability is per-engine (OpenVINO can't use CUDA), so re-gate
-                // the device select from the fresh state the switch returns.
-                try {
-                    const r = await api.ocr.setEngineType(engSel.value);
-                    if (r.engine_type) engSel.value = r.engine_type;
-                    gateDevice(r); syncKillGpu(r); syncCompute(r);
-                    done();
-                } catch (e) { done(String(e.message || e), "err"); }
-            });
+            const engTypes = st.engine_types;
+            const setEngLabel = (v) => { engSel.dataset.v = v; engSel.textContent = `<${v}>`; };
+            setEngLabel(st.engine_type);
+            engSel.addEventListener("click", () => richPickerPop({
+                anchor: engSel, current: engSel.dataset.v,
+                groups: [[null, engTypes.map((n) => ({ value: n, label: n }))]],
+                onPick: async (v) => {
+                    setEngLabel(v);
+                    const done = timed(`OCR engine → ${v}`);
+                    // GPU/Auto availability is per-engine (OpenVINO can't use CUDA), so re-gate
+                    // the device picker from the fresh state the switch returns.
+                    try {
+                        const r = await api.ocr.setEngineType(v);
+                        if (r.engine_type) setEngLabel(r.engine_type);
+                        gateDevice(r); syncKillGpu(r); syncCompute(r);
+                        done();
+                    } catch (e) { done(String(e.message || e), "err"); }
+                },
+            }));
         }
         const thRow = root.querySelector("#ocrThreadsRow"), thIn = root.querySelector("#ocrThreads");
         if (thRow && st.threads != null) {
@@ -149,11 +173,10 @@ async function wireOcrControls(root) {
                 catch (e) { done(String(e.message || e), "err"); }
             });
         }
-        const scRow = root.querySelector("#ocrScaleRow"), scSel = root.querySelector("#ocrScale");
+        const scRow = root.querySelector("#ocrScaleRow"), scBtn = root.querySelector("#ocrScale");
         if (scRow && st.scale != null) {   // null => engine has no downscale knob -> stay hidden
             scRow.hidden = false;
-            scSel.value = String(st.scale || 1);
-            wireOcrScale(scSel);   // shared wiring helper (rule 7)
+            wireOcrScale(scBtn, String(st.scale || 1));   // shared wiring helper (rule 7)
         }
         const gmRow = root.querySelector("#ocrGpuMemRow"), gmIn = root.querySelector("#ocrGpuMem");
         if (gmRow && st.gpu_mem_gb != null) {
@@ -168,15 +191,24 @@ async function wireOcrControls(root) {
     } catch { /* ignore */ }
 }
 
-// Wire the OCR detection-downscale <select> to its api setter, echoing the server's canonical
-// value back into the element. Lives in the settings modal (was the live panel). Caller seeds
-// the element's value first; this only attaches the change handler.
-export function wireOcrScale(el) {
-    el.addEventListener("change", async () => {
-        const done = timed(`OCR downscale → ${el.value}×`);
-        try { const r = await api.ocr.setScale(el.value); el.value = String(r.scale || 1); done(); }
-        catch (e) { done(String(e.message || e), "err"); }
-    });
+const SCALE_OPTS = [["1", "1× full"], ["2", "1/2 (1/4 px)"], ["4", "1/4 (1/16 px)"]];
+
+// Wire the OCR detection-downscale rich-dd-btn to its api setter, echoing the server's canonical
+// value back into the button. Lives in the settings modal (was the live panel). `cur` seeds the
+// button's initial label.
+export function wireOcrScale(btn, cur) {
+    const setLabel = (v) => { btn.dataset.v = v; btn.textContent = `<${(SCALE_OPTS.find(([sv]) => sv === v) || [, v])[1]}>`; };
+    setLabel(cur);
+    btn.addEventListener("click", () => richPickerPop({
+        anchor: btn, current: btn.dataset.v,
+        groups: [[null, SCALE_OPTS.map(([v, l]) => ({ value: v, label: l }))]],
+        onPick: async (v) => {
+            setLabel(v);
+            const done = timed(`OCR downscale → ${v}×`);
+            try { const r = await api.ocr.setScale(v); setLabel(String(r.scale || 1)); done(); }
+            catch (e) { done(String(e.message || e), "err"); }
+        },
+    }));
 }
 
 // Settings modal (cog): new-game creation, OCR controls, and a backups section — all
@@ -195,18 +227,15 @@ export function wireSettingsButton() {
                 // background grabber (occluded). Set both the same for single-backend capture.
                 h("label", { class: "set-row", title: "How frames are grabbed while the game IS the focused window — cheapest wins (MSS: CPU BitBlt, no GPU). Options come from the live registry." },
                     h("span", "foreground"),
-                    h("select", { id: "captureFg" })),
+                    h("button", { id: "captureFg", class: "rich-dd-btn", type: "button" }, "<…>")),
                 h("label", { class: "set-row", title: "How frames are grabbed while the game is backgrounded/occluded — must read the window's own surface (PrintWindow: GPU-light, re-renders; WGC: GPU-streamed, no re-render). Set the same as foreground for single-backend capture." },
                     h("span", "background"),
-                    h("select", { id: "captureBg" }))),
+                    h("button", { id: "captureBg", class: "rich-dd-btn", type: "button" }, "<…>"))),
             h("section", { class: "set-sec" },
                 h("h4", "OCR"),
                 h("label", { class: "set-row", title: "OCR device — GPU needs onnxruntime-gpu + CUDA. Auto: CPU for editing, GPU for the precapture batch." },
                     h("span", "device"),
-                    h("select", { id: "ocrDevice" },
-                        h("option", { value: "auto" }, "Auto (CPU; GPU for precapture)"),
-                        h("option", { value: "cpu" }, "CPU"),
-                        h("option", { value: "gpu" }, "GPU"))),
+                    h("button", { id: "ocrDevice", class: "rich-dd-btn", type: "button" }, "<…>")),
                 // Where OCR inference ACTUALLY runs. The device select above is the CUDA cpu/gpu
                 // MODE; it reads "cpu" even when OCR runs on a non-NVIDIA GPU via DirectML (the
                 // iGPU path), which is confusing — this line states the real compute target.
@@ -216,17 +245,14 @@ export function wireSettingsButton() {
                 // Backend-specific knobs: hidden until the server reports the engine has them.
                 h("label", { class: "set-row", id: "ocrEngineRow", hidden: true, title: "Inference engine for the ppocr5 OCR backend. OpenVINO is often the faster CPU path on Intel; only installed runtimes are listed. Takes effect on the next read (model rebuilds lazily)." },
                     h("span", "engine"),
-                    h("select", { id: "ocrEngine" })),
+                    h("button", { id: "ocrEngine", class: "rich-dd-btn", type: "button" }, "<…>")),
                 h("label", { class: "set-row", id: "ocrThreadsRow", hidden: true, title: "CPU threads each OCR inference may use. 0 = one per core (fastest reads, starves a running game); low values keep reads polite at some latency cost. Takes effect on the next read." },
                     h("span", "cpu threads"),
                     h("input", { id: "ocrThreads", type: "number", min: "0", max: "64", step: "1" })),
                 // Detection downscale — only shown when the live engine has the knob.
                 h("label", { class: "set-row", id: "ocrScaleRow", hidden: true, title: "Detection downscale — the DETECTION pass is the biggest single GPU burst per read; ½ = a quarter of the detect pixels = a much shorter stall. Recognition still crops from the full-detail frame, so text quality holds. Applies live to a running collector." },
                     h("span", "downscale"),
-                    h("select", { id: "ocrScale" },
-                        h("option", { value: "1" }, "1× full"),
-                        h("option", { value: "2" }, "1/2 (1/4 px)"),
-                        h("option", { value: "4" }, "1/4 (1/16 px)"))),
+                    h("button", { id: "ocrScale", class: "rich-dd-btn", type: "button" }, "<…>")),
                 h("label", { class: "set-row", id: "ocrGpuMemRow", hidden: true, title: "Hard VRAM ceiling (GB) for the GPU OCR session — it can never hold more than this. Too low and a big detect fails to allocate; 3 clears real 4K workloads. Applies on the next GPU session build." },
                     h("span", "gpu mem cap (GB)"),
                     h("input", { id: "ocrGpuMem", type: "number", min: "0.5", max: "64", step: "0.5" }))),

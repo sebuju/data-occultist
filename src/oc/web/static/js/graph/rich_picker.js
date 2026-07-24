@@ -16,8 +16,13 @@ import { anchoredPopover } from "./combo_popover.js";
 
 // richPickerPop({ anchor, groups, current, onPick, hint })
 //   anchor  : the trigger element (a `.gi` button) the popover opens under.
-//   groups  : [[groupTitle | null, [{ value, label, meta }]]] — a null/blank title omits the
-//             header, so a flat list is just one untitled group.
+//   groups  : [[groupTitle | null, [{ value, label, meta, disabled?, labelStyle? }]]] — a
+//             null/blank title omits the header, so a flat list is just one untitled group.
+//             `disabled` greys a row and makes it unpickable (click/Enter no-op) — for an op
+//             that's listed so the current value still shows, but doesn't apply right now (rule
+//             pipeline: an op invalid for the field's type). `labelStyle` is an optional inline
+//             style object applied to the label span — e.g. a font picker rendering each row's
+//             label in its own typeface.
 //   current : the currently-selected value — its row is marked with .sel and pre-highlighted.
 //   onPick  : (value) => void — called with the picked value, then the popover closes.
 //   hint    : optional node/string shown pinned below the scrollable list (outside it, so it
@@ -35,14 +40,18 @@ export function richPickerPop({ anchor, groups, current, onPick, hint }) {
         const r = rows[hl];
         if (r) { r.classList.add("hl"); r.scrollIntoView({ block: "nearest" }); }
     };
-    const pick = (v) => { close(); onPick(v); };
+    const disabledAt = new Set();
+    const pick = (v, i) => { if (disabledAt.has(i)) return; close(); onPick(v); };
 
     const children = [];
     for (const [grp, opts] of groups) {
         if (grp) children.push(h("div", { class: "sv-combo-group" }, grp));
         for (const o of opts) {
-            const row = h("div", { class: "sv-combo-opt rich-pick-opt" + (o.value === current ? " sel" : ""), onClick: () => pick(o.value) },
-                h("span", { class: "rich-pick-lbl" }, o.label),
+            const i = rows.length;
+            if (o.disabled) disabledAt.add(i);
+            const row = h("div", { class: "sv-combo-opt rich-pick-opt" + (o.value === current ? " sel" : "") + (o.disabled ? " disabled" : ""),
+                    onClick: () => pick(o.value, i) },
+                h("span", { class: "rich-pick-lbl", style: o.labelStyle || null }, o.label),
                 h("span", { class: "sv-combo-meta" }, o.meta || ""));
             rows.push(row); vals.push(o.value);
             children.push(row);
@@ -54,7 +63,7 @@ export function richPickerPop({ anchor, groups, current, onPick, hint }) {
     pop.addEventListener("keydown", (e) => {
         if (e.key === "ArrowDown") { e.preventDefault(); setHl(hl + 1); }
         else if (e.key === "ArrowUp") { e.preventDefault(); setHl(hl - 1); }
-        else if (e.key === "Enter") { e.preventDefault(); if (vals[hl] != null) pick(vals[hl]); }
+        else if (e.key === "Enter") { e.preventDefault(); if (vals[hl] != null) pick(vals[hl], hl); }
     });
 
     const close = anchoredPopover({ anchor, panel: pop });

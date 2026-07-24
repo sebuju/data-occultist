@@ -266,13 +266,13 @@
     min-height: calc(2lh + 8px); font: inherit; border-color: var(--line); }
 .tn-bk-ctl { display: flex; flex-wrap: nowrap; gap: 4px; align-items: center; }
 .tn-bk-ctl select, .tn-bk-ctl input { font: inherit; font-size: 11px; min-width: 0; }
-/* a <select>'s collapsed width otherwise fits its WIDEST option ("caption subtle", "skip if any
-   empty", ...) regardless of what's actually selected — pin each to a size that fits a realistic
-   selected value, ellipsis-ing anything longer rather than stretching the whole row. */
-.tn-bk-style, .tn-bk-align, .tn-bk-skip { text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
-.tn-bk-style { width: 74px; }
-.tn-bk-align { width: 56px; }
-.tn-bk-skip { width: 92px; }
+/* tn-bk-style/align/skip are rich-dd-btn buttons now, not selects (handover-rich-dropdowns) — a
+   button only ever shows its CURRENT value (never the widest option, unlike a native <select>'s
+   collapsed width), so it can size to content instead of the old fixed-px pin. Still needs to
+   override rich-dd-btn's own width:100%/display:block (rich_dropdown.css loads AFTER graph.css,
+   so it'd otherwise win at higher specificity — same fix as the gate-condrow override elsewhere). */
+.gnode .tn-bk-ctl > .rich-dd-btn { display: inline-block; width: auto; flex: 0 1 auto; min-width: 0;
+    max-width: 110px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
 .tn-bk-lbl { font-size: 10px; color: var(--muted); white-space: nowrap; line-height: 1; }
 .tn-bk-ctl .frule-btns { margin-left: auto; }
 /* the first two blocks' style+align picker is replaced by this static role label (see AUTO_ROLE
@@ -414,7 +414,8 @@
 .tn-il-insp input:disabled, .tn-il-insp select:disabled { opacity: .4; cursor: not-allowed; }
 /* the two match selects carry long "N: <element text>" options; cap them so the value ellipsises
    instead of stretching the row (both w + h share one row). */
-.gnode select.tn-il-mw, .gnode select.tn-il-mh { max-width: 6.5em; min-width: 0; }
+.gnode select.tn-il-mw, .gnode select.tn-il-mh,
+.gnode .rich-dd-btn.tn-il-mw, .gnode .rich-dd-btn.tn-il-mh { max-width: 6.5em; min-width: 0; }
 .tn-il-chk { display: inline-flex; align-items: center; gap: 3px; margin: 0; }
 /* colour control: native picker (fixed 26px) + a linked hex text input */
 .tn-cpair { display: inline-flex; align-items: center; gap: 4px; }
@@ -429,7 +430,7 @@
 /* a side that HAS a border set fills with the node colour (distinct from the blue "active" outline) */
 .tn-bd-side.set { background: color-mix(in srgb, var(--nt) 55%, transparent); border-color: var(--nt); }
 .tn-bd-w { width: 2.6em; font: inherit; font-size: 11px; }
-.tn-bd-s { font: inherit; font-size: 11px; }
+.tn-bd-s { font: inherit; font-size: 11px; max-width: 6em; }
 .tn-bd .tn-cpair input[type="text"] { width: 4.5em; }   /* narrower hex so the border row fits one line */
 /* anchor row: target select + this/target grids on one line; grids grow downward from the top */
 .tn-anch { display: flex; align-items: flex-start; gap: 8px; font-size: 10px; flex-wrap: wrap; }
@@ -438,6 +439,9 @@
 .tn-anch-gl { display: inline-flex; align-items: flex-start; gap: 4px; margin: 5px 0px 0px 0px; }
 .tn-img-size { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
 .tn-img-bg { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }   /* two colorPairs (picker+hex) may not fit one line */
+/* tn-img-bgtype shares this row with colour pickers — override rich-dd-btn's own width:100%
+   (rich_dropdown.css loads AFTER graph.css, so it'd otherwise win and squeeze the pairs out). */
+.gnode .tn-img-bg > .rich-dd-btn { display: inline-block; width: auto; flex: 0 0 auto; }
 .tn-img-bg .tn-cpair input[type="text"] { width: 5em; }   /* narrower hex so a solid bg fits one line */
 .tn-img-size input { width: 4em !important; }
 .tn-img-w, .tn-img-h2, .tn-img-angle { font: inherit; font-size: 11px; }
@@ -544,7 +548,6 @@
 .gnode button, .gnode select, .gnode a, .gnode .collapse, .gnode .port, .gnode .gn-enable, input[type="checkbox"] { cursor: pointer; }
 .gnode button { 
    color: var(--nt); 
-   background: color-mix(in srgb, var(--nt) var(--nd-mix-btn), transparent);
    border-color: color-mix(in srgb, var(--nt) var(--nd-mix-btn-brd), transparent);
    outline-color: color-mix(in srgb, var(--nt) var(--nd-mix-btn-brd), transparent);
 }
@@ -793,6 +796,11 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .frule-head .rule-op { color: var(--nt, var(--accent)); }
 .frule-head select, .frule-head .rule-val, .frule-head .rule-arg, .gate-condwhen { flex: 1 1 0; min-width: 4ch; width: auto; }
 .frule-head select { max-width: 12ch; text-overflow: ellipsis; box-sizing: content-box; }
+/* rule-when/then/strategy/dmode/udict are rich-dd-btn buttons now, not selects — the tag selector
+   above no longer matches them, and rich_dropdown.css's width:100%/display:block (loaded AFTER
+   graph.css) would otherwise win at equal specificity (same fix as the gate-condrow override below). */
+.gnode .frule-head .rich-dd-btn { display: inline-block; flex: 1 1 0; min-width: 4ch; width: auto;
+    max-width: 12ch; text-overflow: ellipsis; overflow: hidden; }
 .frule-head .rule-arrow { flex: 0 0 auto; }
 .frule-head .rule-fuzzy { flex: 0 0 6ch; }
 .frule-head .rule-del { flex: 0 0 auto; padding: 0; margin-left: auto; }
@@ -841,10 +849,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .ac-krow .ac-krmrow { flex: 0 0 auto; margin-left: auto; }
 .gnode .ac-krow.armed { background: var(--warn); color: var(--on-accent); border-radius: 4px; }
 .gnode .ac-krow.armed .ac-krmrow { color: var(--on-accent); }
-/* "+ input" rides the inputs subhead as an icon (like the rules .ruleadd): a transparent native
-   select overlaid on the PLUS glyph (the mb-add overlay technique) so it opens the candidate list. */
-.frule-btns .pr-inadd { position: relative; display: inline-flex; align-items: center; line-height: 1; font-size: var(--fs-xs); color: var(--nt, var(--accent)); cursor: pointer; }
-.frule-btns .pr-inadd .pr-addin { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+/* "+ input" rides the inputs subhead as an icon (like the rules .ruleadd) — opens the combo popover. */
+.frule-btns .pr-inadd { background: none; border: 0; padding: 0; display: inline-flex; align-items: center; line-height: 1; font-size: var(--fs-xs); color: var(--nt, var(--accent)); cursor: pointer; }
 /* input + its unit suffix share ONE grid cell (else the "s" wraps to the next grid row) */
 .tg-secs { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .tg-secs input { width: 100%; }
@@ -893,7 +899,12 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    cursor: pointer; font: inherit; }
 .gate-conds, .routerb-conds { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .gate-condrow, .routerb-condrow { display: flex; align-items: center; gap: 4px; min-width: 0; border-radius: 3px; }
-.gate-condrow > select, .routerb-condrow > select { flex: 1 1 auto; min-width: 0; }
+/* override rich_dropdown.css's width:100%/display:block (it loads AFTER graph.css) — this button
+   shares its row with the arg-input + trash, it isn't the row's sole content like the trigger/gate
+   kind pickers are. Extra .gnode bumps specificity to beat `.gnode .rich-dd-btn` at equal 2-selector
+   count otherwise decided by load order. */
+.gnode .gate-condrow > .rich-dd-btn, .gnode .routerb-condrow > .rich-dd-btn {
+    display: inline-block; width: auto; flex: 1 1 auto; min-width: 0; }
 .gate-condrow > input, .routerb-condrow > input { flex: 1 1 5em; min-width: 0; }
 .gate-condrow > .gate-condrm, .routerb-condrow > .routerb-condrm { flex: 0 0 auto; }
 .gate-condrow.armed, .routerb-condrow.armed { outline: 1px solid var(--warn); outline-offset: 1px; }
@@ -1285,7 +1296,7 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .ti-row.il-sel, .if-row.il-sel { background: var(--accent-bg); }
 /* record key (dedup identity) config: ordered field parts + live key preview.
    (.key-row's base flex layout is shared with .ti-row above) */
-.key-row select { flex: 1 1 0; min-width: 0; }
+.key-row select, .key-row .kfield { flex: 1 1 0; min-width: 0; }
 .key-row .ksep { width: 34px; flex: 0 0 auto; }
 .key-row .kmv, .key-row .kdel { flex: 0 0 auto; padding: 0 10px; }
 .key-row .flab { display: inline-flex; gap: 4px; }
@@ -1338,6 +1349,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    will remove, in the SAME yellow (--warn) the button turns — node + button read as one armed action.
    Distinct from .selected (type hue) and .multisel (blue --sel). */
 .gnode.rm-armed { box-shadow: 0 0 0 2px var(--warn), 0 10px 30px #000000; z-index: 20; }
+/* a node whose rect overlaps another node: excluded from wire routing (its wires drop)
+   until the user separates them — ringed in --warn so the collision is visible. */
+.gnode.node-intersecting { box-shadow: 0 0 0 2px var(--warn), 0 10px 30px #000000; }
 
 /* ---- multi-select toolbar (floating pill, centred below the topbar) ---- */
 .seltoolbar { position: fixed; left: 50%; top: 46px; transform: translateX(-50%);
@@ -1568,6 +1582,9 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
    width it inherits the global `select { width: 100% }` (controls.css) as its flex-basis and eats
    the whole row, crushing the text input — so pin it to content width and let the input take the rest. */
 .src-m > select { flex: 0 0 auto; width: auto; min-width: 0; }
+/* mset-op is a rich-dd-btn now, not a select — override its own width:100%/display:block
+   (rich_dropdown.css loads AFTER graph.css, so it'd otherwise win at equal specificity). */
+.gnode .src-m > .rich-dd-btn { display: inline-block; flex: 0 0 auto; width: auto; }
 .src-m input[type="text"], .src-m input:not([type]) { flex: 1 1 40px; min-width: 0; }
 /* Each field row stacks two lines: `.src-frow` (id + method + type + remove, nowrap so they always
    share one row) and the method inputs below (`.src-finputs`, half-width each). Splitting the inputs
@@ -1577,6 +1594,8 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
 .src-frow { display: flex; align-items: center; gap: 6px; }    /* nowrap: id + method + type + remove on ONE row */
 .src-frow .src-fid { flex: 1 1 auto; min-width: 0; }           /* id takes the slack, shrinks (never clips a select) */
 .src-frow .src-fmethod, .src-frow .src-ftype { flex: 0 0 auto; width: auto; min-width: 0; }  /* size to content, not 100% */
+/* both are rich-dd-btn buttons now — same override as .src-m > .rich-dd-btn above. */
+.gnode .src-frow > .rich-dd-btn { display: inline-block; flex: 0 0 auto; width: auto; }
 /* required gn-slide switch: fixed size, never stretched by the nowrap row */
 .src-frow .src-req { flex: 0 0 auto; }
 .src-finputs { display: flex; gap: 6px; }                      /* own line: the two method inputs share it, half each */

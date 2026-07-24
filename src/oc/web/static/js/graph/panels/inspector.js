@@ -15,6 +15,7 @@
 // Readout feeds are ephemeral, so "send all" + the loop timer drive them freely. Dataset writes are
 // PERSISTENT, so they ride an explicit per-dataset button and only join the loop behind an opt-in.
 import { h, btn, subhead } from "../../dom.js";
+import { richPickerPop } from "../rich_picker.js";
 import * as api from "../../api.js";
 import * as conn from "../../conn.js";
 import { recordRow } from "../../pretty/api.js";
@@ -174,10 +175,21 @@ function rowControls(st) {
 // `name` labels the row, `st` holds its config, `onSend` (optional) adds a per-row send button.
 function feedRow(name, st, onSend) {
     const MODES = [["fixed", "fixed"], ["random", "random"], ["countup", "count up"], ["countdown", "count down"]];
-    const modeSel = h("select", { class: "insp-mode",
-        title: "fixed = this exact value · random = a fresh roll each send · count up/down = step between min and max, wrapping at the far end" },
-        MODES.map(([v, l]) => h("option", { value: v, selected: st.mode === v }, l)));
-    modeSel.addEventListener("change", () => { st.mode = modeSel.value; st.cur = null; persistRow(st); renderBody(); });
+    const MODE_DESC = {
+        fixed: "always send this exact value",
+        random: "roll a fresh random value in range each send",
+        countup: "step up from min toward max each send, wrapping back to min",
+        countdown: "step down from max toward min each send, wrapping back to max",
+    };
+    const modeSel = h("button", { class: "insp-mode rich-dd-btn", type: "button",
+        title: MODE_DESC[st.mode] || "" }, `<${(MODES.find(([v]) => v === st.mode) || [, st.mode])[1]}>`);
+    modeSel.addEventListener("click", () => {
+        richPickerPop({
+            anchor: modeSel, current: st.mode,
+            groups: [[null, MODES.map(([v, l]) => ({ value: v, label: l, meta: MODE_DESC[v] || "" }))]],
+            onPick: (v) => { st.mode = v; st.cur = null; persistRow(st); renderBody(); },
+        });
+    });
     // off keeps the row's tuning but drops it from every send (its own button, send-all, the loop)
     const enCb = h("input", { type: "checkbox", class: "insp-en", checked: st.enabled !== false,
         title: "feed this input — off keeps the settings but skips it" });
@@ -185,12 +197,17 @@ function feedRow(name, st, onSend) {
     const head = [enCb, h("span", { class: "insp-ro-id" }, name)];
     if (st.retype) {
         // dataset columns have no FieldDef to read a type off — let the user say what to roll
-        const tSel = h("select", { class: "insp-type", title: "value type to roll" },
-            h("option", { value: "text", selected: st.type === "text" }, "text"),
-            h("option", { value: "number", selected: st.type === "number" }, "number"));
+        const TYPE_OPTS = [["text", "text"], ["number", "number"]];
+        const tSel = h("button", { class: "insp-type rich-dd-btn", type: "button", title: "value type to roll" }, `<${st.type}>`);
         // retype changes ONLY what the row rolls — never the bounds/pool/value the user typed
         // (rebuilding the whole state here silently reset min/max to 0/100 mid-edit).
-        tSel.addEventListener("change", () => { st.type = tSel.value; st.cur = null; persistRow(st); renderBody(); });
+        tSel.addEventListener("click", () => {
+            richPickerPop({
+                anchor: tSel, current: st.type,
+                groups: [[null, TYPE_OPTS.map(([v, l]) => ({ value: v, label: l }))]],
+                onPick: (v) => { st.type = v; st.cur = null; persistRow(st); renderBody(); },
+            });
+        });
         head.push(tSel);
     } else {
         head.push(h("span", { class: "insp-ro-type" }, `[${st.type}]`));

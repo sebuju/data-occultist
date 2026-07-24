@@ -21,9 +21,18 @@ import { keyRows, regWriteRows } from "./reg_slots.js";
 // see REG_OPS below, independent of this one). "" = no-op. clone/move copy into `dest` (batches =
 // keep batch grouping; resolved = collapse to one). move also clears the source.
 // `compact` applies each target dataset's own keep_batches window (a no-op without one).
-const ACTIONS = [["", "no action"], ["clear", "clear targets"], ["compact", "compact to batch limit"],
+export const ACTIONS = [["", "no action"], ["clear", "clear targets"], ["compact", "compact to batch limit"],
     ["clone_batches", "clone data (batches)"], ["clone_resolved", "clone data (resolved)"],
     ["move_batches", "move data (batches)"], ["move_resolved", "move data (resolved)"]];
+export const ACTION_DESC = {
+    "": "do nothing to the attached datasets",
+    clear: "wipe every attached dataset's rows",
+    compact: "apply each attached dataset's own keep_batches window (a no-op without one)",
+    clone_batches: "copy data into the destination, keeping batch grouping",
+    clone_resolved: "copy data into the destination, collapsed to one resolved batch",
+    move_batches: "move data into the destination (batch grouping kept), clearing the source",
+    move_resolved: "move data into the destination (collapsed to one batch), clearing the source",
+};
 
 // register ops (GraphModel.REGISTER_OPS values, with labels) — each register target runs its own,
 // independent of the dataset ACTIONS above (a dataset clear and a register set can coexist on one
@@ -34,8 +43,21 @@ const ACTIONS = [["", "no action"], ["clear", "clear targets"], ["compact", "com
 // dataset or another register from one combined "into" list — the kind is self-describing from
 // what's picked (a prefixed ref), no separate kind field/toggle. Every register's dest on this node
 // still shares one kind (not mixed): picking a NEW kind clears every other register's dest here.
-const REG_OPS = [["", "no action"], ["set", "set values"], ["remove_all", "remove all keys"],
+export const REG_OPS = [["", "no action"], ["set", "set values"], ["remove_all", "remove all keys"],
     ["clone", "clone data"], ["move", "move data"]];
+export const REG_OP_DESC = {
+    "": "do nothing to this register",
+    set: "write/remove individual keys (rows below)",
+    remove_all: "drop every key this register holds (ignores key-narrowing)",
+    clone: "copy this register's keys into a destination, keeping its own values",
+    move: "copy this register's keys into a destination, then clear them from here",
+};
+
+// a rich-dd-btn button built from [value,label] pairs, marking `val` current — mirrors optSel
+// (node_parts.js); wiring (io_wire.js) has the model access to open the picker.
+const richBtn = (val, opts, cls, title, dataset) =>
+    h("button", { class: `${cls} rich-dd-btn`, type: "button", title: title || "", dataset },
+        `<${(opts.find(([v]) => v === val) || [, val])[1]}>`);
 
 // a "wait this long" input with its ms unit suffix — the trigger's throttle/settle shape (tg-secs),
 // reused rather than restyled so every millisecond field in the graph reads the same.
@@ -66,10 +88,6 @@ export function actionParts(x, model) {
             .filter((a) => a !== x.id && !have.has(`action:${a}`) && !model._actionReaches(a, x.id))
             .map((a) => ({ value: `action:${a}`, label: a })),
     ];
-    // dataset op's clone/move dest excludes the action's own dataset targets so you can't pick one
-    // as its own dest (the server no-ops that anyway).
-    const dsSrc = new Set(datasets.map((s) => s.id));
-    const dsFree = model.datasets().filter((d) => !dsSrc.has(d));
     const repeat = x.repeat ?? 1;
     // Per-register op block: each register target picks its OWN op (independent of the shared
     // dataset action above) — "set" shows the key/value/remove rows, clone/move show key-narrowing
@@ -81,24 +99,17 @@ export function actionParts(x, model) {
         // one combined list: a dataset (excluding this node's own dataset targets, like the shared
         // dataset op's dest does) or another register (excluding this row's own register — can't
         // clone/move into itself). setActionRegDest enforces one dest KIND per node on write.
-        const regFree = model.registers().filter((r) => r !== s.id);
+        const destLabel = dest === "" ? "- destination -" : dest.startsWith("dataset:") ? dest.slice(8) : dest.slice(9);
         return [
             labCell(s.id, `what this action does to register '${s.id}' when fired`),
-            h("select", { class: "ac-regop", dataset: { reg: s.id } },
-                REG_OPS.map(([v, l]) => h("option", { value: v, selected: v === op }, v === op ? `<${l}>` : l))),
+            richBtn(op, REG_OPS, "ac-regop", REG_OP_DESC[op] || "", { reg: s.id }),
             op === "set" && regWriteRows({ regId: s.id, rows: model.actionWrites(x.id, s.id) }),
             regNeedsDest && keyRows({
                 regId: s.id, keys: model.actionRegKeys(x.id, s.id),
                 hint: `which of ${s.id}'s keys this copies/moves (default all) — hand-typed, register keys aren't statically known` }),
             regNeedsDest && labCell("into", `destination for '${s.id}' — a dataset, or another register`),
-            regNeedsDest && h("select", { class: "ac-regdest", dataset: { reg: s.id } },
-                h("option", { value: "" }, "- destination -"),
-                h("optgroup", { label: "datasets" },
-                    dsFree.map((d) => h("option", { value: `dataset:${d}`, selected: dest === `dataset:${d}` },
-                        dest === `dataset:${d}` ? `<${d}>` : d))),
-                h("optgroup", { label: "registers" },
-                    regFree.map((r) => h("option", { value: `register:${r}`, selected: dest === `register:${r}` },
-                        dest === `register:${r}` ? `<${r}>` : r)))),
+            regNeedsDest && h("button", { class: "ac-regdest rich-dd-btn", type: "button", dataset: { reg: s.id } },
+                dest === "" ? destLabel : `<${destLabel}>`),
         ];
     });
     return {
@@ -111,12 +122,10 @@ export function actionParts(x, model) {
             labCell("delay", "wait this long after being fired before running (0 = run now)"),
             msRow("ac-delay", x.delay_ms ?? 0),
             datasets.length > 0 && labCell("action", "what this node does to its datasets when fired"),
-            datasets.length > 0 && h("select", { class: "ac-action" },
-                ACTIONS.map(([v, l]) => h("option", { value: v, selected: v === cur }, v === cur ? `<${l}>` : l))),
+            datasets.length > 0 && richBtn(cur, ACTIONS, "ac-action", ACTION_DESC[cur] || ""),
             datasets.length > 0 && needsDest && labCell("into", "destination dataset for clone/move"),
-            datasets.length > 0 && needsDest && h("select", { class: "ac-dest" },
-                h("option", { value: "" }, "- dataset -"),
-                dsFree.map((d) => h("option", { selected: d === x.dest }, d === x.dest ? `<${d}>` : d))),
+            datasets.length > 0 && needsDest && h("button", { class: "ac-dest rich-dd-btn", type: "button" },
+                x.dest ? `<${x.dest}>` : "- dataset -"),
             ...regBlocks,
             sounds.length > 0 && labCell("repeat", "how many times to play the attached sound(s)"),
             sounds.length > 0 && h("span", { class: "tg-secs" },

@@ -6,6 +6,7 @@
 import { model } from "./state.js";
 import { renameNode, movePos } from "./node_lifecycle.js";
 import { GENERATOR } from "./sound_node.js";
+import { richPickerPop } from "./rich_picker.js";
 import { playCue } from "./sound.js";
 import { playSynth, noteName } from "./synth.js";
 import { makeClip } from "./clipboard.js";
@@ -26,13 +27,25 @@ export function wireSound(div, n) {
             () => movePos(`sound:${oldId}`, `sound:${x.id}`),
             () => { render(); autosave(null); });
     });
-    $(".sn-file")?.addEventListener("change", (e) => {
-        // the "[generator]" sentinel flips the node into synth mode (seeds a default cue) and grows
-        // the inline forge; any other value is a plain file. Rebuild so the forge appears/disappears.
-        if (e.target.value === GENERATOR) model.enableSoundSynth(x.id);
-        else model.setSoundFile(x.id, e.target.value);
-        rebuildNode(`sound:${x.id}`);
-        autosave(null);
+    $(".sn-file")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        const cur = x.synth ? GENERATOR : (x.file || "");
+        richPickerPop({
+            anchor: btn, current: cur,
+            groups: [[null, [
+                { value: "", label: "none", meta: "no cue plays" },
+                ...(model.sounds || []).map((s) => ({ value: s, label: s })),
+                { value: GENERATOR, label: GENERATOR, meta: "build a unique cue in the inline forge below" },
+            ]]],
+            // the "[generator]" sentinel flips the node into synth mode (seeds a default cue) and
+            // grows the inline forge; any other value is a plain file. Rebuild so it appears/disappears.
+            onPick: (v) => {
+                if (v === GENERATOR) model.enableSoundSynth(x.id);
+                else model.setSoundFile(x.id, v);
+                rebuildNode(`sound:${x.id}`);
+                autosave(null);
+            },
+        });
     });
     // volume is a segmented meter now (confMeter) — it dispatches `change` on drag; the bar shows
     // its own level, so there's no separate % label to sync. autosave coalesces the writes.

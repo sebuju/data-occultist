@@ -33,6 +33,7 @@ import { setGroups } from "./edgecanvas.js";
 import { resolveColor } from "./colors.js";
 import { colorField } from "./colorfield.js";
 import { makeArmed } from "./armbtn.js";
+import { richPickerPop } from "./rich_picker.js";
 
 // ---- constants ------------------------------------------------------------
 const PAD = 40;          // group: uniform gap between members and the outline (two GRID steps)
@@ -1056,9 +1057,7 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
             h("input", { class: "gp-title", value: t.title })),
         (hasAlign || sizable) ? sub("layout") : null,
         hasAlign ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "align"),
-            h("select", { class: "gp-pos" },
-                ["left", "center", "right"].map((v) =>
-                    h("option", { value: v, selected: t.titleAlign === v }, v)))) : null,
+            h("button", { class: "gp-pos rich-dd-btn", type: "button" }, `<${t.titleAlign || "left"}>`)) : null,
         sizable ? h("label", { class: "flab" }, h("span", { class: "gp-lab" }, "width"),
             h("div", { class: "gp-size" },
                 h("input", { type: "number", class: "gp-w", min: "1", step: "1", placeholder: autoPh("w"),
@@ -1088,7 +1087,7 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
     const sync = () => {
         const set = (sel, v) => { const el = pop.querySelector(sel); if (el) el.value = v; };
         set(".gp-ocolor", hex6(t.outline.color));
-        if (hasAlign) set(".gp-pos", t.titleAlign);
+        if (hasAlign) { const el = pop.querySelector(".gp-pos"); if (el) el.textContent = `<${t.titleAlign || "left"}>`; }
         if (sizable) { set(".gp-w", t.w > 0 ? Math.round(t.w) : ""); set(".gp-h", t.h > 0 ? Math.round(t.h) : ""); }
     };
     // Multi-select fan-out: when this group is part of a ctrl-selection (>=2 groups), every style
@@ -1138,7 +1137,14 @@ function openOptionsPopover(id, target, ev, { ownerSel, disbandLabel, onDisband,
         ocol.addEventListener("input", (e) => { val = e.target.value; if (!raf) raf = requestAnimationFrame(live); });
         ocol.addEventListener("change", () => { if (raf) { cancelAnimationFrame(raf); live(); } ctx.persist(); });
     }
-    if (hasAlign) pop.querySelector(".gp-pos").addEventListener("change", (e) => { t.titleAlign = e.target.value; commit(); });
+    if (hasAlign) pop.querySelector(".gp-pos").addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: t.titleAlign || "left",
+            groups: [[null, ["left", "center", "right"].map((v) => ({ value: v, label: v, meta: `${v}-align the group's title label` }))]],
+            onPick: (v) => { t.titleAlign = v; btn.textContent = `<${v}>`; commit(); },
+        });
+    });
     if (sizable) {
         const wireSize = (inpSel, axis) => {
             const inp = pop.querySelector(inpSel);

@@ -21,13 +21,40 @@ export const GATE_WHENS = [
 // ops that take NO argument — the arg input is hidden for these.
 const NO_ARG = new Set(["always", "empty", "has_digit", "all_digit", "has_letter", "all_letter", "changed"]);
 
-// One condition row: [when select] [arg input, unless a no-arg op] [remove]. `cls` scopes the wiring
-// classes ("gate" / "routerb") so the two callers' handlers don't cross-fire; `ci` tags the row's
-// index (data-idx). Shared by gate + router (rule 7).
+// per-op meta line for the rich picker (handover-rich-dropdowns recipe A) — mined from the old
+// single `-condwhen` tooltip, split per option since a native <option title> never renders.
+export const GATE_WHEN_DESC = {
+    always: "holds unconditionally — every tick",
+    empty: "the value is empty/blank",
+    has_digit: "the value contains at least one digit",
+    all_digit: "the value is all digits (a whole number)",
+    has_letter: "the value contains at least one letter",
+    all_letter: "the value is all letters (no digits)",
+    equal: "the value equals the given text/number exactly",
+    not_equal: "the value does not equal the given text/number",
+    contains: "the value contains the given substring",
+    in: "the value matches one of a comma-separated list",
+    gte: "the value, read as a number, is >= the given number",
+    lte: "the value, read as a number, is <= the given number",
+    gt: "the value, read as a number, is > the given number",
+    lt: "the value, read as a number, is < the given number",
+    eq: "the value, read as a number, equals the given number",
+    ne: "the value, read as a number, does not equal the given number",
+    between: "the value, read as a number, falls between lo,hi (inclusive)",
+    crosses_up: "the value just crossed UP through the given number this tick (was below, now at/above)",
+    crosses_down: "the value just crossed DOWN through the given number this tick (was above, now at/below)",
+    changed: "the value (or dataset/subset content signature) changed since the last tick",
+};
+
+// One condition row: [when rich-picker button] [arg input, unless a no-arg op] [remove]. `cls`
+// scopes the wiring classes ("gate" / "routerb") so the two callers' handlers don't cross-fire;
+// `ci` tags the row's index (data-idx). Shared by gate + router (rule 7). The picker itself opens
+// from the wiring side (io_wire.js), which has model access this pure builder doesn't.
 export function condRow(cls, ci, c) {
-    const wopt = ([v, l]) => h("option", { value: v, selected: v === c.when }, v === c.when ? `<${l}>` : l);
+    const label = (GATE_WHENS.find(([v]) => v === c.when) || [, c.when])[1];
     return h("div", { class: `${cls}-condrow`, dataset: { idx: String(ci) } },
-        h("select", { class: `${cls}-condwhen`, title: "how the tested value must behave for this condition to hold" }, GATE_WHENS.map(wopt)),
+        h("button", { class: `${cls}-condwhen rich-dd-btn`, type: "button",
+            title: GATE_WHEN_DESC[c.when] || "how the tested value must behave for this condition to hold" }, `<${label}>`),
         NO_ARG.has(c.when) ? null
             : h("input", { class: `${cls}-condarg`, value: c.arg ?? "", type: "text", placeholder: "value",
                 title: "value the condition compares against — a number, text, a comma list for 'in list', or lo,hi for 'between'" }),

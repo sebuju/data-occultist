@@ -164,17 +164,6 @@ export const REC = () =>
     svg("svg", { class: "ic-rec", viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" },
         svg("circle", { cx: "12", cy: "12", r: "8", fill: "currentColor" }));
 
-// Re-label a `<${label}>`-wraps-the-current-value <select> (the convention every node's opt()
-// helper bakes in at build time) after a plain `change` event, which doesn't rebuild the DOM: without
-// this the bracket stays stuck on whatever was selected at last render instead of following the
-// user's new pick. Strips any existing wrap, then re-wraps whichever option now matches el.value.
-export const restripeSelect = (el) => {
-    for (const o of el.options) {
-        const bare = o.textContent.replace(/^<|>$/g, "");
-        o.textContent = o.value === el.value ? `<${bare}>` : bare;
-    }
-};
-
 // One labelled control row inside the node body grid (`.gn-grid`, graph.css): a label cell
 // that sizes to its own text (grid col 1) followed by whatever control the caller emits next
 // (col 2). The ONE label-cell primitive -- EVERY node's k/v rows build on it so labels line up

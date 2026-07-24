@@ -12,10 +12,16 @@
 import { h, frag, kv, subhead, gspan, trashBtn, PLUS } from "../dom.js";
 import { rulesSection } from "./node_parts.js";
 
+export const PROCESS_TYPES = [["text", "text"], ["number", "number"]];
+export const PROCESS_TYPE_DESC = {
+    text: "keep the value as text — text-only rules apply",
+    number: "coerce the value to a number — number-only rules apply, text-only rules are greyed out",
+};
+
 export function processParts(x, model) {
-    const typeSel = h("select", { class: "pr-type", dataset: { k: "type" }, title: "value type carried into the rules pipeline: gates which rules apply (a number-only rule is ignored for text) and coerces the final value" },
-        [["text", "text"], ["number", "number"]].map(([v, t]) =>
-            h("option", { value: v, selected: (x.type || "text") === v }, (x.type || "text") === v ? `<${t}>` : t)));
+    const typeSel = h("button", { class: "pr-type rich-dd-btn", type: "button",
+        title: "value type carried into the rules pipeline: gates which rules apply (a number-only rule is ignored for text) and coerces the final value" },
+        `<${x.type || "text"}>`);
 
     // one row per single-key input: [inputKey chip → output-key field] + remove. The chip carries
     // data-node so a click pans to the source node (the generic .sv-input[data-node] handler), and
@@ -31,14 +37,10 @@ export function processParts(x, model) {
             trashBtn({ cls: "pr-rmin", dataset: { val: s.ref }, title: "remove input" }));
     });
     // "+ add input" rides the "inputs" subheading as an icon (matching the rules subhead's add
-    // button) — a transparent native <select> overlaid on a PLUS glyph (the mb-add pattern), whose
-    // candidates come from the ONE shared truth (readouts + register slots; no all-keys, no process).
-    const cands = model.sourceCandidates("process", x.id);
-    const addSel = h("select", { class: "pr-addin", title: "add an input: a readout, or a register slot" },
-        h("option", { value: "" }, "add input…"),
-        ...cands.map((c) => h("option", { value: c.ref }, c.label)));
+    // button) — opens the shared searchable combo popover (rule 7 — same as sourcesInput's "+").
+    // Candidates come from the ONE shared truth (readouts + register slots; no all-keys, no process).
     const addBtn = h("div", { class: "frule-btns" },
-        h("span", { class: "pr-inadd", title: "add an input" }, PLUS(), addSel));
+        h("button", { class: "pr-inadd", type: "button", title: "add an input: a readout, or a register slot" }, PLUS()));
 
     const body = frag(
         kv("type", typeSel),

@@ -118,6 +118,13 @@ export const vtShowRemoved = new Map();
 export const vtShowSpecial = new Map();
 
 export const TYPES = [["text", "text"], ["number", "number"], ["pips", "pips"], ["diamonds", "diamonds"], ["symbol", "symbol"]];
+export const TYPE_DESC = {
+    text: "keep the raw string",
+    number: "parse the read as a number",
+    pips: "count filled pip/dot icons (e.g. a rank ladder)",
+    diamonds: "count filled diamond icons (e.g. a mastery/affinity ladder)",
+    symbol: "match against a taught glyph/icon set instead of OCR text",
+};
 export const EXTRACTS = [
     ["whole", "whole"], ["number", "number"], ["number_before", "number bef"], ["number_after", "number aft"],
     ["text", "text"], ["text_before", "text bef"], ["text_after", "text aft"],
@@ -170,6 +177,54 @@ export const RULE_THEN = [
     ["extract", "extract", "tn"],
     ["dictionary", "dictionary", "t"],
 ];
+// per-op meta lines for the rich picker (handover-rich-dropdowns recipe A).
+export const RULE_WHEN_DESC = {
+    always: "always holds — the rule fires every time it's reached",
+    empty: "the running value is empty/blank",
+    no_digit: "the running value has no digits",
+    all_digit: "the running value is entirely digits",
+    has_digit: "the running value contains at least one digit",
+    no_letter: "the running value has no letters",
+    all_letter: "the running value is entirely letters",
+    has_letter: "the running value contains at least one letter",
+    below: "the running value is below the given number",
+    above: "the running value is above the given number",
+    equal: "the running value equals the given text/number exactly",
+    not_equal: "the running value does not equal the given text/number",
+    contains: "the running value contains the given substring",
+};
+export const RULE_THEN_DESC = {
+    set: "overwrite the value with a fixed constant",
+    drop: "stop the pipeline and drop this read entirely — invisible to mirror-sync",
+    blank: "stop the pipeline and forward a null gap instead of the value",
+    prune: "stop the pipeline and ACTIVELY remove the record's key from the dataset",
+    lowercase: "fold the text to lowercase, continue",
+    uppercase: "fold the text to uppercase, continue",
+    fold: "fold the text through the taught glyph-fold table, continue",
+    round: "round the number to the nearest whole, continue",
+    floor: "round the number down, continue",
+    ceil: "round the number up, continue",
+    decimal: "fix the number's decimal places, continue",
+    extract: "pull one piece (a token/number/substring) out of the value, continue",
+    dictionary: "check/correct the value against a taught dictionary, continue",
+};
+export const EXTRACT_DESC = {
+    number: "the numeric portion of the value",
+    number_before: "the number before a separator token",
+    number_after: "the number after a separator token",
+    text: "the text portion of the value",
+    text_before: "the text before a separator token",
+    text_after: "the text after a separator token",
+    alphanum: "the alphanumeric portion of the value",
+    alphanum_before: "the alphanumeric portion before a separator token",
+    alphanum_after: "the alphanumeric portion after a separator token",
+};
+export const DICT_MODE_DESC = {
+    off: "not consulted",
+    correct: "fix words the dictionary recognises",
+    drop: "validate only — drop the read if no dictionary entry matches",
+    correct_drop: "fix recognised words, drop unmatchable ones",
+};
 const RULE_WHEN_ARG = new Set(RULE_WHEN.filter((r) => r[2]).map((r) => r[0]));
 const WHEN_CODE = Object.fromEntries(RULE_WHEN.map(([v, , , c]) => [v, c]));
 const THEN_CODE = Object.fromEntries(RULE_THEN.map(([v, , c]) => [v, c]));
@@ -193,19 +248,15 @@ export function ruleValidForType(r, ftype) {
         && okRuleType(THEN_CODE[r.then || "set"] ?? "any", ftype);
 }
 
-// <option> nodes for a field's dictionary picker: "all" (every enabled dictionary pooled)
-// + each named dictionary. `sel` is the field's pinned DictionaryDef.id ("" = pooled).
-// Returns an ARRAY of <option> nodes, consumed as h("select", {...}, dictOptions(sel)).
-export function dictOptions(sel) {
+// [value,label] choices for a field's dictionary picker: "" = all (every enabled dictionary
+// pooled) + each named dictionary. `sel` is the field's pinned DictionaryDef.id ("" = pooled).
+export function dictChoices(sel) {
     const dicts = model.profile.dictionaries || [];
-    const selWrap = (cond, text) => cond ? `<${text}>` : text;
-    const opts = [h("option", { value: "", selected: !sel }, selWrap(!sel, "all"))];
-    for (const d of dicts)
-        opts.push(h("option", { value: d.id, selected: sel === d.id }, selWrap(sel === d.id, d.name || d.id)));
+    const opts = [["", "all"]];
+    for (const d of dicts) opts.push([d.id, d.name || d.id]);
     // pin a referenced dictionary the profile no longer lists, so the field keeps pointing at it
     // (shown by bare id) instead of silently snapping to "all" on the next edit.
-    if (sel && !dicts.some((d) => d.id === sel))
-        opts.push(h("option", { value: sel, selected: true }, `<${sel}>`));
+    if (sel && !dicts.some((d) => d.id === sel)) opts.push([sel, sel]);
     return opts;
 }
 
@@ -234,8 +285,14 @@ export function windowControls(w) {
 // black-on-white; `threshold` is global Otsu; `invert` flips light-on-dark; `scale` upsamples
 // small fonts. Dual-use (rule 7): `holder` is any object carrying `.preprocess` — a WindowDef
 // (window node) or a readout's FieldDef (readout node). Handlers = wirePreprocess (window_wire).
-const PP_MODES = [["none", "none"], ["color", "keep color(s)"],
+export const PP_MODES = [["none", "none"], ["color", "keep color(s)"],
     ["threshold", "auto threshold"], ["invert", "invert"]];
+export const PP_MODE_DESC = {
+    none: "read the raw pixels, no cleanup",
+    color: "keep only pixels near the taught text colour(s), everything else goes white — use for coloured/stylised game text on a busy background (e.g. a white cooldown number over ability FX)",
+    threshold: "auto black/white (Otsu) — use for plain high-contrast text",
+    invert: "flip light-on-dark to dark-on-light — use for light text the recogniser reads better inverted",
+};
 
 // Tooltips carried on the CONTROL elements themselves (not just the kv label) so hovering the
 // input explains what it does + when to use it — the user asked for input-level tooltips.
@@ -342,8 +399,8 @@ export function preprocessControls(holder) {
             style: "width:9ch", title: PP_TIP.hex }),
         trashBtn({ cls: "pp-coldel", dataset: { i }, title: "remove this colour (click twice to confirm)" })));
     return frag(
-        kv("preprocess", h("select", { class: "ppmode", title: PP_TIP.mode },
-            PP_MODES.map(([v, t]) => h("option", { value: v, selected: pp.mode === v }, pp.mode === v ? `<${t}>` : t))),
+        kv("preprocess", h("button", { class: "ppmode rich-dd-btn", type: "button", title: PP_MODE_DESC[pp.mode || "none"] || PP_TIP.mode },
+            `<${(PP_MODES.find(([v]) => v === (pp.mode || "none")) || [, pp.mode])[1]}>`),
             { title: PP_TIP.mode }),
         pp.mode === "color" && frag(
             colorPickLabel("color", PP_TIP.colorlist,
@@ -383,9 +440,7 @@ function scrollbarParts(n) {
                 trashBtn({ cls: "sbcut-rm", dataset: { i }, title: "remove cutout" })),
             h("div", { class: "sb-cut-pos muted" }, s.pos != null ? `thumb ${(s.pos * 100).toFixed(2)}% · ${s.px ?? "?"}px` : "thumb —")));
     return frag(
-        kv("orientation", h("select", { class: "sbset", dataset: { k: "orient" } },
-            h("option", { selected: o === "vertical" }, o === "vertical" ? "<vertical>" : "vertical"),
-            h("option", { selected: o === "horizontal" }, o === "horizontal" ? "<horizontal>" : "horizontal"))),
+        kv("orientation", h("button", { class: "sbset rich-dd-btn", type: "button", dataset: { k: "orient" } }, `<${o}>`)),
         subhead("cutouts", null, "capture the scrollbar at known scroll offsets, tag each with how many rows it has moved down from the top — the gain is fit automatically. Drag to reorder."),
         h("div", { class: "sb-cuts" }, samples.length
             ? samples.map(cut)
@@ -400,9 +455,15 @@ function scrollbarParts(n) {
             h("div", { class: "sbc-row" }, "cutouts ", h("span", {}, `${usable}/${samples.length}`))));
 }
 
-// One <select> built from [value,label] option pairs, marking `val` selected.
-const optSel = (val, opts, cls, props = {}) =>
-    h("select", { class: cls, ...props }, opts.map(([v, t]) => h("option", { value: v, selected: val === v }, val === v ? `<${t}>` : t)));
+// One rich-dropdown trigger button built from [value,label] option pairs, marking `val` current.
+// Replaces the old native-<select> optSel (recipe A, handover-rich-dropdowns): the popover is
+// opened by the caller's wiring (it needs model access `optSel` doesn't have), so this only
+// builds the button — `descs` (optional {value: metaLine}) is threaded through so the wiring can
+// build richPickerPop's groups without a second copy of the option list.
+const optSel = (val, opts, cls, props = {}) => {
+    const label = (opts.find(([v]) => v === val) || [, val])[1];
+    return h("button", { class: `${cls} rich-dd-btn`, type: "button", ...props }, `<${label}>`);
+};
 
 // The window's detectors as rows below templates: how they combine (all/any) + each
 // detector's polarity (require present / require absent), with a LIVE per-row verdict and
@@ -415,22 +476,26 @@ const optSel = (val, opts, cls, props = {}) =>
 // which is slower (OCR-heavy), so it starts on a "loading…" placeholder rather than blank.
 // The detectors section of a window node (`opts`: heading, matchLabel, defaultMode, collide).
 // The owner object just needs `.detect` + `.detect_mode`.
+export const WD_MODE_OPTS = [["all", "all"], ["any", "any"]];
+export const WD_MODE_DESC = { all: "every detector must pass (AND)", any: "at least one detector passes (OR)" };
+export const WD_NEG_OPTS = [["present", "present"], ["absent", "absent"]];
+export const WD_NEG_DESC = { present: "require this landmark PRESENT (positive)", absent: "require this landmark ABSENT — the window fails if it IS found (negative)" };
+
 export function windowDetects(w, opts = {}) {
     const dets = w.detect || [];
     if (!dets.length) return null;
     const mode = w.detect_mode || opts.defaultMode || "all";
-    const modeSel = optSel(mode, [["all", "all"], ["any", "any"]], "wd-mode",
-        { title: "all = every detector must pass (AND); any = at least one passes (OR)" });
+    const modeSel = optSel(mode, WD_MODE_OPTS, "wd-mode", { title: WD_MODE_DESC[mode] || "" });
     // Three columns: col1 = detector name, col2 = its live status, col3 = the polarity select
     // bound to that detector. The select is width:100% (min-width:0), so it can never overflow
     // (the window body clips overflow). The header row labels all three columns.
     const rows = dets.map((d) => {
         const off = d.enabled === false;   // disabled detectors are greyed + their control locked
+        const negVal = d.negate ? "absent" : "present";
         return h("div", { class: `wd-row${off ? " wd-disabled" : ""}`, dataset: { id: d.id } },
             h("span", { class: "wd-name", title: `${d.id} — open this detector's node` }, d.id),
             h("span", { class: "wd-status muted", dataset: { id: d.id }, title: "live: does this detector pass its requirement on the current image" }, off ? "disabled" : ""),
-            optSel(d.negate ? "absent" : "present", [["present", "present"], ["absent", "absent"]], "wd-neg",
-                { dataset: { id: d.id }, title: "require this landmark PRESENT (positive), or ABSENT (negative — the window fails if it IS found)", disabled: off }));
+            optSel(negVal, WD_NEG_OPTS, "wd-neg", { dataset: { id: d.id }, title: WD_NEG_DESC[negVal] || "", disabled: off }));
     });
     return frag(
         subhead(opts.heading || "detects", null, "how these detectors decide a match"),
@@ -505,25 +570,32 @@ export function coverControls(it) {
         kv("cover y", confMeter({ cls: "ccover", k: "y", value: it.min_cover_y ?? 0.75, step: 0.05, title: "minimum % of the cell that must be inside the data area VERTICALLY to store the row — a top/bottom row the scroll occludes past this is dismissed" })));
 }
 
-// The operand input(s) a rule's `then` needs, shown inline after the action select. Only the
+// a rich-dd-btn button built from [value,label] pairs, marking `val` current — the wiring side
+// (rules_editor.js) has the model access to open richPickerPop, so this only builds the button.
+function ruleBtn(val, opts, cls, d, title) {
+    const label = (opts.find(([v]) => v === val) || [, val])[1];
+    return h("button", { class: `${cls} rich-dd-btn`, type: "button", dataset: d, title }, `<${label}>`);
+}
+
+// The operand input(s) a rule's `then` needs, shown inline after the action button. Only the
 // relevant ones for the chosen action appear (a `drop`/`lowercase`/… needs none). `d` is the
 // shared dataset ({ri, fid?}) the node wiring reads.
 function ruleThenOperands(r, then, d) {
     if (then === "set")
         return [h("input", { class: "rule-val", dataset: d, value: r.value || "", placeholder: "value", title: "value written into the field" })];
-    if (then === "extract")
+    if (then === "extract") {
+        const strategy = r.strategy || "number";
         return [
-            h("select", { class: "rule-strategy", dataset: d, title: "which piece to pull out of the value" },
-                EXTRACTS.filter(([v]) => v !== "whole").map(([v, t]) => h("option", { value: v, selected: (r.strategy || "number") === v }, (r.strategy || "number") === v ? `<${t}>` : t))),
-            NEEDS_SEP.has(r.strategy || "number") && h("input", { class: "rule-sep", dataset: d, value: r.sep || "/", placeholder: "sep", title: "split token (e.g. / or Rank)" }),
+            ruleBtn(strategy, EXTRACTS.filter(([v]) => v !== "whole"), "rule-strategy", d, EXTRACT_DESC[strategy] || "which piece to pull out of the value"),
+            NEEDS_SEP.has(strategy) && h("input", { class: "rule-sep", dataset: d, value: r.sep || "/", placeholder: "sep", title: "split token (e.g. / or Rank)" }),
         ];
+    }
     if (then === "dictionary") {
         const hasDicts = (model.profile.dictionaries || []).length;
         const dmode = r.dict_mode || "correct";
         return [
-            h("select", { class: "rule-dmode", dataset: d, title: "off = not consulted; correct = fix words; drop = validate only; correct + drop = fix, drop unmatchable" },
-                DICT_MODES.map(([v, t]) => h("option", { value: v, selected: dmode === v }, dmode === v ? `<${t}>` : t))),
-            (hasDicts && dmode !== "off") && h("select", { class: "rule-udict", dataset: d, title: "which authored dictionary (all = every enabled one pooled)" }, dictOptions(r.dict_id || "")),
+            ruleBtn(dmode, DICT_MODES, "rule-dmode", d, DICT_MODE_DESC[dmode] || ""),
+            (hasDicts && dmode !== "off") && ruleBtn(r.dict_id || "", dictChoices(r.dict_id || ""), "rule-udict", d, "which authored dictionary (all = every enabled one pooled)"),
             dmode !== "off" && h("input", { type: "number", class: "rule-fuzzy", dataset: d, step: "0.05", min: "0", max: "1", value: r.fuzzy ?? 0.82, title: "similarity (0-1) an uncertain read must reach to snap to a known word" }),
         ];
     }
@@ -539,10 +611,6 @@ export function ruleRows(fd, cls, fid) {
     const da = fid ? { fid } : {};
     const rules = fd.rules || [];
     const ftype = fd.type || "text";
-    // every op is listed; ones invalid for this type are DISABLED (greyed) so the current value
-    // still shows and can't be re-picked. `opts([v,label,code],...)` builds those <option>s.
-    const opts = (list, cur, codeIdx) => list.map((row) => h("option",
-        { value: row[0], selected: cur === row[0], disabled: !okRuleType(row[codeIdx], ftype) }, cur === row[0] ? `<${row[1]}>` : row[1]));
     if (!rules.length) return h("div", { class: "muted frule-empty" }, "-");
     return rules.map((r, i) => {
         const when = r.when || "always", then = r.then || "set";
@@ -553,12 +621,10 @@ export function ruleRows(fd, cls, fid) {
             h("div", { class: "frule-head" },
                 h("span", { class: "frule-n", title: `rule ${i + 1}` }, String(i + 1) + ".",
                     moveButtons(i, rules.length, "rulemv", d, { upTitle: "run earlier", downTitle: "run later" })),
-                h("select", { class: "rule-when", dataset: d, title: "condition tested on the running value" },
-                    opts(RULE_WHEN, when, 3)),
+                ruleBtn(when, RULE_WHEN, "rule-when", d, RULE_WHEN_DESC[when] || "condition tested on the running value"),
                 RULE_WHEN_ARG.has(when) && h("input", { class: "rule-arg", dataset: d, value: r.arg || "", placeholder: "value", title: "value the condition compares against" }),
                 h("span", { class: "rule-arrow muted" }, "→"),
-                h("select", { class: "rule-then rule-op", dataset: d, title: "action when it matches (drop/blank/prune stop here — drop skips this read (invisible to mirror-sync), blank forwards a null gap, prune ACTIVELY removes the record's key from the dataset; others rewrite the value and continue)" },
-                    opts(RULE_THEN, then, 2)),
+                ruleBtn(then, RULE_THEN, "rule-then rule-op", d, RULE_THEN_DESC[then] || "action when the condition matches"),
                 ...ruleThenOperands(r, then, d),
                 trashBtn({ cls: "rule-del", dataset: d, title: "remove this rule" })));
     });
@@ -572,7 +638,8 @@ export function fieldConfigBody(fd, cls, fid, afterConf = null, stability = fals
     const da = fid ? { fid } : {};
     const isText = (fd.type || "text") === "text";
     return frag(
-        cls !== "roset" && kv("type", h("select", { class: cls, dataset: { k: "type", ...da } }, TYPES.map(([v, t]) => h("option", { value: v, selected: fd.type === v }, fd.type === v ? `<${t}>` : t)))),   // readouts have no editable type
+        cls !== "roset" && kv("type", h("button", { class: `${cls}-type rich-dd-btn`, type: "button", dataset: { k: "type", ...da },
+            title: TYPE_DESC[fd.type || "text"] || "" }, `<${(TYPES.find(([v]) => v === fd.type) || [, fd.type])[1]}>`)),   // readouts have no editable type
         kv("isolate", h("input", { type: "checkbox", class: cls, dataset: { k: "isolate", ...da }, checked: !!fd.isolate }),
             { title: "read this box in isolation: OCR only its own crop instead of picking tokens from the window-wide pass — use when a digit fuses with a neighbouring glyph (e.g. an '8' read as '81')" }),
         isText && kv("glyph-check", h("input", { type: "checkbox", class: cls, dataset: { k: "glyph_check", ...da }, checked: !!fd.glyph_check }),
@@ -608,10 +675,47 @@ export function rulesSection(fd, cls, fid) {
 // One item field is its OWN node (a child of its item node). It renders the shared
 // per-field config (against the window's FieldDef) plus the row-role controls (tell /
 // locate / align) that only make sense for a field inside an item template.
+export const ALIGN_Y_OPTS = [["none", "none"], ["top", "top"], ["center", "center"], ["bottom", "bottom"]];
+export const ALIGN_Y_DESC = {
+    none: "no vertical anchor — the row position isn't fixed by this field",
+    top: "the TOP line of a wrapped name fixes the row",
+    center: "the CENTER line of a wrapped name fixes the row",
+    bottom: "the BOTTOM line of a wrapped name fixes the row",
+};
+export const ALIGN_X_OPTS = [["left", "left"], ["center", "center"], ["right", "right"]];
+export const ALIGN_X_DESC = {
+    left: "the LEFT edge of the text fixes the column",
+    center: "the CENTER of the text fixes the column",
+    right: "the RIGHT edge of the text fixes the column",
+};
+export const MATCH_MODES = [["partial", "partial"], ["full", "full"], ["exact", "exact"], ["prefix", "prefix"]];
+export const MATCH_MODE_DESC = {
+    partial: "substring match (loose) — the read contains the text anywhere",
+    full: "the whole read must equal the text (after strip/case folding)",
+    exact: "equal comparison, no scoring slack",
+    prefix: "the read must start with the text",
+};
+export const STRIP_MODES = [["alnum", "alnum"], ["spaces", "spaces"], ["none", "none"]];
+export const STRIP_MODE_DESC = {
+    alnum: "ignore everything except letters/digits before comparing",
+    spaces: "ignore whitespace only before comparing",
+    none: "compare the raw read, nothing stripped",
+};
+
+export const DET_KIND_OPTS = [["text", "text"], ["color", "color"], ["border", "border"]];
+export const DET_KIND_DESC = {
+    text: "OCR a label — costs an OCR read",
+    color: "cheap pixel check: a taught colour must be present in the box (no OCR)",
+    border: "cheap pixel check: a taught colour must ride the box's PERIMETER band, not its fill (no OCR)",
+};
+export const DET_MATCH_MODES = MATCH_MODES;
+export const DET_MATCH_DESC = MATCH_MODE_DESC;
+export const DET_STRIP_MODES = [["none", "none"], ["alnum", "alnum"], ["spaces", "spaces"]];
+export const DET_STRIP_DESC = STRIP_MODE_DESC;
+
 export function itemFieldParts(n) {
     const f = n.ref, fd = n.field || { type: "text", extract: "whole", fuzzy: 0.82 };
-    const alignSel = (cls, vals, cur) => h("select", { class: cls, dataset: { fid: f.id } },
-        vals.map((v) => h("option", { selected: cur === v }, cur === v ? `<${v}>` : v)));
+    const alignSel = (cls, vals, cur) => h("button", { class: `${cls} rich-dd-btn`, type: "button", dataset: { fid: f.id } }, `<${cur}>`);
     const body = frag(
         fieldConfigBody(fd, "ffset", f.id),
         subhead("row role"),
@@ -638,16 +742,16 @@ export function itemFieldParts(n) {
 export function itemTellParts(n) {
     const t = n.ref, it = n.item, w = n.win;
     const staticOn = w.static_grid !== false;   // static grid tiles rows from the cell — locate is unused
-    const tset = (k, opts, cur, def) => h("select", { class: "tset", dataset: { k } },
-        opts.map((v) => h("option", { value: v, selected: (cur ?? def) === v }, (cur ?? def) === v ? `<${v}>` : v)));
+    const tset = (k, opts, cur, def) => h("button", { class: "tset-enum rich-dd-btn", type: "button", dataset: { k } }, `<${cur ?? def}>`);
     // the tell's kind is picked HERE now (one "tell" draw tool creates it, this chooses what it
     // checks). Changing it swaps the kind-specific controls below.
-    const kindSel = h("select", { class: "tkind", title: "what this tell checks: filled/text/color/border/template/diamonds" },
-        TELL_KINDS.map(([v, label]) => h("option", { value: v, selected: t.kind === v }, t.kind === v ? `<${label}>` : label)));
+    const kindSel = h("button", { class: "tkind rich-dd-btn", type: "button",
+        title: (TELL_KINDS.find(([v]) => v === t.kind) || [, , , ""])[3] || "what this tell checks" },
+        `<${(TELL_KINDS.find(([v]) => v === t.kind) || [, t.kind])[1]}>`);
     const body = frag(
         kv("kind", kindSel),
         t.kind === "text" && frag(
-            kv("checks", h("select", { class: "tset", dataset: { k: "field" } }, _colOpts((it.fields || []).map((f) => f.field), t.field)),
+            kv("checks", h("button", { class: "tset-enum rich-dd-btn", type: "button", dataset: { k: "field" } }, `<${t.field || "—"}>`),
                 { title: "which field's read this tell checks. Leave blank (—) to check ANY column's read — the tell isn't tied to one field." }),
             kv("text", h("input", { class: "tset", dataset: { k: "text" }, value: t.text || "", placeholder: "(any)" }),
                 { title: "optional: require the read to MATCH this text (scored like a detector). Empty = just needs to read SOMETHING (the chosen field, or any column when blank). NOTE: an empty-text tell bound to a field is identical to flagging that field 'tell' — use the field's own tell flag instead." }),
@@ -759,6 +863,15 @@ export function itemLists(it, w) {
 // store/dataset_store.py). `latest`/`first` take that observation wholesale; the numeric folds
 // apply per field, so they can synthesise a row no single observation ever was.
 export const AGGREGATES = ["latest", "first", "sum", "mean", "max", "min"];
+export const AGGREGATE_DESC = {
+    latest: "keep the most recent observation whole",
+    first: "keep the first-seen observation whole",
+    sum: "add the numeric values per field",
+    mean: "average the numeric values per field",
+    max: "largest numeric value per field",
+    min: "smallest numeric value per field",
+    all: "no collapse — every observation stays its own row",
+};
 
 // ONE aggregate <select>, two callers (rule 7):
 //   • a DATASET's own policy      — `inherit` null (it IS the source of truth), `all` off.
@@ -768,10 +881,9 @@ export const AGGREGATES = ["latest", "first", "sum", "mean", "max", "min"];
 export function aggregateSelect(cur, { cls, ds = null, inherit = null, all = false, title = "" } = {}) {
     const label = (a) => (a === "" ? `inherit (${inherit})` : a === "all" ? "all (no collapse)" : a);
     const vals = [...(inherit !== null ? [""] : []), ...AGGREGATES, ...(all ? ["all"] : [])];
-    const attrs = { class: cls, title };
+    const attrs = { class: `${cls} rich-dd-btn`, type: "button", title };
     if (ds !== null) attrs.dataset = { ds };
-    return h("select", attrs,
-        vals.map((a) => h("option", { value: a, selected: a === cur }, a === cur ? `<${label(a)}>` : label(a))));
+    return h("button", attrs, `<${label(cur)}>`);
 }
 
 // The item's record key (dedup identity): which fields identify a record, in what
@@ -784,8 +896,7 @@ export function keySection(it, w) {
     const fids = [...new Set((it.fields || []).map((f) => f.field))];
     const rows = used.length
         ? used.map((fid, i) => h("div", { class: "key-row", dataset: { i } },
-            h("select", { class: "kfield", dataset: { i } },
-                (fids.includes(fid) ? fids : [fid, ...fids]).map((f) => h("option", { selected: f === fid }, f === fid ? `<${f}>` : f))),
+            h("button", { class: "kfield rich-dd-btn", type: "button", dataset: { i } }, `<${fid}>`),
             h("button", { class: "btn-icon kmv", dataset: { i, d: "-1" }, disabled: i === 0, title: "earlier in the key" }, "▲"),
             h("button", { class: "btn-icon kmv", dataset: { i, d: "1" }, disabled: i === used.length - 1, title: "later in the key" }, "▼"),
             trashBtn({ cls: "kdel", dataset: { i }, disabled: used.length <= 1, title: "remove from the key" })))
@@ -795,7 +906,7 @@ export function keySection(it, w) {
         subhead("key", null, "which fields identify a record — reads with the same key merge; a different key (e.g. another level) is its own record. A record missing any key part is dropped."),
         kv("separator", h("input", { class: "ksep", value: eff.sep ?? "|", size: "2" }),
             { title: "joins the parts in the stored key" }),
-        addable.length > 0 && kv("+ field", h("select", { class: "kadd" }, h("option", { value: "" }, "<field>"), addable.map((f) => h("option", f))),
+        addable.length > 0 && kv("+ field", h("button", { class: "kadd", type: "button" }, "+ field"),
             { title: "add a field to the key" }),
         kv("case-sensitive", h("input", { type: "checkbox", class: "kcase", checked: !!eff.case_sensitive }),
             { title: "treat keys differing only in case as distinct" }),
@@ -849,6 +960,17 @@ export function gamePriority() {
         wins.length ? rows
             : h("p", { class: "muted", style: "margin:4px 0" }, "no live windows — turn on 'live' on a window to prioritise it"));
 }
+
+export const DS_BATCH_MODES = [["run", "per run"], ["detection", "per detection"]];
+export const DS_BATCH_DESC = {
+    run: "one batch per collection run",
+    detection: "a new batch each time the window is freshly detected (transient per-event screens like a timed offer/pop-up)",
+};
+export const DS_SYNC_MODES = [["accumulate", "accumulate"], ["mirror", "mirror (sync removals)"]];
+export const DS_SYNC_DESC = {
+    accumulate: "only add/update — a row that stops appearing on screen stays in the dataset",
+    mirror: "keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)",
+};
 
 export function nodeParts(n) {
     if (n.type === "game") {
@@ -905,18 +1027,11 @@ export function nodeParts(n) {
         const textBody = frag(
             kv("text", h("input", { class: "aset", dataset: { k: "text" }, value: a.text || "", placeholder: "(none)" }),
                 { title: "label to look for. Empty = match ANY read meeting min-chars (presence-only landmark). Auto-prefilled from the OCR read when you draw the box; edit to pin an exact label." }),
-            kv("mode", h("select", { class: "aset", dataset: { k: "match" } },
-                h("option", { value: "partial", selected: (a.match ?? "partial") === "partial" }, (a.match ?? "partial") === "partial" ? "<partial>" : "partial"),
-                h("option", { value: "full", selected: a.match === "full" }, a.match === "full" ? "<full>" : "full"),
-                h("option", { value: "exact", selected: a.match === "exact" }, a.match === "exact" ? "<exact>" : "exact"),
-                h("option", { value: "prefix", selected: a.match === "prefix" }, a.match === "prefix" ? "<prefix>" : "prefix")),
+            kv("mode", h("button", { class: "aset-enum rich-dd-btn", type: "button", dataset: { k: "match" } }, `<${a.match ?? "partial"}>`),
                 { title: "how text is compared: partial=substring (loose); full=whole-string; exact=equal; prefix=starts-with" }),
             kv("min chars", h("input", { type: "number", class: "aset", dataset: { k: "minchars" }, step: "1", min: "0", value: a.min_chars ?? 0 }),
                 { title: "hard floor: reads shorter than this never match (kills tiny-blob false hits)" }),
-            kv("strip", h("select", { class: "aset", dataset: { k: "strip" } },
-                h("option", { value: "none", selected: (a.strip ?? "none") === "none" }, (a.strip ?? "none") === "none" ? "<none>" : "none"),
-                h("option", { value: "alnum", selected: a.strip === "alnum" }, a.strip === "alnum" ? "<alnum>" : "alnum"),
-                h("option", { value: "spaces", selected: a.strip === "spaces" }, a.strip === "spaces" ? "<spaces>" : "spaces")),
+            kv("strip", h("button", { class: "aset-enum rich-dd-btn", type: "button", dataset: { k: "strip" } }, `<${a.strip ?? "none"}>`),
                 { title: "what to ignore before comparing (default: none — keep everything)" }),
             kv("case sensitive", h("input", { type: "checkbox", class: "aset", dataset: { k: "case" }, checked: !!a.case_sensitive }),
                 { title: "off (default) = fold case before comparing, so EQUIPMENT matches equipment" }));
@@ -944,11 +1059,7 @@ export function nodeParts(n) {
                 title: "detector: the window's detect_mode decides how these combine" }),
             body: frag(
                 matchCanvas(),   // cutout preview first, regardless of kind
-                kv("kind", h("select", { class: "aset", dataset: { k: "kind" } },
-                    h("option", { value: "text", selected: kind === "text" }, kind === "text" ? "<text>" : "text"),
-                    h("option", { value: "color", selected: kind === "color" }, kind === "color" ? "<color>" : "color"),
-                    h("option", { value: "border", selected: kind === "border" }, kind === "border" ? "<border>" : "border"),
-                    ...(kind === "template" ? [h("option", { value: "template", selected: true }, "<template>")] : [])),
+                kv("kind", h("button", { class: "aset-enum rich-dd-btn", type: "button", dataset: { k: "kind" } }, `<${kind}>`),
                     { title: "text = OCR a label (costs OCR); color/border = cheap pixel check (no OCR — use these for the live-mode gate)" }),
                 kind === "text" ? textBody : kind === "template"
                     ? h("div", { class: "muted" }, "template image (set on the box)") : colorBody,
@@ -1196,21 +1307,11 @@ export function nodeParts(n) {
     // field the feeders don't currently declare stays selected rather than snapping to the auto default.
     const kfields = model.datasetFields(ds);
     const keyFields = mode === "single" && kf && !kfields.includes(kf) ? [...kfields, kf] : kfields;
-    const keyOpts = [
-        // empty = no dataset-level override; key comes from whatever feeds it (a window's/item's
-        // key, a file source's, or a producer's - e.g. the relic table producer's name|item).
-        h("option", { value: "", selected: mode === "auto" }, mode === "auto" ? "<key: auto>" : "key: auto"),
-        keyFields.map((f) => h("option", { value: f, selected: mode === "single" && kf === f }, mode === "single" && kf === f ? `<key: ${f}>` : `key: ${f}`)),
-        h("option", { value: "__concat__", selected: mode === "concat" }, mode === "concat" ? "<concat (combine fields)>" : "concat (combine fields)"),
-        h("option", { value: "__nodedup__", selected: mode === "nodedup" }, mode === "nodedup" ? "<no dedup (keep every read)>" : "no dedup (keep every read)"),
-    ];
+    const dskeyLabel = mode === "auto" ? "key: auto" : mode === "concat" ? "concat (combine fields)"
+        : mode === "nodedup" ? "no dedup (keep every read)" : `key: ${kf}`;
     const concatEditor = mode === "concat" ? datasetConcatEditor(ds) : null;
     const bm = model.datasetBatchMode(ds);
-    const batchOpts = [["run", "per run"], ["detection", "per detection"]]
-        .map(([v, l]) => h("option", { value: v, selected: bm === v }, bm === v ? `<${l}>` : l));
     const sm = model.datasetSyncMode(ds);
-    const syncOpts = [["accumulate", "accumulate"], ["mirror", "mirror (sync removals)"]]
-        .map(([v, l]) => h("option", { value: v, selected: sm === v }, sm === v ? `<${l}>` : l));
     return {
         title: h("input", { class: "gi gi-id dsrename", value: ds, title: "dataset name" }),
         head: satToggleBtn(`vt:ds:${ds}`, "vttable"),
@@ -1224,19 +1325,19 @@ export function nodeParts(n) {
                     chips: model.datasetSources(ds).map((s) => ({ value: s.ref, node: model.refNode(s.ref) })),
                     free: () => model.datasetFreeSources(ds).map((s) => s.ref),
                     addinCls: "sv-addin ds-addsrc", rmCls: "sv-rmin ds-rmsrc" })),
-            kv("1 → many", h("select", { class: "dskey", title: "the key the dataset collapses many reads on (or none)" }, keyOpts)),
+            kv("1 → many", h("button", { class: "dskey rich-dd-btn", type: "button", title: "the key the dataset collapses many reads on (or none)" }, `<${dskeyLabel}>`)),
             // The key says WHICH reads are the same row; this says HOW those reads fold to one
             // value. Moot with dedup off (every read is already its own record).
             mode === "nodedup" ? null : kv("many → one",
                 aggregateSelect(model.datasetAggregate(ds), { cls: "dsagg",
                     title: "how this dataset's many observations under one key collapse to the value it serves. latest/first keep one observation whole; sum/mean/max/min fold PER FIELD, so they can show a row no single observation ever was — drill a row to see the observations behind it." })),
-            kv("batch", h("select", { class: "dsbatch", title: "how a live run splits into revertable batches: one per run, or a new batch each time the window is freshly detected (transient per-event screens like a timed offer / pop-up)" }, batchOpts)),
+            kv("batch", h("button", { class: "dsbatch rich-dd-btn", type: "button", title: DS_BATCH_DESC[bm] || "" }, `<${(DS_BATCH_MODES.find(([v]) => v === bm) || [, bm])[1]}>`)),
             // detection-only: how many read-opportunities the window may go unread before the next
             // read counts as a fresh detection (new batch). 0 = inherit the global confirm_frames.
             bm === "detection" ? kv("re-open gap", h("input", { class: "dsreopen", type: "number", min: "0",
                 value: model.datasetReopenGrace(ds),
                 title: "OCR read-opportunities the window may drop out for before a re-read starts a NEW batch. 0 = use the global confirm_frames. Widen it so a brief OCR dropout on a still-visible screen (an animation/glow) isn't misread as the screen closing and reopening." })) : null,
-            kv("sync", h("select", { class: "dssync", title: "accumulate: only add/update. mirror: keep the dataset equal to the live screen — a row gone from its visible scroll slice is removed (soft). Needs the feeding window's scrollbar drawn so the visible slice can be located (or a list that fits one screen)." }, syncOpts)),
+            kv("sync", h("button", { class: "dssync rich-dd-btn", type: "button", title: DS_SYNC_DESC[sm] || "" }, `<${(DS_SYNC_MODES.find(([v]) => v === sm) || [, sm])[1]}>`)),
             // Rolling batch window. Hidden where every read is already its own row (dedup off /
             // aggregate "all") — there is no 'many' side to fold, so the option could only delete.
             // The apply button is NOT here: it only appears once the dataset is actually over its
@@ -1318,29 +1419,3 @@ export function fmtWhen(ts) {
 // HH:MM:SS from an ISO timestamp — drops fractional seconds AND the timezone suffix (+00:00).
 export function clockTime(ts) { const m = /T(\d{2}:\d{2}:\d{2})/.exec(String(ts || "")); return m ? m[1] : ""; }
 
-// Render <option> NODES for `opts`, marking `sel` selected, and PIN `sel` into the list when the
-// current option set doesn't include it — a saved value (renamed field, `_seq`, a column a live
-// join hasn't surfaced yet) stays selected instead of snapping to the first option and being lost
-// on the next edit. The one place every column/field dropdown gets this behaviour. Returns an ARRAY.
-export function _optList(opts, sel) {
-    const all = sel && !opts.includes(sel) ? [...opts, sel] : opts;
-    return all.map((c) => h("option", { value: c, selected: c === sel }, c === sel ? `<${c}>` : c));
-}
-
-export function _colOpts(cols, sel) {
-    return [h("option", { value: "", selected: !sel }, "—"), ..._optList(cols, sel)];
-}
-
-// _colOpts with the options SPLIT INTO <optgroup>s: `groups` is [{ label, cols }] (a joining subset
-// labels one group per source, plus a trailing group of its own columns). Same "—" empty option and
-// the same pin-the-saved-value behaviour as the flat list — a value no group offers is pinned as a
-// bare option above the groups rather than snapping to "—". Returns an ARRAY.
-export function _optGroups(groups, sel) {
-    const known = sel && groups.some((g) => g.cols.includes(sel));
-    return [h("option", { value: "", selected: !sel }, "—"),
-        sel && !known && h("option", { value: sel, selected: true }, `<${sel}>`),
-        // pass `sel` only to the group that HAS it — _optList pins an unknown value into whatever
-        // list it's given, which here would clone the pinned option into every group.
-        ...groups.map((g) => h("optgroup", { label: g.label },
-            _optList(g.cols, g.cols.includes(sel) ? sel : null)))].filter(Boolean);
-}

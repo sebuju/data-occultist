@@ -20,8 +20,21 @@ import { wireProducerNode, mapRow } from "./producer_node.js";
 import { renderTriggerHistory } from "./history_node.js";
 import { renderInputLog } from "./input_log_node.js";
 import { refreshRegister, populateRegister, REG_AGGREGATES, AGG_DESC } from "./register_node.js";
-import { KIND_GROUPS, KIND_DESC } from "./trigger_node.js";
+import { KIND_GROUPS, KIND_DESC, INPUT_EVENTS, INPUT_EVENT_DESC } from "./trigger_node.js";
+import { ACTIONS, ACTION_DESC, REG_OPS, REG_OP_DESC } from "./action_node.js";
+import {
+    FORMATS, FORMAT_DESC, OPS, OP_DESC, METHODS, METHOD_DESC,
+    SRC_FIELD_TYPES, FIELD_TYPE_DESC, WATCH_MODES, WATCH_DESC,
+} from "./source_node.js";
+import {
+    PRODUCER_TYPES, PRODUCER_TYPE_DESC, AGG_OPS, AGG_OP_DESC, FILTER_OPS, FILTER_OP_DESC,
+    KEY_TRANSFORMS, KEY_TRANSFORM_DESC, QUEUE_MODES, QUEUE_MODE_DESC,
+    HTTP_METHODS, HTTP_METHOD_DESC, PR_FIELD_TYPES, PR_FIELD_TYPE_DESC,
+} from "./producer_node.js";
+import { PROCESS_TYPES, PROCESS_TYPE_DESC } from "./process_node.js";
+import { GATE_WHENS, GATE_WHEN_DESC } from "./gate_node.js";
 import { richPickerPop } from "./rich_picker.js";
+import { comboPopover } from "./combo_popover.js";
 import { renderProcessHistory } from "./process_history_node.js";
 import { wireKeyRows, wireRegWriteRows } from "./reg_slots.js";
 import { makeArmed } from "./armbtn.js";
@@ -40,6 +53,15 @@ function wireProducer(div, n) {
     const rebuild = () => { rebuildNodeEdges(n.id); autosave(null); };   // body/edges change (measured anchor)
     const structural = () => { rebuildNode(n.id); render(); autosave(null); };  // output columns change -> rebuild THIS body (removed row) + refresh downstream
     const fieldI = (el) => +el.closest(".pr-field").dataset.i;
+    // a plain string-valued enum picker (value === label) — mirrors sel()/producer_node.js.
+    // `after` runs once the model is updated (save/rebuild/structural, matching each old `change`).
+    const enumBtn = (btn, current, opts, descs, onPick) => {
+        richPickerPop({
+            anchor: btn, current,
+            groups: [[null, opts.map((v) => ({ value: v, label: v, meta: (descs && descs[v]) || "" }))]],
+            onPick: (v) => { onPick(v); btn.textContent = `<${v}>`; },
+        });
+    };
     const collectMap = (kind) => {
         const obj = {};
         div.querySelectorAll(`.pr-map-row[data-kind="${kind}"]`).forEach((r) => {
@@ -57,7 +79,10 @@ function wireProducer(div, n) {
         }, hub.kick);   // refresh start/cancel -> beat the hub so the tasks panel refreshes now
 
     // backend picker (http). Switching swaps the body AND the output columns.
-    div.querySelector(".prtype")?.addEventListener("change", (e) => { model.setProducerType(id, e.target.value); structural(); });
+    div.querySelector(".prtype")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        enumBtn(btn, n.ref.type || "http", PRODUCER_TYPES, PRODUCER_TYPE_DESC, (v) => { model.setProducerType(id, v); structural(); });
+    });
     // rename the producer node (its id) — carry its saved layout slot to the new id, then re-render
     div.querySelector(".prrename")?.addEventListener("change", (e) => {
         const oldId = id;
@@ -68,11 +93,15 @@ function wireProducer(div, n) {
     });
     // producer-level knobs
     div.querySelector(".pr-throttle")?.addEventListener("change", (e) => { model.setProducerThrottle(id, e.target.value); save(); });
-    div.querySelector(".pr-queuemode")?.addEventListener("change", (e) => { model.setProducerQueueMode(id, e.target.value); save(); });
+    div.querySelector(".pr-queuemode")?.addEventListener("click", (e) => {
+        enumBtn(e.currentTarget, n.ref.queue_mode || "drop", QUEUE_MODES, QUEUE_MODE_DESC, (v) => { model.setProducerQueueMode(id, v); save(); });
+    });
     div.querySelector(".pr-mode")?.addEventListener("change", (e) => { model.setProducerMode(id, e.target.value); save(); });
 
     // request
-    div.querySelector(".pr-method")?.addEventListener("change", (e) => { model.setHttpMethod(id, e.target.value); save(); });
+    div.querySelector(".pr-method")?.addEventListener("click", (e) => {
+        enumBtn(e.currentTarget, (n.ref.http || {}).request?.method || "GET", HTTP_METHODS, HTTP_METHOD_DESC, (v) => { model.setHttpMethod(id, v); save(); });
+    });
     div.querySelector(".pr-url")?.addEventListener("change", (e) => { model.setHttpUrl(id, e.target.value); save(); });
     div.querySelector(".pr-timeout")?.addEventListener("change", (e) => { model.setHttpTimeout(id, e.target.value); save(); });
     div.querySelector(".pr-htmlextract")?.addEventListener("change", (e) => { model.setHttpHtmlExtract(id, e.target.value); save(); });
@@ -102,7 +131,9 @@ function wireProducer(div, n) {
     div.querySelector(".pr-q-add")?.addEventListener("click", () => addMapRow("query"));
 
     // key transform (+ catalogue sub-panel appears/vanishes -> rebuild)
-    div.querySelector(".pr-keytransform")?.addEventListener("change", (e) => { model.setHttpKeyTransform(id, e.target.value); rebuild(); });
+    div.querySelector(".pr-keytransform")?.addEventListener("click", (e) => {
+        enumBtn(e.currentTarget, (n.ref.http || {}).key_transform || "slugify", KEY_TRANSFORMS, KEY_TRANSFORM_DESC, (v) => { model.setHttpKeyTransform(id, v); rebuild(); });
+    });
     div.querySelector(".pr-keyencode")?.addEventListener("change", (e) => { model.setHttpKeyEncode(id, e.target.checked); save(); });
     const catMap = { "pr-cat-url": "url", "pr-cat-items": "items_path", "pr-cat-name": "name_path",
                      "pr-cat-key": "key_path", "pr-cat-fuzzy": "fuzzy", "pr-cat-ttl": "ttl_days" };
@@ -127,11 +158,19 @@ function wireProducer(div, n) {
     div.querySelectorAll(".pr-f-out").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { out_field: el.value.trim() }); structural(); }));
     div.querySelectorAll(".pr-f-path").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { path: el.value }); save(); }));
     div.querySelectorAll(".pr-f-tmpl").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { template: el.value }); save(); }));
-    div.querySelectorAll(".pr-f-type").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { type: el.value }); save(); }));
+    div.querySelectorAll(".pr-f-type").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = fieldI(b);
+        const cur = ((n.ref.http || {}).fields || [])[i]?.type || "text";
+        enumBtn(b, cur, PR_FIELD_TYPES, PR_FIELD_TYPE_DESC, (v) => { model.setHttpField(id, i, { type: v }); save(); });
+    }));
     div.querySelectorAll(".pr-f-req").forEach((el) => el.addEventListener("change", () => { model.setHttpField(id, fieldI(el), { required: el.checked }); save(); }));
     div.querySelectorAll(".pr-f-arr").forEach((el) => el.addEventListener("change", () => { model.toggleHttpFieldArray(id, fieldI(el), el.checked); rebuild(); }));
     div.querySelectorAll(".pr-fa-pluck").forEach((el) => el.addEventListener("change", () => { model.setHttpFieldArray(id, fieldI(el), { pluck: el.value }); save(); }));
-    div.querySelectorAll(".pr-fa-agg").forEach((el) => el.addEventListener("change", () => { model.setHttpFieldArray(id, fieldI(el), { agg: el.value }); save(); }));
+    div.querySelectorAll(".pr-fa-agg").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = fieldI(b);
+        const cur = ((n.ref.http || {}).fields || [])[i]?.array?.agg || "min";
+        enumBtn(b, cur, AGG_OPS, AGG_OP_DESC, (v) => { model.setHttpFieldArray(id, i, { agg: v }); save(); });
+    }));
     div.querySelectorAll(".pr-fa-depth").forEach((el) => el.addEventListener("change", () => { model.setHttpFieldArray(id, fieldI(el), { depth: parseInt(el.value, 10) || 1 }); save(); }));
     // a filter row/button with NO data-i belongs to the producer's row_filter (null), not a field's
     // array reduction — the one place the shared filterList() primitive's two callers diverge.
@@ -140,17 +179,46 @@ function wireProducer(div, n) {
     div.querySelectorAll(".pr-ff-del").forEach((b) => armConfirm(b, () => { model.removeHttpFilter(id, fltI(b), +b.dataset.fi); rebuild(); }, { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".pr-ffilt").forEach((row) => {
         const i = fltI(row), fi = +row.dataset.fi;
-        const opSel = row.querySelector(".pr-ff-op"), valIn = row.querySelector(".pr-ff-val");
+        const opBtn = row.querySelector(".pr-ff-op"), valIn = row.querySelector(".pr-ff-val");
         row.querySelector(".pr-ff-path")?.addEventListener("change", (e) => { model.setHttpFilter(id, i, fi, { path: e.target.value }); save(); });
         // op and value co-normalize (in/nin take a list), so commit both together
-        opSel?.addEventListener("change", () => { model.setHttpFilter(id, i, fi, { op: opSel.value, value: valIn.value }); save(); });
-        valIn?.addEventListener("change", () => { model.setHttpFilter(id, i, fi, { op: opSel.value, value: valIn.value }); save(); });
+        opBtn?.addEventListener("click", (e) => {
+            const cur = opBtn.textContent.replace(/^<|>$/g, "");
+            enumBtn(e.currentTarget, cur, FILTER_OPS, FILTER_OP_DESC, (v) => { model.setHttpFilter(id, i, fi, { op: v, value: valIn.value }); save(); });
+        });
+        valIn?.addEventListener("change", () => { model.setHttpFilter(id, i, fi, { op: opBtn.textContent.replace(/^<|>$/g, ""), value: valIn.value }); save(); });
     });
 
     // which source column names the item (next sweep uses it — no rebuild)
-    div.querySelector(".enr-keyfld-sel")?.addEventListener("change", (e) => { model.setProducerSourceField(id, e.target.value); save(); });
+    div.querySelector(".enr-keyfld-sel")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        const nf = n.ref.source_field || "name";
+        const cols = model.producerSourceColumns(n.ref);
+        richPickerPop({
+            anchor: btn, current: nf,
+            groups: [[null, [...new Set([nf, ...cols])].map((c) => ({ value: c, label: c }))]],
+            onPick: (v) => { model.setProducerSourceField(id, v); btn.textContent = `<${v}>`; save(); },
+        });
+    });
     div.querySelector(".pr-srcarray")?.addEventListener("change", (e) => { model.setProducerSourceArray(id, e.target.value); save(); });
-    div.querySelector(".pr-identity")?.addEventListener("change", (e) => { model.setProducerIdentityField(id, e.target.value); save(); });
+    div.querySelector(".pr-identity")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        const nf = n.ref.source_field || "name";
+        const idf = n.ref.identity_field || "";
+        const cols = model.producerSourceColumns(n.ref);
+        richPickerPop({
+            anchor: btn, current: idf,
+            groups: [[null, [
+                { value: "", label: nf, meta: "same as 'name by'" },
+                ...[...new Set([idf, ...cols].filter(Boolean))].map((c) => ({ value: c, label: c })),
+            ]]],
+            onPick: (v) => {
+                model.setProducerIdentityField(id, v);
+                btn.textContent = v === "" ? `<${nf}>` : `<${v}>`;
+                save();
+            },
+        });
+    });
     // add an item source via the chip add-select (same input the subset uses)
     div.querySelector(".pr-addsrc")?.addEventListener("change", (e) => {
         if (e.target.value && model.addProducerSource(id, e.target.value)) rebuild();
@@ -233,7 +301,14 @@ function wireTrigger(div, n) {
     div.querySelector(".tg-interval")?.addEventListener("change", (e) => { model.setTriggerInterval(t.id, e.target.value); autosave(null); });
     // on_input: chord + window/rect bind. Event/window/double rebuild (their presence/value shows
     // or hides other fields — the double-window input, the rect row); button/mods/rect just save.
-    div.querySelector(".tg-inevent")?.addEventListener("change", (e) => { model.setTriggerInputEvent(t.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    div.querySelector(".tg-inevent")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: t.input_event,
+            groups: [[null, INPUT_EVENTS.map(([v, l]) => ({ value: v, label: l, meta: INPUT_EVENT_DESC[v] || "" }))]],
+            onPick: (v) => { model.setTriggerInputEvent(t.id, v); rebuildNode(n.id); autosave(null); },
+        });
+    });
     div.querySelector(".tg-inbutton")?.addEventListener("change", (e) => { model.setTriggerInputButton(t.id, e.target.value); autosave(null); });
     div.querySelector(".tg-inmods")?.addEventListener("change", (e) => {
         model.setTriggerInputMods(t.id, e.target.value.split(",").map((s) => s.trim())); autosave(null);
@@ -242,13 +317,23 @@ function wireTrigger(div, n) {
     // window bind also draws a trigger->window edge (model.edges) and, once a rect is set, an
     // overlay box on that window (refreshImageBoxes) — refresh both the old and new window's
     // canvas (refreshImageBoxes is a no-op if that window isn't open) so the box moves with it.
-    div.querySelector(".tg-inwindow")?.addEventListener("change", (e) => {
-        const prevWin = t.input_window;
-        model.setTriggerInputWindow(t.id, e.target.value);
-        rebuildNodeEdges(n.id);
-        if (prevWin) refreshImageBoxes(prevWin);
-        if (t.input_window) refreshImageBoxes(t.input_window);
-        autosave(null);
+    div.querySelector(".tg-inwindow")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        const winMeta = (w) => `${(w.items || []).length} item template(s), ${(w.detect || []).length} detector(s)`;
+        richPickerPop({
+            anchor: btn, current: t.input_window || "",
+            groups: [[null, [{ value: "", label: "(any)", meta: "fire regardless of the recognized window" },
+                ...(model.profile.windows || []).map((w) => ({ value: w.id, label: w.id, meta: winMeta(w) }))]]],
+            onPick: (v) => {
+                const prevWin = t.input_window;
+                model.setTriggerInputWindow(t.id, v);
+                rebuildNode(n.id);
+                rebuildNodeEdges(n.id);
+                if (prevWin) refreshImageBoxes(prevWin);
+                if (t.input_window) refreshImageBoxes(t.input_window);
+                autosave(null);
+            },
+        });
     });
     const inRect = () => model.setTriggerInputRect(t.id,
         [".tg-inrx", ".tg-inry", ".tg-inrw", ".tg-inrh"].map((sel) => div.querySelector(sel)?.value ?? ""));
@@ -315,8 +400,20 @@ function wireTrigger(div, n) {
     div.querySelector(".tg-addwinwatch")?.addEventListener("change", (e) => { if (model.addTriggerWindowWatch(t.id, e.target.value)) { rebuildNode(n.id); rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".tg-rmwinwatch", (val) => { model.removeTriggerWindowWatch(t.id, val); rebuildNode(n.id); rebuildNodeEdges(n.id); autosave(null); });
     // on_item: which item template (within the watched window) pulses the trigger.
-    div.querySelector(".tg-itemwatch")?.addEventListener("change", (e) => {
-        model.setTriggerItemWatch(t.id, e.target.value); rebuildNodeEdges(n.id); autosave(null);
+    div.querySelector(".tg-itemwatch")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        const winId = (t.window_watch || [])[0];
+        const items = winId ? model.items(winId) : [];
+        const itemMeta = (it) => `${(it.fields || []).length} field(s)${it.terminator ? " — terminator" : ""}`;
+        richPickerPop({
+            anchor: btn, current: t.item_watch || "",
+            groups: [[null, [
+                { value: "", label: "(pick one)", meta: "no item template chosen yet — the trigger won't fire" },
+                { value: "*", label: "any item", meta: "pulse on ANY item template's detection" },
+                ...items.map((it) => ({ value: it.id, label: it.id, meta: itemMeta(it) })),
+            ]]],
+            onPick: (v) => { model.setTriggerItemWatch(t.id, v); rebuildNode(n.id); rebuildNodeEdges(n.id); autosave(null); },
+        });
     });
     // gates have no trigger-side row: the gate node owns that editor (its picker / out-port drag).
     div.querySelector(".tg-addfire")?.addEventListener("change", (e) => { if (model.addTriggerTarget(t.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
@@ -373,7 +470,14 @@ function wireGate(div, n) {
     // saves; remove is a two-click arm (rule 2), armed on the whole row.
     div.querySelectorAll(".gate-condrow").forEach((row) => {
         const idx = +row.dataset.idx;
-        row.querySelector(".gate-condwhen")?.addEventListener("change", (e) => { model.setGateCondWhen(g.id, idx, e.target.value); rebuildNode(n.id); autosave(null); });
+        row.querySelector(".gate-condwhen")?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            richPickerPop({
+                anchor: btn, current: g.conds[idx]?.when || "always",
+                groups: [[null, GATE_WHENS.map(([v, l]) => ({ value: v, label: l, meta: GATE_WHEN_DESC[v] || "" }))]],
+                onPick: (v) => { model.setGateCondWhen(g.id, idx, v); rebuildNode(n.id); autosave(null); },
+            });
+        });
         row.querySelector(".gate-condarg")?.addEventListener("input", (e) => { model.setGateCondArg(g.id, idx, e.target.value); autosave(null); });
         const rm = row.querySelector(".gate-condrm");
         if (rm) armConfirm(rm, () => { model.removeGateCond(g.id, idx); rebuildNode(n.id); autosave(null); }, { silent: true, resetOnOutside: true });
@@ -411,7 +515,14 @@ function wireRouter(div, n) {
     });
     div.querySelectorAll(".routerb-condrow").forEach((row) => {
         const bi = +row.closest("[data-bi]").dataset.bi, ci = +row.dataset.idx;
-        row.querySelector(".routerb-condwhen")?.addEventListener("change", (e) => { model.setRouterBranchCondWhen(r.id, bi, ci, e.target.value); rebuildNode(n.id); autosave(null); });
+        row.querySelector(".routerb-condwhen")?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            richPickerPop({
+                anchor: btn, current: r.branches?.[bi]?.conds?.[ci]?.when || "always",
+                groups: [[null, GATE_WHENS.map(([v, l]) => ({ value: v, label: l, meta: GATE_WHEN_DESC[v] || "" }))]],
+                onPick: (v) => { model.setRouterBranchCondWhen(r.id, bi, ci, v); rebuildNode(n.id); autosave(null); },
+            });
+        });
         row.querySelector(".routerb-condarg")?.addEventListener("input", (e) => { model.setRouterBranchCondArg(r.id, bi, ci, e.target.value); autosave(null); });
         const rm = row.querySelector(".routerb-condrm");
         if (rm) armConfirm(rm, () => { model.removeRouterBranchCond(r.id, bi, ci); rebuildNode(n.id); autosave(null); }, { silent: true, resetOnOutside: true });
@@ -456,21 +567,55 @@ function wireAction(div, n) {
     });
     // action kind: rebuild so the dest select shows/hides; edges follow (dest edge). DATASET
     // targets only — a register target runs its own op below, independent of this one.
-    $(".ac-action")?.addEventListener("change", (e) => { model.setActionKind(x.id, e.target.value); rebuildNodeEdges(n.id); autosave(null); });
+    $(".ac-action")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: x.action || "",
+            groups: [[null, ACTIONS.map(([v, l]) => ({ value: v, label: l, meta: ACTION_DESC[v] || "" }))]],
+            onPick: (v) => { model.setActionKind(x.id, v); rebuildNode(n.id); rebuildNodeEdges(n.id); autosave(null); },
+        });
+    });
     // sources: datasets AND registers, by prefixed ref (value carries "dataset:"/"register:")
     $(".ac-addsrc")?.addEventListener("change", (e) => { if (model.addActionSource(x.id, e.target.value)) { rebuildNodeEdges(n.id); autosave(null); } });
     wireArmedRemove(div, ".ac-rmsrc", (val) => { model.removeActionSource(x.id, val); rebuildNodeEdges(n.id); autosave(null); });
-    $(".ac-dest")?.addEventListener("change", (e) => { model.setActionDest(x.id, e.target.value); drawEdges(); autosave(null); });
+    // dest excludes the action's own dataset targets (can't pick one as its own dest).
+    $(".ac-dest")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        const dsSrc = new Set(model.actionSources(x.id).filter((s) => s.kind === "dataset").map((s) => s.id));
+        const dsFree = model.datasets().filter((d) => !dsSrc.has(d));
+        richPickerPop({
+            anchor: btn, current: x.dest || "",
+            groups: [[null, [{ value: "", label: "- dataset -" }, ...dsFree.map((d) => ({ value: d, label: d }))]]],
+            onPick: (v) => { model.setActionDest(x.id, v); rebuildNode(n.id); drawEdges(); autosave(null); },
+        });
+    });
     // per-register op: each register target picks its own op (rebuild so set/clone/move sub-rows
     // show/hide; edges follow for a per-register clone/move dest).
-    div.querySelectorAll(".ac-regop").forEach((sel) => sel.addEventListener("change", (e) => {
-        model.setActionRegOp(x.id, sel.dataset.reg, e.target.value); rebuildNodeEdges(n.id); autosave(null);
+    div.querySelectorAll(".ac-regop").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, regId = b.dataset.reg;
+        richPickerPop({
+            anchor: b, current: model.actionRegOp(x.id, regId) || "",
+            groups: [[null, REG_OPS.map(([v, l]) => ({ value: v, label: l, meta: REG_OP_DESC[v] || "" }))]],
+            onPick: (v) => { model.setActionRegOp(x.id, regId, v); rebuildNode(n.id); rebuildNodeEdges(n.id); autosave(null); },
+        });
     }));
-    // dest is one combined dataset/register picker (value already carries the "dataset:"/"register:"
-    // prefix) — picking a NEW kind clears every OTHER register's dest on this node (setActionRegDest),
-    // so rebuild (not just redraw edges) to show those now-empty "into" selects.
-    div.querySelectorAll(".ac-regdest").forEach((sel) => sel.addEventListener("change", (e) => {
-        model.setActionRegDest(x.id, sel.dataset.reg, e.target.value); rebuildNodeEdges(n.id); autosave(null);
+    // dest is one combined dataset/register picker (value carries the "dataset:"/"register:" prefix)
+    // — picking a NEW kind clears every OTHER register's dest on this node (setActionRegDest), so
+    // rebuild (not just redraw edges) to show those now-empty "into" buttons.
+    div.querySelectorAll(".ac-regdest").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, regId = b.dataset.reg;
+        const dsSrc = new Set(model.actionSources(x.id).filter((s) => s.kind === "dataset").map((s) => s.id));
+        const dsFree = model.datasets().filter((d) => !dsSrc.has(d));
+        const regFree = model.registers().filter((r) => r !== regId);
+        richPickerPop({
+            anchor: b, current: model.actionRegDest(x.id, regId) || "",
+            groups: [
+                [null, [{ value: "", label: "- destination -" }]],
+                ["datasets", dsFree.map((d) => ({ value: `dataset:${d}`, label: d }))],
+                ["registers", regFree.map((r) => ({ value: `register:${r}`, label: r }))],
+            ],
+            onPick: (v) => { model.setActionRegDest(x.id, regId, v); rebuildNode(n.id); rebuildNodeEdges(n.id); autosave(null); },
+        });
     }));
     // clone/move key-narrowing: hand-typed rows, one register source running one of those ops
     // (shared reg_slots primitive, rule 7) — each scoped to its register via data-reg. A key/remove
@@ -628,7 +773,14 @@ function wireProcess(div, n) {
             });
     });
     // value type — re-filters the rule menus (a number-only rule greys out for text) -> rebuild body.
-    $(".pr-type")?.addEventListener("change", (e) => { model.setProcessType(x.id, e.target.value); rebuildNode(n.id); autosave(null); });
+    $(".pr-type")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: x.type || "text",
+            groups: [[null, PROCESS_TYPES.map(([v, l]) => ({ value: v, label: l, meta: PROCESS_TYPE_DESC[v] || "" }))]],
+            onPick: (v) => { model.setProcessType(x.id, v); rebuildNode(n.id); autosave(null); },
+        });
+    });
     // add an input (a readout or a register slot) via the "+ input" select — candidates come from
     // model.sourceCandidates (the shared truth).
     // add/remove an input, or rename an output key, changes what this process EMITS — so a consuming
@@ -638,9 +790,13 @@ function wireProcess(div, n) {
     // add-select / armed-remove button live INSIDE this node, so this node is the focused one and the
     // sweep won't rebuild its own body (the new/removed row wouldn't show until reload). Rebuild it
     // explicitly here, like every other in-body source-add handler does with rebuildNodeEdges.
-    $(".pr-addin")?.addEventListener("change", (e) => {
-        const ref = e.target.value; e.target.value = "";
-        if (ref && model.addProcessSource(x.id, ref)) { render(); rebuildNode(n.id); autosave(null); }
+    $(".pr-inadd")?.addEventListener("click", (e) => {
+        const cands = model.sourceCandidates("process", x.id);
+        comboPopover({
+            anchor: e.currentTarget, placeholder: "search inputs...",
+            options: cands.map((c) => ({ value: c.ref, label: c.label })),
+            onPick: (ref) => { if (ref && model.addProcessSource(x.id, ref)) { render(); rebuildNode(n.id); autosave(null); } },
+        });
     });
     // the trash lives in the .pr-maprow (sibling of the input-key chip, not inside a .sv-input) — arm the whole row.
     wireArmedRemove(div, ".pr-rmin", (val) => { model.removeProcessSource(x.id, val); render(); rebuildNode(n.id); autosave(null); }, { pill: ".pr-maprow" });
@@ -678,8 +834,22 @@ function wireSource(div, n) {
             () => { render(); autosave(null); });
     });
     // format/watch swap the body (extraction UI / throttle / tail) -> rebuild then re-preview
-    $(".src-format")?.addEventListener("change", (e) => { model.setSourceFormat(s.id, e.target.value); rebuildNode(n.id); autosave(null); });
-    $(".src-watch")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "watch", e.target.value); rebuildNode(n.id); autosave(null); });
+    $(".src-format")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: s.format || "log_lines",
+            groups: [[null, FORMATS.map(([v, l]) => ({ value: v, label: l, meta: FORMAT_DESC[v] || "" }))]],
+            onPick: (v) => { model.setSourceFormat(s.id, v); rebuildNode(n.id); autosave(null); },
+        });
+    });
+    $(".src-watch")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: s.watch || "manual",
+            groups: [[null, WATCH_MODES.map(([v, l]) => ({ value: v, label: l, meta: WATCH_DESC[v] || "" }))]],
+            onPick: (v) => { model.setSourceProp(s.id, "watch", v); rebuildNode(n.id); autosave(null); },
+        });
+    });
     // plain edits: store + preview, no rebuild (keep input focus)
     $(".src-filename")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "filename", e.target.value); autosave(null); schedulePreview(); });
     $(".src-path")?.addEventListener("change", (e) => { model.setSourceProp(s.id, "path", e.target.value); autosave(null); schedulePreview(); });
@@ -704,6 +874,18 @@ function wireSource(div, n) {
             e.target.type === "checkbox" ? e.target.checked : e.target.value);
         autosave(null); schedulePreview();
     }));
+    div.querySelectorAll(".mset-op").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        richPickerPop({
+            anchor: b, current: (s.match[i].op || "contains"),
+            groups: [[null, OPS.map(([v, l]) => ({ value: v, label: l, meta: OP_DESC[v] || "" }))]],
+            onPick: (v) => {
+                model.setSourceMatch(s.id, i, "op", v);
+                b.textContent = `<${(OPS.find(([ov]) => ov === v) || [, v])[1]}>`;
+                autosave(null); schedulePreview();
+            },
+        });
+    }));
 
     // extraction fields. add/remove change which columns the parse emits -> refresh the preview too.
     $(".src-addf")?.addEventListener("click", () => { model.addSourceField(s.id); rebuildNode(n.id); autosave(null); schedulePreview(); });
@@ -712,8 +894,28 @@ function wireSource(div, n) {
         const k = e.target.dataset.k;
         model.setSourceFieldProp(s.id, +e.target.dataset.i, k,
             e.target.type === "checkbox" ? e.target.checked : e.target.value);
-        if (k === "method") { rebuildNode(n.id); autosave(null); schedulePreview(); }   // method swaps its own inputs + changes the parse
-        else { autosave(null); schedulePreview(); }
+        autosave(null); schedulePreview();
+    }));
+    div.querySelectorAll(".src-ftype").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        richPickerPop({
+            anchor: b, current: (s.fields[i].type || "text"),
+            groups: [[null, SRC_FIELD_TYPES.map(([v, l]) => ({ value: v, label: l, meta: FIELD_TYPE_DESC[v] || "" }))]],
+            onPick: (v) => {
+                model.setSourceFieldProp(s.id, i, "type", v);
+                b.textContent = `<${(SRC_FIELD_TYPES.find(([tv]) => tv === v) || [, v])[1]}>`;
+                autosave(null); schedulePreview();
+            },
+        });
+    }));
+    // method swaps its own inputs + changes the parse -> rebuild the node
+    div.querySelectorAll(".src-fmethod").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        richPickerPop({
+            anchor: b, current: (s.fields[i].method || "after"),
+            groups: [[null, METHODS.map(([v, l]) => ({ value: v, label: l, meta: METHOD_DESC[v] || "" }))]],
+            onPick: (v) => { model.setSourceFieldProp(s.id, i, "method", v); rebuildNode(n.id); autosave(null); schedulePreview(); },
+        });
     }));
     // show the ␣ flag live while a delimiter holds a whitespace-only value (else it looks empty)
     div.querySelectorAll(".src-delim").forEach((inp) => inp.addEventListener("input", (e) => {

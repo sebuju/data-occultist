@@ -12,7 +12,7 @@ import { openDictionaryPicker } from "../dict_picker.js";
 import { nodemapShot } from "./nodemap.js";
 import * as groups from "../groups.js";
 import { $, setStatus, model } from "../state.js";
-import { placeNewNode, render, autosave } from "../main.js";
+import { placeNewNode, render, autosave, focusNode } from "../main.js";
 import { panTo } from "../camera.js";
 import { collisionReportNode } from "../collisions.js";
 
@@ -26,9 +26,24 @@ let tb = null;
 
 // `at` (optional world-coords {x,y}) is the spot the right-click add-node menu was opened at:
 // the node spawns there and we skip the pan-to (it's already under the cursor). A toolbox-style
-// call with no `at` lands at the viewport centre and pans to it. `group` (optional group id) is
-// set when the menu was opened over a group's box -> the new node joins that group (added AFTER
-// render(), which addToGroup needs for the node's live rect).
+// call with no `at` lands beside the selected node (else the viewport centre) and pans to it.
+// `group` (optional group id) is set when the menu was opened over a group's box -> the new node
+// joins that group (added AFTER render(), which addToGroup needs for the node's live rect).
+//
+// Shared tail for every createXNode below (rule 7 — was 15x copy-pasted): reconciles the DOM,
+// joins the group, SELECTS the new node, autosaves, and pans to it unless it was placed under the
+// cursor (already in view). A brand-new node is unwired, so nothing else changes what an open
+// window OCRs — autosave(null) is always safe here.
+async function finishCreate(id, { at = null, group = null } = {}) {
+    const t0 = performance.now();
+    render({ refConsumers: false });
+    const rMs = (performance.now() - t0).toFixed(1);
+    if (group) groups.addToGroup(group, [id]);
+    focusNode(id);
+    autosave(null);
+    if (!at) panTo(id);
+    console.log(`[create] render=${rMs}ms id=${id}`);
+}
 async function createWindowNode(at = null, group = null) {
     const id = model.addWindow();   // default id; renamed in the window node
     if (!id) return;
@@ -40,87 +55,72 @@ async function createWindowNode(at = null, group = null) {
     // the window's bonded preview node spawns directly BELOW the window (srcId stacks it there),
     // else ensurePositions() would drop it in the far COLX.preview column, leagues from its window.
     await placeNewNode(`prev:${id}`, "preview", `win:${id}`);
-    render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`win:${id}`]);
-    // a brand-new empty window has no image/regions/detect of its own and changes nothing
-    // other windows read — autosave(null) so it never re-OCRs the open windows.
-    autosave(null); if (!at) panTo(`win:${id}`);
+    await finishCreate(`win:${id}`, { at, group });   // selects the WINDOW, not its preview
 }
 async function createProducerNode(at = null, group = null) {
     const id = model.addProducer();   // born unwired — the user drags its out-port to a dataset
     if (!id) return;
-    await placeNewNode(`producer:${id}`, "producer", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`producer:${id}`]);
-    autosave(null); if (!at) panTo(`producer:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`producer:${id}`, "producer", null, at);
+    await finishCreate(`producer:${id}`, { at, group });
 }
 async function createTriggerNode(at = null, group = null) {
     const id = model.addTrigger();   // fires price-node sweeps on a condition
     if (!id) return;
-    await placeNewNode(`trigger:${id}`, "trigger", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`trigger:${id}`]);
-    autosave(null); if (!at) panTo(`trigger:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`trigger:${id}`, "trigger", null, at);
+    await finishCreate(`trigger:${id}`, { at, group });
 }
 async function createGateNode(at = null, group = null) {
     const id = model.addGate();   // a value guard a trigger must satisfy before firing (wired after)
     if (!id) return;
-    await placeNewNode(`gate:${id}`, "gate", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`gate:${id}`]);
-    autosave(null); if (!at) panTo(`gate:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`gate:${id}`, "gate", null, at);
+    await finishCreate(`gate:${id}`, { at, group });
 }
 async function createRouterNode(at = null, group = null) {
     const id = model.addRouter();   // branches a live value to different targets (wired after)
     if (!id) return;
-    await placeNewNode(`router:${id}`, "router", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`router:${id}`]);
-    autosave(null); if (!at) panTo(`router:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`router:${id}`, "router", null, at);
+    await finishCreate(`router:${id}`, { at, group });
 }
 async function createFileSourceNode(at = null, group = null) {
     const id = model.addFileSource();   // reads a game log/config file into a dataset (wired after)
     if (!id) return;
-    await placeNewNode(`src:${id}`, "filesource", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`src:${id}`]);
-    autosave(null); if (!at) panTo(`src:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`src:${id}`, "filesource", null, at);
+    await finishCreate(`src:${id}`, { at, group });
 }
 async function createToastNode(at = null, group = null) {
     const id = model.addToast();   // raises an OS notification when a trigger fires it (wired after)
     if (!id) return;
-    await placeNewNode(`toast:${id}`, "toast", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`toast:${id}`]);
-    autosave(null); if (!at) panTo(`toast:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`toast:${id}`, "toast", null, at);
+    await finishCreate(`toast:${id}`, { at, group });
 }
 async function createSoundNode(at = null, group = null) {
     const id = model.addSound();   // plays an audio file (in the browser) when a trigger fires it (wired after)
     if (!id) return;
-    await placeNewNode(`sound:${id}`, "sound", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`sound:${id}`]);
-    autosave(null); if (!at) panTo(`sound:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`sound:${id}`, "sound", null, at);
+    await finishCreate(`sound:${id}`, { at, group });
 }
 async function createActionNode(at = null, group = null) {
     const id = model.addAction();   // clears/clones/moves a dataset when a trigger fires it (wired after)
     if (!id) return;
-    await placeNewNode(`action:${id}`, "action", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`action:${id}`]);
-    autosave(null); if (!at) panTo(`action:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`action:${id}`, "action", null, at);
+    await finishCreate(`action:${id}`, { at, group });
 }
 async function createRegisterNode(at = null, group = null) {
     const id = model.addRegister();   // holds wired readouts' live values in an in-memory map (wired after)
     if (!id) return;
-    await placeNewNode(`register:${id}`, "register", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`register:${id}`]);
-    autosave(null); if (!at) panTo(`register:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`register:${id}`, "register", null, at);
+    await finishCreate(`register:${id}`, { at, group });
 }
 async function createProcessNode(at = null, group = null) {
     const id = model.addProcess();   // one rules pipeline applied to wired inputs, key-preserved (wired after)
     if (!id) return;
-    await placeNewNode(`process:${id}`, "process", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`process:${id}`]);
-    autosave(null); if (!at) panTo(`process:${id}`);   // new node changes nothing open windows OCR
+    await placeNewNode(`process:${id}`, "process", null, at);
+    await finishCreate(`process:${id}`, { at, group });
 }
 function createDictionaryNode(at = null, group = null) {
     const place = async (id) => {
-        await placeNewNode(`dict:${id}`, "dictionary", null, at); render({ refConsumers: false });
-        if (group) groups.addToGroup(group, [`dict:${id}`]);
-        autosave(null); if (!at) panTo(`dict:${id}`);   // new node changes nothing open windows OCR
+        await placeNewNode(`dict:${id}`, "dictionary", null, at);
+        await finishCreate(`dict:${id}`, { at, group });
     };
     openDictionaryPicker({
         used: new Set((model.profile.dictionaries || []).map((d) => d.source)),
@@ -144,16 +144,14 @@ function createDictionaryNode(at = null, group = null) {
 async function createDatasetNode(at = null, group = null) {
     const ds = model.addDataset();   // fresh empty dataset; producers wired to it later
     if (!ds) return;
-    await placeNewNode(`ds:${ds}`, "dataset", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`ds:${ds}`]);
-    autosave(null); if (!at) panTo(`ds:${ds}`);   // empty dataset changes nothing open windows OCR
+    await placeNewNode(`ds:${ds}`, "dataset", null, at);
+    await finishCreate(`ds:${ds}`, { at, group });
 }
 async function createSubsetNode(at = null, group = null) {
     const id = model.addSubset();   // input-less view; user wires a source dataset/view after
     if (!id) return;
-    await placeNewNode(`sub:${id}`, "subset", null, at); render({ refConsumers: false });
-    if (group) groups.addToGroup(group, [`sub:${id}`]);
-    autosave(null); if (!at) panTo(`sub:${id}`);   // empty view changes nothing open windows OCR
+    await placeNewNode(`sub:${id}`, "subset", null, at);
+    await finishCreate(`sub:${id}`, { at, group });
 }
 
 function buildToolbox() {

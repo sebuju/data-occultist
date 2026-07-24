@@ -10,7 +10,8 @@ import {
     refreshGridPreview, refreshReadoutValues, scheduleWindowRead,
     mountMatchPreview, refreshMatchPreviews,
 } from "./imaging.js";
-import { markColorCollisions } from "./node_parts.js";
+import { markColorCollisions, WD_MODE_OPTS, WD_MODE_DESC, WD_NEG_OPTS, WD_NEG_DESC, PP_MODES, PP_MODE_DESC } from "./node_parts.js";
+import { richPickerPop } from "./rich_picker.js";
 import { moveWindowPos, movePos, renameNode } from "./node_lifecycle.js";
 import { renderReadoutHistory } from "./readout_history_node.js";
 import { panZoomTo } from "./camera.js";
@@ -42,8 +43,13 @@ export function setDetectKind(a, kind) {
 function wirePreprocess(div, holder, { nodeId, winId, edit, pick }) {
     // colour list: hex inputs that collide (same colour, or within tolerance of another) go red.
     const remarkCollide = () => markColorCollisions(div.querySelectorAll(".pp-color"), model._ppOf(holder).colors || [], model._ppOf(holder).tolerance ?? 60);
-    div.querySelector(".ppmode")?.addEventListener("change", (e) => {
-        edit(() => { model._ppOf(holder).mode = e.target.value; rebuildNode(nodeId); });
+    div.querySelector(".ppmode")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: model._ppOf(holder).mode || "none",
+            groups: [[null, PP_MODES.map(([v, l]) => ({ value: v, label: l, meta: PP_MODE_DESC[v] || "" }))]],
+            onPick: (v) => { edit(() => { model._ppOf(holder).mode = v; rebuildNode(nodeId); }); },
+        });
     });
     div.querySelector(".pptol")?.addEventListener("change", (e) => {
         edit(() => { model._ppOf(holder).tolerance = Math.max(0, Math.trunc(+e.target.value) || 0); });
@@ -196,11 +202,23 @@ export function wireGamePriority(div) {
 // change re-runs detect for that window (autosave re-OCRs it) so .wd-status/.wd-verdict refresh.
 function wireDetectsSection(div, ownerId) {
     const saveDet = () => autosave(ownerId);
-    div.querySelector(".wd-mode")?.addEventListener("change", (e) => {
-        model.setDetectMode(ownerId, e.target.value); saveDet();
+    div.querySelector(".wd-mode")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: model.window(ownerId)?.detect_mode || "all",
+            groups: [[null, WD_MODE_OPTS.map(([v, l]) => ({ value: v, label: l, meta: WD_MODE_DESC[v] || "" }))]],
+            onPick: (v) => { model.setDetectMode(ownerId, v); btn.textContent = `<${(WD_MODE_OPTS.find(([x]) => x === v) || [, v])[1]}>`; saveDet(); },
+        });
     });
-    div.querySelectorAll(".wd-neg").forEach((sel) => sel.addEventListener("change", (e) => {
-        model.setDetectNegate(ownerId, e.target.dataset.id, e.target.value === "absent"); saveDet();
+    div.querySelectorAll(".wd-neg").forEach((btn) => btn.addEventListener("click", (e) => {
+        const el = e.currentTarget, id = el.dataset.id;
+        if (el.disabled) return;
+        const cur = model.detect(ownerId, id)?.negate ? "absent" : "present";
+        richPickerPop({
+            anchor: el, current: cur,
+            groups: [[null, WD_NEG_OPTS.map(([v, l]) => ({ value: v, label: l, meta: WD_NEG_DESC[v] || "" }))]],
+            onPick: (v) => { model.setDetectNegate(ownerId, id, v === "absent"); el.textContent = `<${(WD_NEG_OPTS.find(([x]) => x === v) || [, v])[1]}>`; saveDet(); },
+        });
     }));
     div.querySelectorAll(".wd-row .wd-name").forEach((el) => el.addEventListener("click", () => {
         panZoomTo(`det:${ownerId}:${el.closest(".wd-row").dataset.id}`);
@@ -284,9 +302,14 @@ export function wireScrollbar(div, n) {
     // window image so its row-index labels update (works even with the preview node closed).
     // refreshImageBoxes: the cutout count decides the box's locked flag on the window canvas.
     const relearn = () => { model.learnScrollGain(winId); rebuildNode(n.id); autosave(null); refreshGridPreview(winId); refreshImageBoxes(winId); };
-    div.querySelectorAll(".sbset").forEach((inp) => inp.addEventListener("change", (e) => {
-        if (e.target.dataset.k === "orient") { model.setScrollbarOrientation(winId, e.target.value); autosave(winId); }
-    }));
+    div.querySelector(".sbset")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget, cur = n.ref.scrollbar_orientation || "vertical";
+        richPickerPop({
+            anchor: btn, current: cur,
+            groups: [[null, [["vertical", "vertical"], ["horizontal", "horizontal"]].map(([v, l]) => ({ value: v, label: l }))]],
+            onPick: (v) => { model.setScrollbarOrientation(winId, v); btn.textContent = `<${v}>`; autosave(winId); },
+        });
+    });
     div.querySelectorAll(".sbcut[data-k='rows']").forEach((inp) => inp.addEventListener("change", (e) => {
         model.setScrollSampleRows(winId, +e.target.dataset.i, e.target.value); relearn();
     }));

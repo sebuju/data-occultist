@@ -17,7 +17,7 @@ export const FONT_CHOICES = [
     ["impact", "Impact"],
 ];
 
-const BORDER_STYLES = [["solid", "solid"], ["dashed", "dashed"], ["dotted", "dotted"]];
+export const BORDER_STYLES = [["solid", "solid"], ["dashed", "dashed"], ["dotted", "dotted"]];
 
 // A 3x3 anchor picker. `cur` is the active 9-point code; each cell carries data-code so the wiring
 // reads the clicked point. `cls` distinguishes multiple grids in one inspector (align / corner /
@@ -30,10 +30,12 @@ export function nineGrid(cur, cls, title = "") {
         })));
 }
 
-// Font family dropdown (data-driven from FONT_CHOICES).
+// Font family rich-dd-btn (data-driven from FONT_CHOICES) — the row label itself renders in the
+// picked typeface (row: font-family set per option in the popover, wired in toast_wire.js) so a
+// face's look is visible while browsing, not only after picking.
 export function fontSelect(cur, cls) {
-    return h("select", { class: cls, title: "font family" },
-        FONT_CHOICES.map(([v, l]) => h("option", { value: v, selected: v === (cur || "") }, v === (cur || "") ? `<${l}>` : l)));
+    const label = (FONT_CHOICES.find(([v]) => v === (cur || "")) || [, cur])[1];
+    return h("button", { class: `${cls} rich-dd-btn`, type: "button", title: "font family" }, `<${label}>`);
 }
 
 // Bold / italic / underline toggle group. Each button carries data-k (the element field it flips)
@@ -69,24 +71,21 @@ export function borderEditor(t) {
         h("input", { class: "tn-bd-w", type: "number", min: "0", value: base.w || 0, title: "border width (px) — 0 = none" }),
         h("span", { class: "tn-il-u" }, "px"),
         colorPair("tn-bd-c", base.color || "#ffffff", "border colour"),
-        h("select", { class: "tn-bd-s", title: "border style" },
-            BORDER_STYLES.map(([v, l]) => h("option", { value: v, selected: v === (base.style || "solid") }, v === (base.style || "solid") ? `<${l}>` : l))));
+        h("button", { class: "tn-bd-s rich-dd-btn", type: "button", title: "border style" }, `<${base.style || "solid"}>`));
 }
 
 // Anchor row: "anchor to" (image or a sibling element index) + this-point + target-point grids. The
 // sibling options exclude the element itself (index `j`). `n` is the element count.
 export function anchorRow(t, j, n) {
     const a = t.anchor || { to: "", corner: "tl", target: "tl" };
-    const sibs = [];
-    for (let k = 0; k < n; k++) if (k !== j) sibs.push(k);
     // one row: target select + this-point + target-point grids (the row's "anchor" label is
     // supplied by the inspector's lrow wrapper, so it is not repeated here).
     // grids stay ENABLED for the image too — anchoring to the image pins THIS element's `corner`
     // 9-point onto the image canvas's `target` 9-point (server: target box = whole image).
+    const toLabel = !a.to ? "image" : `element ${+a.to + 1}`;
     return h("div", { class: "tn-anch" },
-        h("select", { class: "tn-anch-to", title: "anchor this element to the image, or to another element" },
-            h("option", { value: "", selected: !a.to }, !a.to ? "<image>" : "image"),
-            sibs.map((k) => h("option", { value: String(k), selected: String(a.to) === String(k) }, String(a.to) === String(k) ? `<element ${k + 1}>` : `element ${k + 1}`))),
+        h("button", { class: "tn-anch-to rich-dd-btn", type: "button",
+            title: "anchor this element to the image, or to another element" }, `<${toLabel}>`),
         h("label", { class: "tn-anch-gl" }, "this", nineGrid(a.corner, "tn-anch-corner", "which point of THIS element")),
         h("label", { class: "tn-anch-gl" }, "to", nineGrid(a.target, "tn-anch-target", "which point of the target")));
 }

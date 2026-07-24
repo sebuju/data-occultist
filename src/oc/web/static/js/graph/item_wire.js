@@ -20,6 +20,13 @@ import {
     render, autosave, rebuildNode, nodeEdit,
     onValueEdit, rulesEdit, wireFieldRules, inheritGroupFrom, armConfirm,
 } from "./main.js";
+import { richPickerPop } from "./rich_picker.js";
+import { comboPopover } from "./combo_popover.js";
+import {
+    TYPES, TYPE_DESC, ALIGN_Y_OPTS, ALIGN_Y_DESC, ALIGN_X_OPTS, ALIGN_X_DESC,
+    MATCH_MODES, MATCH_MODE_DESC, STRIP_MODES, STRIP_MODE_DESC,
+} from "./node_parts.js";
+import { TELL_KINDS } from "./imaging.js";
 
 function syncCellSize(winId, itemId) {
     const node = nodeEls.get(`item:${winId}:${itemId}`), it = model.item(winId, itemId);
@@ -123,8 +130,21 @@ function wireItemControls(div, n) {
         itemChanged(winId, itemId, { rebuild: true, reread: false });   // record identity only — no OCR change
         refreshItemReadout(winId, itemId);   // the key lives in the merged table now; refresh it (the re-read is debounced)
     };
-    div.querySelectorAll(".kfield").forEach((s) => s.addEventListener("change", (e) =>
-        keyEdit((k) => { k.fields[+e.target.dataset.i] = e.target.value; })));
+    div.querySelectorAll(".kfield").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        const k = model.effectiveItemKey(winId, itemId);
+        const fid = (k.fields || [])[i];
+        const it = model.item(winId, itemId);
+        const fids = [...new Set((it?.fields || []).map((f) => f.field))];
+        richPickerPop({
+            anchor: b, current: fid,
+            groups: [[null, (fids.includes(fid) ? fids : [fid, ...fids]).map((f) => ({ value: f, label: f }))]],
+            onPick: (v) => {
+                b.textContent = `<${v}>`;
+                keyEdit((kk) => { kk.fields[i] = v; });
+            },
+        });
+    }));
     div.querySelectorAll(".kmv").forEach((b) => b.addEventListener("click", () => keyEdit((k) => {
         const i = +b.dataset.i, j = i + (+b.dataset.d);
         if (j < 0 || j >= k.fields.length) return;
@@ -132,8 +152,17 @@ function wireItemControls(div, n) {
     })));
     div.querySelectorAll(".kdel").forEach((b) => armConfirm(b, () =>
         keyEdit((k) => { if (k.fields.length > 1) k.fields.splice(+b.dataset.i, 1); }), { silent: true, resetOnOutside: true }));
-    div.querySelector(".kadd")?.addEventListener("change", (e) => {
-        if (e.target.value) keyEdit((k) => { k.fields.push(e.target.value); });
+    div.querySelector(".kadd")?.addEventListener("click", (e) => {
+        const k = model.effectiveItemKey(winId, itemId);
+        const used = k.fields || [];
+        const it = model.item(winId, itemId);
+        const fids = [...new Set((it?.fields || []).map((f) => f.field))];
+        const addable = fids.filter((f) => !used.includes(f));
+        comboPopover({
+            anchor: e.currentTarget, placeholder: "search fields...",
+            options: addable.map((f) => ({ value: f, label: f })),
+            onPick: (v) => { if (v) keyEdit((kk) => { kk.fields.push(v); }); },
+        });
     });
     div.querySelector(".ksep")?.addEventListener("change", (e) => keyEdit((k) => { k.sep = e.target.value || "|"; }));
     div.querySelector(".kcase")?.addEventListener("change", (e) => keyEdit((k) => { k.case_sensitive = e.target.checked; }));
@@ -201,19 +230,29 @@ function wireItemField(div, n) {
     });
     // Only the capture/confidence knobs live on the field body now; all value processing is
     // authored in the rule pipeline (wired below). `type` rebuilds so the rule menus re-filter.
-    div.querySelectorAll(".ffset").forEach((inp) => onValueEdit(inp, (e, live) => {
+    div.querySelectorAll(".ffset").forEach((inp) => onValueEdit(inp, (e) => {
         const f = model.itemField(winId, itemId, fid);
         const fd = f && (n.win.fields || []).find((x) => x.id === f.field);
         if (!fd) return;
         const k = e.target.dataset.k;
-        const rebuild = k === "type" && !live;                                 // re-filters the rule menus
         fieldEdit(() => {
-            if (k === "type") fd.type = e.target.value;
-            else if (k === "minconf") fd.min_confidence = +e.target.value || 0;
+            if (k === "minconf") fd.min_confidence = +e.target.value || 0;
             else if (k === "isolate") fd.isolate = e.target.checked;
             else if (k === "glyph_check") fd.glyph_check = e.target.checked;
-        }, { rebuild });
+        }, { rebuild: false });
     }));
+    // type rebuilds so the rule menus re-filter (a number-only rule greys out for text).
+    div.querySelector(".ffset-type")?.addEventListener("click", (e) => {
+        const f = model.itemField(winId, itemId, fid);
+        const fd = f && (n.win.fields || []).find((x) => x.id === f.field);
+        if (!fd) return;
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: fd.type || "text",
+            groups: [[null, TYPES.map(([v, l]) => ({ value: v, label: l, meta: TYPE_DESC[v] || "" }))]],
+            onPick: (v) => { fieldEdit(() => { fd.type = v; }, { rebuild: true }); },
+        });
+    });
     if (n.field) wireFieldRules(div, n.field, {
         // `rebuild` is handled by rulesEdit (it rebuilds THIS node); the boxes/grid resync and the
         // cutout re-read split across paint-now / read-on-commit.
@@ -232,11 +271,22 @@ function wireItemField(div, n) {
     div.querySelector(".iloc")?.addEventListener("change", (e) => {
         fieldEdit(() => model.setItemFieldLocate(winId, itemId, fid, e.target.checked), { rebuild: true });   // show/hide the align dropdown
     });
-    div.querySelector(".itellalign")?.addEventListener("change", (e) => {
-        fieldEdit(() => model.setItemFieldAlign(winId, itemId, fid, e.target.value));
+    div.querySelector(".itellalign")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: btn.textContent.replace(/^<|>$/g, ""),
+            groups: [[null, ALIGN_Y_OPTS.map(([v, l]) => ({ value: v, label: l, meta: ALIGN_Y_DESC[v] || "" }))]],
+            onPick: (v) => { fieldEdit(() => model.setItemFieldAlign(winId, itemId, fid, v)); btn.textContent = `<${v}>`; },
+        });
     });
-    div.querySelector(".itellalignx")?.addEventListener("change", (e) => {
-        fieldEdit(() => model.setItemFieldAlignX(winId, itemId, fid, e.target.value));   // x-anchor changes where columns land -> re-read
+    div.querySelector(".itellalignx")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: btn.textContent.replace(/^<|>$/g, ""),
+            groups: [[null, ALIGN_X_OPTS.map(([v, l]) => ({ value: v, label: l, meta: ALIGN_X_DESC[v] || "" }))]],
+            // x-anchor changes where columns land -> re-read
+            onPick: (v) => { fieldEdit(() => model.setItemFieldAlignX(winId, itemId, fid, v)); btn.textContent = `<${v}>`; },
+        });
     });
 }
 
@@ -274,12 +324,56 @@ function wireItemTell(div, n) {
     // one deferred tell edit: paint now, re-read the cutout + persist once on commit
     const tellEdit = (mutate, opts = {}) =>
         nodeEdit(n.id, "read", () => { mutate(); tellPaint(winId, itemId, tid, opts); }, itemRead(winId, itemId));
-    div.querySelector(".tkind")?.addEventListener("change", (e) => {
-        tellEdit(() => {
-            model.setItemTellProp(winId, itemId, tid, "kind", e.target.value);
-            rebuildNode(`item:${winId}:${itemId}`);   // merged table shows the kind
-        }, { rebuild: true });
+    div.querySelector(".tkind")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: btn.textContent.replace(/^<|>$/g, ""),
+            groups: [[null, TELL_KINDS.map(([v, l, , desc]) => ({ value: v, label: l, meta: desc || "" }))]],
+            onPick: (v) => {
+                tellEdit(() => {
+                    model.setItemTellProp(winId, itemId, tid, "kind", v);
+                    rebuildNode(`item:${winId}:${itemId}`);   // merged table shows the kind
+                }, { rebuild: true });
+            },
+        });
     });
+    // mode/strip/align/align_x are rich-dd-btn enums (tset-enum), not part of the generic .tset
+    // input sweep below — each carries its own opts/desc + default and rebuild need.
+    const TSET_ENUM = {
+        match: { opts: MATCH_MODES, desc: MATCH_MODE_DESC, def: "partial", rebuild: true },
+        strip: { opts: STRIP_MODES, desc: STRIP_MODE_DESC, def: "alnum", rebuild: false },
+        align: { opts: ALIGN_Y_OPTS, desc: ALIGN_Y_DESC, def: "center", rebuild: false },
+        align_x: { opts: ALIGN_X_OPTS, desc: ALIGN_X_DESC, def: "left", rebuild: false },
+    };
+    div.querySelectorAll(".tset-enum").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, k = b.dataset.k;
+        if (k === "field") {
+            const cur = n.ref.field || "";
+            const fids = [...new Set((n.item.fields || []).map((f) => f.field))];
+            richPickerPop({
+                anchor: b, current: cur,
+                groups: [[null, [
+                    { value: "", label: "—", meta: "check ANY column's read — not tied to one field" },
+                    ...fids.map((f) => ({ value: f, label: f })),
+                ]]],
+                onPick: (v) => {
+                    tellEdit(() => model.setItemTellProp(winId, itemId, tid, "field", v || null));
+                    b.textContent = `<${v || "—"}>`;
+                },
+            });
+            return;
+        }
+        const spec = TSET_ENUM[k];
+        if (!spec) return;
+        richPickerPop({
+            anchor: b, current: b.textContent.replace(/^<|>$/g, ""),
+            groups: [[null, spec.opts.map(([v, l]) => ({ value: v, label: l, meta: spec.desc[v] || "" }))]],
+            onPick: (v) => {
+                tellEdit(() => model.setItemTellProp(winId, itemId, tid, k, v), { rebuild: spec.rebuild });
+                b.textContent = `<${v}>`;
+            },
+        });
+    }));
     div.querySelectorAll(".tset").forEach((inp) => onValueEdit(inp, (e, live) => {
         const k = e.target.dataset.k;
         let prop = k, v;
@@ -288,7 +382,6 @@ function wireItemTell(div, n) {
         else if (k === "margin") v = Math.max(0, Math.min(1, +e.target.value || 0));
         else if (k === "minchars") { prop = "min_chars"; v = Math.max(0, Math.trunc(+e.target.value) || 0); }
         else if (k === "case") { prop = "case_sensitive"; v = e.target.checked; }
-        else if (k === "field") v = e.target.value || null;   // blank "—" => no field => check ANY column
         else v = e.target.value;
         // text empty<->set adds/removes the match knobs; mode change shows/hides "read ⊆ text"
         // (ignored by full/exact) -> rebuild this node's body in both cases

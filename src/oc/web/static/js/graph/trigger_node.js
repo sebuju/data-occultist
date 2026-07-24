@@ -76,7 +76,18 @@ export function kindLabel(v) {
     return v;
 }
 
-const INPUT_EVENTS = [["down", "down"], ["up", "up"], ["press", "press (down+up)"], ["double", "double press"]];
+export const INPUT_EVENTS = [["down", "down"], ["up", "up"], ["press", "press (down+up)"], ["double", "double press"]];
+export const INPUT_EVENT_DESC = {
+    down: "pulse on the button/key going down",
+    up: "pulse on the button/key coming back up",
+    press: "pulse on a full down+up press",
+    double: "pulse only when two presses land within the 'within' window below",
+};
+
+// a rich-dd-btn button built from [value,label] pairs, marking `val` current — mirrors optSel
+// (node_parts.js); wiring (io_wire.js) has the model access to open the picker.
+const richBtn = (val, label, cls, title) =>
+    h("button", { class: `${cls} rich-dd-btn`, type: "button", title: title || "" }, `<${label}>`);
 
 // One rect-axis input with an inline x/y/w/h dim label (tg-inrect row, graph.css).
 const rectField = (lbl, cls, val) =>
@@ -180,15 +191,10 @@ export function triggerParts(t, model) {
         const winId = (t.window_watch || [])[0];
         if (kind === "on_item" && winId) {
             const items = model.items(winId);
-            const iopt = (it) => h("option", { value: it.id, selected: it.id === t.item_watch },
-                it.id === t.item_watch ? `<${it.id}>` : it.id + (it.terminator ? " (terminator)" : ""));
+            const label = !t.item_watch ? "(pick one)" : t.item_watch === "*" ? "<any item>" : `<${t.item_watch}>`;
             itemWatch = frag(
                 labCell("item", "which item template's detection pulses the trigger"),
-                h("select", { class: "tg-itemwatch" },
-                    h("option", { value: "", selected: !t.item_watch }, "(pick one)"),
-                    h("option", { value: "*", selected: t.item_watch === "*" },
-                        t.item_watch === "*" ? "<any item>" : "(any item)"),
-                    items.map(iopt)));
+                h("button", { class: "tg-itemwatch rich-dd-btn", type: "button" }, label));
         }
     }
 
@@ -198,13 +204,12 @@ export function triggerParts(t, model) {
     // held modifiers, into the button field — no blocking dialog (rule 2), just an .armed class.
     let inputCfg = null;
     if (kind === "on_input") {
-        const winOpt = (w) => h("option", { value: w.id, selected: w.id === t.input_window }, w.id);
         const hasRect = !!t.input_window;
         const rect = t.input_rect && t.input_rect.length === 4 ? t.input_rect : ["", "", "", ""];
         inputCfg = frag(
             labCell("event", "which stream transition pulses the trigger"),
-            h("select", { class: "tg-inevent" }, INPUT_EVENTS.map(([v, l]) =>
-                h("option", { value: v, selected: v === t.input_event }, v === t.input_event ? `<${l}>` : l))),
+            richBtn(t.input_event, (INPUT_EVENTS.find(([v]) => v === t.input_event) || [, t.input_event])[1],
+                "tg-inevent", INPUT_EVENT_DESC[t.input_event] || ""),
             labBtns("button", "the watched button — blank/\"any\" matches any key/mouse button",
                 [{ cls: "tg-inlisten", title: "click, then press the key/mouse button to bind", glyph: REC() }]),
             h("input", { class: "tg-inbutton", placeholder: "any", value: t.input_button || "",
@@ -216,9 +221,7 @@ export function triggerParts(t, model) {
                 h("input", { class: "tg-indouble", type: "number", min: "1", step: "1",
                     value: t.input_double_ms || 350 }), " ms") : null,
             labCell("window", "fire only while this window is the recognized one (blank = any screen)"),
-            h("select", { class: "tg-inwindow" },
-                h("option", { value: "", selected: !t.input_window }, "(any)"),
-                (model.profile.windows || []).map(winOpt)),
+            h("button", { class: "tg-inwindow rich-dd-btn", type: "button" }, t.input_window ? `<${t.input_window}>` : "(any)"),
             hasRect ? labCell("rect", "fire only when the mouse is inside this client-relative box (blank = whole window)") : null,
             hasRect ? h("span", { class: "tg-inrect" },
                 rectField("x", "tg-inrx", rect[0]),

@@ -45,7 +45,12 @@ import {
     applyView, resizeCanvas, dragOnlyZoom,
 } from "./camera.js";
 import { movePos, renameNode } from "./node_lifecycle.js";
-import { nodeParts, windowControls, gamePriority, itemLists, enableBtn, vtShowRemoved, vtShowSpecial, rectEditBtn, markColorCollisions } from "./node_parts.js";
+import {
+    nodeParts, windowControls, gamePriority, itemLists, enableBtn, vtShowRemoved, vtShowSpecial, rectEditBtn, markColorCollisions, TYPES, TYPE_DESC,
+    detectKind, DET_KIND_OPTS, DET_KIND_DESC, DET_MATCH_MODES, DET_MATCH_DESC, DET_STRIP_MODES, DET_STRIP_DESC,
+    DS_BATCH_MODES, DS_BATCH_DESC, DS_SYNC_MODES, DS_SYNC_DESC, AGGREGATES, AGGREGATE_DESC,
+} from "./node_parts.js";
+import { richPickerPop } from "./rich_picker.js";
 import * as dsevents from "./dsevents.js";
 import { renderReadoutHistory } from "./readout_history_node.js";
 import { renderProducerHistory } from "./producer_history_node.js";
@@ -966,21 +971,44 @@ function wireNode(div, n) {
         });
         // Any key change re-keys the ledger on disk, so flush BEFORE re-reading this node + its views.
         const rekeyDataset = async () => { autosave(null); await persist.flush(); refreshDataNode(n.ref); refreshAllSubsetNodes(); };
-        div.querySelector(".dskey")?.addEventListener("change", async (e) => {
-            const v = e.target.value;
-            if (v === "__nodedup__") model.setDatasetDedup(n.ref, false);
-            else if (v === "__concat__") model.setDatasetKeyMode(n.ref, "concat");
-            else if (v === "") model.setDatasetKeyMode(n.ref, "auto");
-            else model.setDatasetKeyField(n.ref, v);
-            rebuildNode(n.id);   // show/hide the concat editor for the new mode
-            await rekeyDataset();
+        div.querySelector(".dskey")?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            const mode = model.datasetKeyMode(n.ref), kf = model.datasetKeyField(n.ref);
+            const kfields = model.datasetFields(n.ref);
+            const keyFields = mode === "single" && kf && !kfields.includes(kf) ? [...kfields, kf] : kfields;
+            const cur = mode === "single" ? kf : mode === "concat" ? "__concat__" : mode === "nodedup" ? "__nodedup__" : "";
+            richPickerPop({
+                anchor: btn, current: cur,
+                groups: [[null, [
+                    { value: "", label: "key: auto", meta: "no dataset-level override — key comes from whatever feeds it (a window's/item's key, a file source's, or a producer's)" },
+                    ...keyFields.map((f) => ({ value: f, label: `key: ${f}` })),
+                    { value: "__concat__", label: "concat (combine fields)", meta: "build the key by joining several fields together" },
+                    { value: "__nodedup__", label: "no dedup (keep every read)", meta: "every read is its own record — no collapsing" },
+                ]]],
+                onPick: async (v) => {
+                    if (v === "__nodedup__") model.setDatasetDedup(n.ref, false);
+                    else if (v === "__concat__") model.setDatasetKeyMode(n.ref, "concat");
+                    else if (v === "") model.setDatasetKeyMode(n.ref, "auto");
+                    else model.setDatasetKeyField(n.ref, v);
+                    rebuildNode(n.id);   // show/hide the concat editor for the new mode
+                    await rekeyDataset();
+                },
+            });
         });
         // The dataset's OWN many→one policy. Changing it re-materialises `current` under the new
         // aggregate, and every view that INHERITS it now reads a different value — so flush and
         // re-read this node and its consumers, exactly like a key change.
-        div.querySelector(".dsagg")?.addEventListener("change", async (e) => {
-            model.setDatasetAggregate(n.ref, e.target.value);
-            await rekeyDataset();
+        div.querySelector(".dsagg")?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            richPickerPop({
+                anchor: btn, current: model.datasetAggregate(n.ref),
+                groups: [[null, AGGREGATES.map((v) => ({ value: v, label: v, meta: AGGREGATE_DESC[v] || "" }))]],
+                onPick: async (v) => {
+                    model.setDatasetAggregate(n.ref, v);
+                    btn.textContent = `<${v}>`;
+                    await rekeyDataset();
+                },
+            });
         });
         // Concat-key editor: field checkboxes + the four canonicalisation knobs (present only in concat mode).
         div.querySelectorAll(".dskf").forEach((el) => el.addEventListener("change", () => {
@@ -994,18 +1022,33 @@ function wireNode(div, n) {
             model.setDatasetKeyNorm(n.ref, { strip_words: e.target.value.split(/\s+/).map((s) => s.trim()).filter(Boolean) });
             rekeyDataset();
         });
-        div.querySelector(".dsbatch")?.addEventListener("change", (e) => {
-            model.setDatasetBatchMode(n.ref, e.target.value);
-            rebuildNode(n.id);   // toggles the detection-only "re-open gap" row
-            autosave(null);
+        div.querySelector(".dsbatch")?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            richPickerPop({
+                anchor: btn, current: model.datasetBatchMode(n.ref),
+                groups: [[null, DS_BATCH_MODES.map(([v, l]) => ({ value: v, label: l, meta: DS_BATCH_DESC[v] || "" }))]],
+                onPick: (v) => {
+                    model.setDatasetBatchMode(n.ref, v);
+                    rebuildNode(n.id);   // toggles the detection-only "re-open gap" row
+                    autosave(null);
+                },
+            });
         });
         div.querySelector(".dsreopen")?.addEventListener("change", (e) => {
             model.setDatasetReopenGrace(n.ref, e.target.value);
             autosave(null);
         });
-        div.querySelector(".dssync")?.addEventListener("change", (e) => {
-            model.setDatasetSyncMode(n.ref, e.target.value);
-            autosave(null);
+        div.querySelector(".dssync")?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            richPickerPop({
+                anchor: btn, current: model.datasetSyncMode(n.ref),
+                groups: [[null, DS_SYNC_MODES.map(([v, l]) => ({ value: v, label: l, meta: DS_SYNC_DESC[v] || "" }))]],
+                onPick: (v) => {
+                    model.setDatasetSyncMode(n.ref, v);
+                    btn.textContent = `<${(DS_SYNC_MODES.find(([sv]) => sv === v) || [, v])[1]}>`;
+                    autosave(null);
+                },
+            });
         });
         div.querySelector(".dskeep")?.addEventListener("change", (e) => {
             // SAVE ONLY — never fold here. Typing "1" on the way to "10" would otherwise compact
@@ -1152,16 +1195,27 @@ function wireNode(div, n) {
         });
         // Only the capture/confidence knobs live on the field body now; all value processing is
         // authored in the rule pipeline (wired below). `type` rebuilds so the rule menus re-filter.
-        div.querySelectorAll(".fset").forEach((inp) => onValueEdit(inp, (e, live) => {
+        div.querySelectorAll(".fset").forEach((inp) => onValueEdit(inp, (e) => {
             if (!fld) return;
             const k = e.target.dataset.k;
             nodeEdit(n.id, "read", () => {
-                if (k === "type") { fld.type = e.target.value; if (!live) rebuildNode(n.id); }  // re-filters the rule menus
-                else if (k === "isolate") fld.isolate = e.target.checked;
+                if (k === "isolate") fld.isolate = e.target.checked;
                 else if (k === "glyph_check") fld.glyph_check = e.target.checked;
                 else if (k === "minconf") fld.min_confidence = +e.target.value || 0;
             }, () => autosave(n.win?.id));   // re-OCR only this window, once on commit
         }));
+        // type rebuilds so the rule menus re-filter (a number-only rule greys out for text).
+        div.querySelector(".fset-type")?.addEventListener("click", (e) => {
+            if (!fld) return;
+            const btn = e.currentTarget;
+            richPickerPop({
+                anchor: btn, current: fld.type || "text",
+                groups: [[null, TYPES.map(([v, l]) => ({ value: v, label: l, meta: TYPE_DESC[v] || "" }))]],
+                onPick: (v) => {
+                    nodeEdit(n.id, "read", () => { fld.type = v; rebuildNode(n.id); }, () => autosave(n.win?.id));
+                },
+            });
+        });
         if (fld) wireFieldRules(div, fld, {
             edit: rulesEdit(n.id, () => autosave(n.win?.id)),
         });
@@ -1197,25 +1251,49 @@ function wireNode(div, n) {
         div.querySelectorAll(".aset").forEach((inp) => onValueEdit(inp, (e, live) => {
             const k = e.target.dataset.k, ci = +e.target.dataset.i || 0;
             nodeEdit(n.id, "read", () => {
-                if (k === "kind") { setDetectKind(n.ref, e.target.value); if (!live) rebuildNode(n.id); refreshImageBoxes(owner); return; }
                 if (k === "text") n.ref.text = e.target.value;
                 else if (k === "color") { (n.ref.colors ||= [])[ci] = e.target.value.trim(); if (!live) rebuildNode(n.id); }
                 else if (k === "colorpick") { (n.ref.colors ||= [])[ci] = e.target.value; if (!live) rebuildNode(n.id); }
                 else if (k === "tol") n.ref.tolerance = Math.max(0, Math.trunc(+e.target.value) || 0);
                 else if (k === "width") n.ref.width = Math.max(0, +e.target.value || 0);
                 else if (k === "thr") n.ref.threshold = +e.target.value;
-                else if (k === "match") n.ref.match = e.target.value;
                 else if (k === "minchars") n.ref.min_chars = Math.max(0, Math.trunc(+e.target.value) || 0);
-                else if (k === "strip") n.ref.strip = e.target.value;
                 else if (k === "case") n.ref.case_sensitive = e.target.checked;
-                // mode change shows/hides "read ⊆ text" (ignored by full/exact) -> rebuild the body
-                if (k === "match" && !live) rebuildNode(n.id);
             }, saveDet);   // a detector knob re-runs detect for ONLY this owner — once, on commit
             if (k === "color" || k === "colorpick" || k === "tol") remarkCollide();   // colours / tolerance changed
             // the mutate ran synchronously (nodeEdit defers only the SAVE), so repaint the cutout
             // preview NOW — tolerance/width don't rebuild the node, so nothing else would.
             if (k === "tol" || k === "width" || k === "color" || k === "colorpick") refreshMatchPreviews(owner);
         }));
+        // kind/mode/strip are rich-dd-btn enums, not part of the generic .aset input sweep above.
+        div.querySelector('.aset-enum[data-k="kind"]')?.addEventListener("click", (e) => {
+            const btn = e.currentTarget, cur = detectKind(n.ref);
+            richPickerPop({
+                anchor: btn, current: cur,
+                groups: [[null, [...DET_KIND_OPTS, ...(cur === "template" ? [["template", "template"]] : [])]
+                    .map(([v, l]) => ({ value: v, label: l, meta: DET_KIND_DESC[v] || "" }))]],
+                onPick: (v) => {
+                    nodeEdit(n.id, "read", () => { setDetectKind(n.ref, v); rebuildNode(n.id); refreshImageBoxes(owner); }, saveDet);
+                },
+            });
+        });
+        div.querySelector('.aset-enum[data-k="match"]')?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            richPickerPop({
+                anchor: btn, current: n.ref.match ?? "partial",
+                groups: [[null, DET_MATCH_MODES.map(([v, l]) => ({ value: v, label: l, meta: DET_MATCH_DESC[v] || "" }))]],
+                // mode change shows/hides "read ⊆ text" (ignored by full/exact) -> rebuild the body
+                onPick: (v) => { nodeEdit(n.id, "read", () => { n.ref.match = v; rebuildNode(n.id); }, saveDet); },
+            });
+        });
+        div.querySelector('.aset-enum[data-k="strip"]')?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            richPickerPop({
+                anchor: btn, current: n.ref.strip ?? "none",
+                groups: [[null, DET_STRIP_MODES.map(([v, l]) => ({ value: v, label: l, meta: DET_STRIP_DESC[v] || "" }))]],
+                onPick: (v) => { nodeEdit(n.id, "read", () => { n.ref.strip = v; }, saveDet); },
+            });
+        });
         // cutout preview: this detector's box, matched pixels painted for a colour/border kind.
         mountMatchPreview(n.id, owner, div.querySelector(".mp-canvas"), () => n.ref.search, () => {
             const cols = n.ref.colors;

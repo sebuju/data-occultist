@@ -81,18 +81,14 @@ function forgeBody(syn) {
 
 export function soundParts(x, model) {
     const cur = x.synth ? GENERATOR : (x.file || "");
-    const sopt = (s) => h("option", { selected: s === cur }, s === cur ? `<${s}>` : s);
     const vol = x.volume == null ? 1 : x.volume;
     const gen = !!x.synth;
+    const fileLabel = cur === GENERATOR ? GENERATOR : (cur || "none");
     return {
         title: h("input", { class: "gi gi-id sndrename", value: x.id, title: "rename sound" }),
         body: frag(
             labCell("file", "the audio file (in the sounds/ folder) this node plays, or [generator] for a made cue"),
-            h("select", { class: "sn-file" },
-                h("option", { value: "", selected: !cur }, "none"),
-                (model.sounds || []).map(sopt),
-                // the LAST option: build a unique cue in an inline forge instead of picking a file
-                h("option", { class: "sn-gen", value: GENERATOR, selected: gen }, GENERATOR)),
+            h("button", { class: "sn-file rich-dd-btn", type: "button" }, `<${fileLabel}>`),
             labCell("volume", "playback volume — drag the bar to set it"),
             // same segmented meter as the confidence bars (rule 7): volume 0..1 as a draggable bar
             confMeter({ cls: "sn-volume", value: vol }),

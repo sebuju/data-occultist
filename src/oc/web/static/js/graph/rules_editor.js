@@ -4,6 +4,11 @@
 import { makeArmed } from "./armbtn.js";
 import { makeClip } from "./clipboard.js";
 import { armConfirm } from "./main.js";
+import { richPickerPop } from "./rich_picker.js";
+import {
+    RULE_WHEN, RULE_WHEN_DESC, RULE_THEN, RULE_THEN_DESC, EXTRACTS, EXTRACT_DESC,
+    DICT_MODES, DICT_MODE_DESC, dictChoices, okRuleType,
+} from "./node_parts.js";
 
 // `edit(mutate, { rebuild })` is the ONE way a rule row changes the model: the caller wraps it in
 // its node's transaction (nodeEdit), which must clone the clean state BEFORE `mutate` runs — so
@@ -35,15 +40,40 @@ export function wireFieldRules(div, fd, { edit }) {
         if (j < 0 || j >= fd.rules.length) return;
         restructure(() => { const [r] = fd.rules.splice(i, 1); fd.rules.splice(j, 0, r); });   // reorder = pipeline order
     }));
-    // when / then change the row's operands -> rebuild; the rest are plain in-place edits
-    div.querySelectorAll(".rule-when").forEach((s) => s.addEventListener("change", (e) => restructure(() => { rule(e).when = e.target.value; })));
-    div.querySelectorAll(".rule-then").forEach((s) => s.addEventListener("change", (e) => restructure(() => { rule(e).then = e.target.value; })));
-    div.querySelectorAll(".rule-dmode").forEach((s) => s.addEventListener("change", (e) => restructure(() => { rule(e).dict_mode = e.target.value; })));
-    div.querySelectorAll(".rule-strategy").forEach((s) => s.addEventListener("change", (e) => restructure(() => { rule(e).strategy = e.target.value; })));   // toggles the sep input
+    // when / then / strategy / dmode / udict are rich-dd-btn pickers (handover-rich-dropdowns):
+    // click opens richPickerPop, pick mutates + (when/then/strategy/dmode) rebuilds since they
+    // change the row's operands; the rest are plain in-place edits.
+    const ftype = fd.type || "text";
+    const pickBtn = (btnCls, opts, descs, current, onPick, disabledCode) => {
+        div.querySelectorAll(btnCls).forEach((btn) => btn.addEventListener("click", (e) => {
+            const b = e.currentTarget;
+            richPickerPop({
+                anchor: b, current: current(b),
+                groups: [[null, opts.map((row) => ({ value: row[0], label: row[1], meta: descs[row[0]] || "",
+                    disabled: disabledCode ? !okRuleType(row[disabledCode], ftype) : false }))]],
+                onPick: (v) => onPick(b, v),
+            });
+        }));
+    };
+    pickBtn(".rule-when", RULE_WHEN, RULE_WHEN_DESC, (b) => rule({ target: b }).when || "always",
+        (b, v) => restructure(() => { rule({ target: b }).when = v; }), 3);
+    pickBtn(".rule-then", RULE_THEN, RULE_THEN_DESC, (b) => rule({ target: b }).then || "set",
+        (b, v) => restructure(() => { rule({ target: b }).then = v; }), 2);
+    pickBtn(".rule-dmode", DICT_MODES, DICT_MODE_DESC, (b) => rule({ target: b }).dict_mode || "correct",
+        (b, v) => restructure(() => { rule({ target: b }).dict_mode = v; }));
+    pickBtn(".rule-strategy", EXTRACTS.filter(([v]) => v !== "whole"), EXTRACT_DESC, (b) => rule({ target: b }).strategy || "number",
+        (b, v) => restructure(() => { rule({ target: b }).strategy = v; }));
+    div.querySelectorAll(".rule-udict").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, r = rule({ target: b }), cur = r.dict_id || "";
+        richPickerPop({
+            anchor: b, current: cur,
+            groups: [[null, dictChoices(cur).map(([v, l]) => ({ value: v, label: l }))]],
+            onPick: (v) => { edit(() => { rule({ target: b }).dict_id = v; }); },
+        });
+    }));
     div.querySelectorAll(".rule-arg").forEach((inp) => inp.addEventListener("input", (e) => editVal(e, "arg")));
     div.querySelectorAll(".rule-val").forEach((inp) => inp.addEventListener("input", (e) => editVal(e, "value")));
     div.querySelectorAll(".rule-sep").forEach((inp) => inp.addEventListener("input", (e) => editVal(e, "sep")));
-    div.querySelectorAll(".rule-udict").forEach((s) => s.addEventListener("change", (e) => editVal(e, "dict_id")));
     div.querySelectorAll(".rule-fuzzy").forEach((inp) => inp.addEventListener("change", (e) => editNum(e, "fuzzy")));
     // delete is an armed two-click (rule 2): first click turns it yellow, a click anywhere else
     // or Escape resets it, a second click removes the rule.

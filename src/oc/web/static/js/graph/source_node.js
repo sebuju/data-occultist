@@ -8,20 +8,48 @@ import { slideToggle } from "./node_parts.js";   // shared gn-slide switch (rule
 
 // formats mirror the registered parsers (oc.source.parsers / registry._PARSER). `log_lines` is the
 // only line-streaming one; the rest are whole-document (path lookups).
-const FORMATS = [["log_lines", "log lines"], ["ini", "ini / cfg"], ["json", "json"],
+export const FORMATS = [["log_lines", "log lines"], ["ini", "ini / cfg"], ["json", "json"],
     ["xml", "xml"], ["yaml", "yaml"]];
+export const FORMAT_DESC = {
+    log_lines: "stream new lines as they're appended (a running game log)",
+    ini: "whole-document INI/CFG file (Section.Key paths)",
+    json: "whole-document JSON file (a.b.c paths)",
+    xml: "whole-document XML file (root/child paths)",
+    yaml: "whole-document YAML file (a.b.c paths)",
+};
 const STREAM = new Set(["log_lines"]);
-const OPS = [["contains", "contains"], ["starts_with", "starts with"],
+export const OPS = [["contains", "contains"], ["starts_with", "starts with"],
     ["ends_with", "ends with"], ["equals", "equals"]];
-const METHODS = [["after", "after"], ["between", "between"], ["column", "column"], ["whole", "whole line"]];
+export const OP_DESC = {
+    contains: "the line contains this text anywhere",
+    starts_with: "the line starts with this text",
+    ends_with: "the line ends with this text",
+    equals: "the line equals this text exactly",
+};
+export const METHODS = [["after", "after"], ["between", "between"], ["column", "column"], ["whole", "whole line"]];
+export const METHOD_DESC = {
+    after: "take everything after an anchor text (optionally stop at a second marker)",
+    between: "take everything between a start and end marker",
+    column: "split the line on a delimiter (default whitespace) and take one token by index",
+    whole: "use the whole matched line as-is",
+};
+export const WATCH_DESC = {
+    manual: "only reads when you click the fire button or a trigger runs it",
+    on_change: "reads automatically whenever the file's contents change on disk",
+};
 
 const isStream = (s) => STREAM.has(s.format);
 
+// a rich-dd-btn button built from [value,label] pairs + a desc map, marking `val` current —
+// wiring (io_wire.js) has the model access to open the picker.
+const richBtn = (val, opts, descs, cls, dataset) =>
+    h("button", { class: `${cls} rich-dd-btn`, type: "button", title: (descs && descs[val]) || "", dataset },
+        `<${(opts.find(([v]) => v === val) || [, val])[1]}>`);
+
 // one line-filter (match) row: op + text + case toggle + remove
 function matchRow(m, i) {
-    const ops = OPS.map(([v, l]) => h("option", { value: v, selected: v === m.op }, v === m.op ? `<${l}>` : l));
     return h("div", { class: "src-m", dataset: { i } },
-        h("select", { class: "mset", dataset: { i, k: "op" } }, ops),
+        richBtn(m.op || "contains", OPS, OP_DESC, "mset-op", { i }),
         h("input", { class: "mset", dataset: { i, k: "text" }, value: m.text || "", placeholder: "text" }),
         h("label", { class: "src-cs", title: "case sensitive" },
             h("input", { type: "checkbox", class: "mset", dataset: { i, k: "case_sensitive" }, checked: !!m.case_sensitive }), "Aa"),
@@ -55,10 +83,12 @@ function methodInputs(f, i) {
 // `display:contents` (see CSS) so these become cells of the ONE `.src-fields` grid; every row emits
 // the SAME cells so columns align. Document formats have no method: the path input spans the
 // method+input columns instead (class `src-fpath`).
+export const SRC_FIELD_TYPES = [["text", "text"], ["number", "number"]];
+export const FIELD_TYPE_DESC = { text: "keep the raw string", number: "parse the value as a number" };
+
 function fieldRow(f, i, stream) {
     const idCell = h("input", { class: "fset2 src-fid", dataset: { i, k: "id" }, value: f.id || "", placeholder: "column", title: "output column id" });
-    const types = ["text", "number"].map((t) => h("option", { selected: t === f.type }, t === f.type ? `<${t}>` : t));
-    const typeCell = h("select", { class: "fset2 src-ftype", dataset: { i, k: "type" }, title: "value type" }, types);
+    const typeCell = richBtn(f.type || "text", SRC_FIELD_TYPES, FIELD_TYPE_DESC, "src-ftype", { i });
     // required toggle (default on): when on, this field MUST yield a valid value or the whole row is
     // dropped (and shown in the dismissed-rows preview). No label — the shared gn-slide switch.
     const req = slideToggle({ on: f.required !== false, cls: "src-req",
@@ -69,8 +99,7 @@ function fieldRow(f, i, stream) {
     // method inputs sit on their own full-width line below (`.src-finputs`) so they stay roomy.
     // document rows have no method: required + id + type + remove on line 1, path full-width below.
     if (stream) {
-        const methodSel = h("select", { class: "fset2 src-fmethod", dataset: { i, k: "method" } },
-            METHODS.map(([v, l]) => h("option", { value: v, selected: v === f.method }, v === f.method ? `<${l}>` : l)));
+        const methodSel = richBtn(f.method || "after", METHODS, METHOD_DESC, "src-fmethod", { i });
         const inputs = h("div", { class: "src-finputs" }, ...methodInputs(f, i));
         return h("div", { class: "src-f", dataset: { i } },
             h("div", { class: "src-frow" }, req, idCell, methodSel, typeCell, rm), inputs);
@@ -80,14 +109,10 @@ function fieldRow(f, i, stream) {
         h("div", { class: "src-frow" }, req, idCell, typeCell, rm), path);
 }
 
+export const WATCH_MODES = [["manual", "manual"], ["on_change", "on file change"]];
+
 export function sourceParts(s) {
     const stream = isStream(s);
-    const fmtOpts = FORMATS.map(([v, l]) => h("option", { value: v, selected: v === s.format }, v === s.format ? `<${l}>` : l));
-
-    const watchOpts = [
-        h("option", { value: "manual", selected: s.watch === "manual" }, s.watch === "manual" ? "<manual>" : "manual"),
-        h("option", { value: "on_change", selected: s.watch === "on_change" }, s.watch === "on_change" ? "<on file change>" : "on file change"),
-    ];
     const throttle = s.watch === "on_change"
         ? frag(labCell("throttle", "seconds to wait after the file stops changing — guarantees the latest content is read"),
             h("span", { class: "src-secs" },
@@ -122,7 +147,7 @@ export function sourceParts(s) {
 
     const body = frag(
         labCell("format", "how the file is parsed"),
-        h("select", { class: "src-format" }, fmtOpts),
+        richBtn(s.format || "log_lines", FORMATS, FORMAT_DESC, "src-format"),
         labCell("filename", "filename to auto-find — a glob, e.g. EE.log or *.cfg"),
         h("input", { class: "src-filename", value: s.filename || "", placeholder: "EE.log" }),
         labCell("path", "explicit file path (overrides auto-find)"),
@@ -130,7 +155,7 @@ export function sourceParts(s) {
             h("input", { class: "src-path", value: s.path || "", placeholder: "(auto-find by filename)" }),
             h("button", { class: "src-find", title: "search common game/config locations for the filename" }, "⌕ auto-find")),
         labCell("read", "when to read: a manual button, or whenever the file changes"),
-        h("select", { class: "src-watch" }, watchOpts),
+        richBtn(s.watch || "manual", WATCH_MODES, WATCH_DESC, "src-watch"),
         throttle, tail, linePos, matchBlock, fields,
         h("div", { class: "src-found muted" }));
 

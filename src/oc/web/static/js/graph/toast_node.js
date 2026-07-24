@@ -11,18 +11,66 @@ import { slideToggle } from "./node_parts.js";
 import { iconFor } from "./node_icons.js";
 import { nineGrid, fontSelect, biuGroup, borderEditor, anchorRow, colorPair } from "./textctl.js";
 
-const DURATIONS = [["short", "short"], ["long", "long"]];
+export const DURATIONS = [["short", "short"], ["long", "long"]];
+export const DURATION_DESC = {
+    short: "auto-dismisses quickly (~5s) — the Windows default",
+    long: "lingers longer (~25s) before auto-dismissing",
+};
 // font-size/weight presets a text block can pick (value stored, resolved server-side to a
 // ToastTextStyle enum by upper-casing). "" = the platform default line style.
-const STYLES = [["", "default"], ["caption", "caption"], ["captionsubtle", "caption subtle"],
+export const STYLES = [["", "default"], ["caption", "caption"], ["captionsubtle", "caption subtle"],
     ["body", "body"], ["basesubtle", "base subtle"], ["base", "base"], ["subtitle", "subtitle"],
     ["title", "title"], ["subheader", "subheader"], ["header", "header"]];
-const ALIGNS = [["", "auto"], ["left", "left"], ["center", "center"], ["right", "right"]];
+export const STYLE_DESC = {
+    "": "use the platform's default line style",
+    caption: "smallest text size, dim",
+    captionsubtle: "caption size, additional dim/subtle tint",
+    body: "standard body text size",
+    basesubtle: "base size, subtle/dim tint",
+    base: "standard base size, slightly bolder than body",
+    subtitle: "medium emphasis, larger than base",
+    title: "large, bold — for a headline",
+    subheader: "bold, mid-large size — section-heading weight",
+    header: "largest, boldest style",
+};
+export const ALIGNS = [["", "auto"], ["left", "left"], ["center", "center"], ["right", "right"]];
+export const ALIGN_DESC = {
+    "": "platform default alignment",
+    left: "left-align the text",
+    center: "center the text",
+    right: "right-align the text",
+};
 // a block's skip_mode: whether to drop it from the toast body based on its {{token}}s' blankness
 // (a token counts as blank only when it has no authored `?? fallback`) — "none" never skips,
 // "any" skips if at least one token used is blank, "all" only when every token is.
-const SKIP_MODES = [["none", "none"], ["any", "skip if any empty"], ["all", "skip if all empty"]];
-const IMG_UNITS = [["px", "px"], ["pct", "% of image"]];
+export const SKIP_MODES = [["none", "none"], ["any", "skip if any empty"], ["all", "skip if all empty"]];
+export const SKIP_MODE_DESC = {
+    none: "never skip — this block always renders",
+    any: "drop this block if AT LEAST ONE used token is blank (no authored fallback)",
+    all: "drop this block only if EVERY used token is blank",
+};
+export const IMG_UNITS = [["px", "px"], ["pct", "% of image"]];
+export const IMG_UNIT_DESC = {
+    px: "x/y/width/height are read as pixels",
+    pct: "x/y/width/height are read as a percentage of the image canvas size",
+};
+export const IMG_PLACE_DESC = {
+    hero: "top banner image above the text body",
+    inline: "image inline within the body, below the text",
+    none: "temporarily disable this image without deleting it",
+};
+export const IMG_BGTYPES = [["solid", "solid"], ["gradient", "gradient"], ["transparent", "transparent"]];
+export const IMG_BGTYPE_DESC = {
+    solid: "flat fill colour",
+    gradient: "linear blend between two colours",
+    transparent: "no fill — the toast surface shows through",
+};
+
+// a rich-dd-btn button built from [value,label] pairs + a desc map, marking `val` current —
+// wiring (toast_wire.js) has the model access to open the picker.
+const richBtn = (val, opts, descs, cls, dataset) =>
+    h("button", { class: `${cls} rich-dd-btn`, type: "button", title: (descs && descs[val]) || "", dataset },
+        `<${(opts.find(([v]) => v === val) || [, val])[1]}>`);
 // display name for an icon field: the stored value is always a full path (picked via the icon
 // picker modal, occasionally hand-set in YAML) — show just its basename, not the whole path.
 const iconName = (path) => (path ? path.split(/[\\/]/).pop() : "(none)");
@@ -59,7 +107,7 @@ export function elemOptMeta(e, i, texts = []) {
 // server-rendered preview, background (solid/gradient) + canvas size, and a list of positioned
 // text lines (content + x/y + size + colour + align). `which` is "hero" | "inline"; every control
 // carries data-which so ONE wiring pass drives both editors (rule 7).
-const IMG_PLACE = [["hero", "hero (top banner)"], ["inline", "inline (body)"], ["none", "none (off)"]];
+export const IMG_PLACE = [["hero", "hero (top banner)"], ["inline", "inline (body)"], ["none", "none (off)"]];
 
 // The mini-inspector: the full controls for ONE selected text element (index `j`). Replaces the
 // old per-element control strip — only the selected element's fields are shown. Every control
@@ -84,14 +132,14 @@ export function imageTextInspector(t, j, texts = [], unit = "px") {
         h("span", { class: "tn-il-ll" }, label),
         h("div", { class: "tn-il-rc" }, ...ctrl, rst(label)));
     const num = (cls, val, attrs) => h("input", { class: cls, dataset: { i: ji }, type: "number", value: val, ...attrs });
-    // a "match another element's size" dropdown: "—" (own size) + "image" (the canvas size) + every
-    // sibling by index+content
-    const matchSel = (cls, cur, title) => h("select", { class: cls, dataset: { i: ji }, title },
-        h("option", { value: "", selected: !cur }, "—"),
-        h("option", { value: "image", selected: cur === "image" }, cur === "image" ? "<image>" : "image"),
-        texts.map((tt, k) => k === ji ? null
-            : h("option", { value: String(k), selected: String(cur) === String(k) },
-                String(cur) === String(k) ? `<${k + 1}: ${(tt.content || "").trim() || "(empty)"}>` : `${k + 1}: ${(tt.content || "").trim() || "(empty)"}`)));
+    // a "match another element's size" rich-dd-btn: "—" (own size) + "image" (the canvas size) +
+    // every sibling by index+content — options are computed live at click time (toast_wire.js), so
+    // this only needs the CURRENT label.
+    const matchSel = (cls, cur, title) => {
+        if (!cur) return h("button", { class: `${cls} rich-dd-btn`, type: "button", dataset: { i: ji }, title }, "—");
+        const label = cur === "image" ? "image" : `${+cur + 1}: ${(texts[+cur]?.content || "").trim() || "(empty)"}`;
+        return h("button", { class: `${cls} rich-dd-btn`, type: "button", dataset: { i: ji }, title }, `<${label}>`);
+    };
     return h("div", { class: "tn-il-insp" + (off ? " tn-il-off" : ""), dataset: { i: ji } },
         h("div", { class: "tn-il-insp-h tn-il-span" },
             h("span", { class: "muted" }, off ? "no element selected" : `element ${j + 1}`),
@@ -143,7 +191,6 @@ export function imageTextInspector(t, j, texts = [], unit = "px") {
 // selected element index (model.toastImageSel). Every control carries data-i (the image index) so
 // ONE wiring pass drives every image editor (rule 7).
 function imageEditor(im, idx, sel) {
-    const opt = (cur) => ([v, l]) => h("option", { value: v, selected: v === (cur || "") }, v === (cur || "") ? `<${l}>` : l);
     const grad = im.bg_type === "gradient";
     const trans = im.bg_type === "transparent";   // no fill — the toast surface shows through
     const texts = im.texts || [];
@@ -153,16 +200,16 @@ function imageEditor(im, idx, sel) {
         // image settings (labelled) above the preview — placement/units/size/background + delete
         h("div", { class: "gn-grid" },
             labCell("placement", "where this image sits — none temporarily disables it"),
-            h("select", { class: "tn-img-place" }, IMG_PLACE.map(opt(im.placement || "inline"))),
+            richBtn(im.placement || "inline", IMG_PLACE, IMG_PLACE_DESC, "tn-img-place"),
             labCell("units", "how element x/y/w/h read: px or % of the image size"),
-            h("select", { class: "tn-img-unit" }, IMG_UNITS.map(opt(im.unit || "px"))),
+            richBtn(im.unit || "px", IMG_UNITS, IMG_UNIT_DESC, "tn-img-unit"),
             labCell("size", "canvas size in pixels (hero renders ~364×180; inline is body-width)"),
             h("div", { class: "tn-img-size" },
                 h("input", { class: "tn-img-w", type: "number", min: "1", value: im.width, title: "width" }), h("span", { class: "tn-il-u" }, "px"), "×",
                 h("input", { class: "tn-img-h2", type: "number", min: "1", value: im.height, title: "height" }), h("span", { class: "tn-il-u" }, "px")),
             labCell("background", "solid colour or a 2-colour gradient"),
             h("div", { class: "tn-img-bg" },
-                h("select", { class: "tn-img-bgtype" }, [["solid", "solid"], ["gradient", "gradient"], ["transparent", "transparent"]].map(opt(im.bg_type))),
+                richBtn(im.bg_type || "solid", IMG_BGTYPES, IMG_BGTYPE_DESC, "tn-img-bgtype"),
                 trans ? null : colorPair("tn-img-c1", im.color1 || "#0a3d62", "colour 1"),
                 grad ? colorPair("tn-img-c2", im.color2 || "#061826", "colour 2") : null,
                 grad ? h("label", { class: "tn-img-angle-l" }, "∠", h("input", { class: "tn-img-angle", type: "number", value: im.angle ?? 90, title: "gradient angle (deg)" })) : null)),
@@ -225,7 +272,6 @@ const AUTO_ROLE = ["title", "subtitle"];   // block 0 -> title, block 1 -> subti
 // One editable text block: style/align/skip-mode controls + reorder/remove, then the content
 // textarea. `i` is its index (carried on every control as data-i for the wiring).
 function blockRow(b, i, n) {
-    const opt = (cur) => ([v, l]) => h("option", { value: v, selected: v === (cur || "") }, v === (cur || "") ? `<${l}>` : l);
     const role = AUTO_ROLE[i];   // set for i 0/1 only
     return h("div", { class: "tn-block", dataset: { i } },
         h("div", { class: "tn-bk-ctl" },
@@ -235,13 +281,11 @@ function blockRow(b, i, n) {
                     role, " (auto)")
                 : frag(
                     h("span", { class: "tn-bk-lbl" }, "style"),
-                    h("select", { class: "tn-bk-style", dataset: { i }, title: "font style" }, STYLES.map(opt(b.style))),
+                    richBtn(b.style || "", STYLES, STYLE_DESC, "tn-bk-style", { i }),
                     h("span", { class: "tn-bk-lbl" }, "align"),
-                    h("select", { class: "tn-bk-align", dataset: { i }, title: "text alignment" }, ALIGNS.map(opt(b.align)))),
+                    richBtn(b.align || "", ALIGNS, ALIGN_DESC, "tn-bk-align", { i })),
             h("span", { class: "tn-bk-lbl" }, "skip"),
-            h("select", { class: "tn-bk-skip", dataset: { i },
-                title: "drop this block based on its {{token}}s' blankness (a token counts as blank only when it has no authored `?? fallback`)" },
-                SKIP_MODES.map(opt(b.skip_mode))),
+            richBtn(b.skip_mode || "none", SKIP_MODES, SKIP_MODE_DESC, "tn-bk-skip", { i }),
             h("div", { class: "frule-btns" },
                 h("button", { class: "tn-bk-up", dataset: { i }, title: "move up", disabled: i === 0 }, "▲"),
                 h("button", { class: "tn-bk-dn", dataset: { i }, title: "move down", disabled: i === n - 1 }, "▼"),
@@ -294,7 +338,6 @@ function blocksPreview(blocks, attribution) {
 }
 
 export function toastParts(x, model) {
-    const durOpt = ([v, l]) => h("option", { value: v, selected: v === (x.duration || "short") }, v === (x.duration || "short") ? `<${l}>` : l);
     const groups = model ? tokenGroups(model, x) : [];
     const titleDefault = (model && model.profile && model.profile.window_title_hint) || "Warframe";
     // sources row (FIRST): the data feeders wired to this toast — removable pills + an add-select.
@@ -336,7 +379,7 @@ export function toastParts(x, model) {
         body: frag(
             sourcesRow,
             labCell("duration", "how long the toast lingers before auto-dismissing"),
-            h("select", { class: "tn-duration" }, DURATIONS.map(durOpt)),
+            richBtn(x.duration || "short", DURATIONS, DURATION_DESC, "tn-duration"),
             labCell("icon", "app-logo image shown on the toast — pick a raster file (png/jpg/gif); blank = the data-occultist logo. Toggle off to show no logo."),
             h("div", { class: "tn-icon-row" },
                 slideToggle({ on: x.show_icon !== false, cls: "tn-showicon", title: "show the app-logo icon on the toast" }),

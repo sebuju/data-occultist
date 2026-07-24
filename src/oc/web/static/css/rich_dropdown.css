@@ -6,10 +6,14 @@
    does not add a new CSS class here.
 
    Reads exactly like the node's other <select> fields: transparent/borderless at rest, --nt
-   text, a soft box on hover/focus. */
-.gnode .rich-dd-btn {
+   text, a soft box on hover/focus. Base rule is UNSCOPED (not `.gnode`-only) so a non-node
+   caller (settings modal, inspector panel) gets it too — `--nt` is a per-node tint custom
+   property, so outside a node it falls back to `--text`/`--accent`/`--line` (still coherent,
+   just untinted). A new non-node caller adds `.rich-dd-btn` here, same as a node caller —
+   it does not add a new CSS class or copy this block (rule 7). */
+.rich-dd-btn {
     background: transparent; border: unset; border-radius: 5px;
-    padding: 0 4px; color: var(--nt); font-size: 11px; line-height: inherit; min-height: 0;
+    padding: 0 4px; color: var(--nt, var(--text)); font-size: 11px; line-height: inherit; min-height: 0;
     transition: background .12s ease, border-color .12s ease;
 
     text-align: left;
@@ -19,13 +23,13 @@
     width: 100%;
     display: block;
 }
-.gnode .rich-dd-btn:hover {
-    background: color-mix(in oklab, var(--nt) 6%, transparent);
-    outline-color: color-mix(in oklab, var(--nt) 22%, var(--line));
+.rich-dd-btn:hover {
+    background: color-mix(in oklab, var(--nt, var(--accent)) 6%, transparent);
+    outline-color: color-mix(in oklab, var(--nt, var(--accent)) 22%, var(--line));
 }
-.gnode .rich-dd-btn:focus {
+.rich-dd-btn:focus {
     background: var(--bg);
-    outline-color: color-mix(in oklab, var(--nt) 50%, var(--line));
+    outline-color: color-mix(in oklab, var(--nt, var(--accent)) 50%, var(--line));
 }
 /* full-width, left-aligned variant — a picker sitting alone on its own row (aggregate fold, kind
    picker). A picker sharing a row with other controls (the toast element picker's button bar)
@@ -51,6 +55,8 @@
     overflow: visible; text-overflow: clip; }
 .rich-pick-lbl { color: var(--text); }
 .rich-pick-opt.sel .rich-pick-lbl::before { content: "\203a  "; color: var(--accent); }   /* current selection marker */
+.rich-pick-opt.disabled { opacity: 0.4; cursor: default; }
+.rich-pick-opt.disabled:hover { background: unset; }
 .sv-combo-meta { font-size: var(--fs-xs); color: var(--muted); white-space: normal; }
 /* a fixed area below the scrollable option list (richPickerPop's optional `hint`) — stays pinned
    while the list above it scrolls, e.g. a syntax legend for the toast token picker. */

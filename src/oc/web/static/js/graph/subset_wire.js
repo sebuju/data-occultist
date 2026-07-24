@@ -14,7 +14,8 @@ import { persist } from "./persist.js";
 import { listBlock } from "./list_block.js";
 import { sourcesInput } from "./sources_input.js";
 import { singleFlight } from "../singleflight.js";
-import { _optGroups, _colOpts, aggregateSelect, satToggleBtn } from "./node_parts.js";
+import { aggregateSelect, satToggleBtn, AGGREGATES, AGGREGATE_DESC } from "./node_parts.js";
+import { richPickerPop } from "./rich_picker.js";
 import { vtables, vtableFor, expandSubsetRow, refreshDataNode, loadBatchesNode } from "./panels/datanodes.js";
 import {
     render, autosave, rebuildNode, nodeEdit, setNodeBusy,
@@ -24,6 +25,19 @@ import {
 // ---- subset node: join one or more datasets, then filter/derive/sort ----------
 
 const SUB_OPS = ["contains", "icontains", "eq", "ne", "nonempty", "empty", "gt", "lt", "gte", "lte", "regex"];
+const SUB_OP_DESC = {
+    contains: "value contains the given text (case-sensitive)",
+    icontains: "value contains the given text (case-insensitive)",
+    eq: "value equals the given text/number exactly",
+    ne: "value does not equal the given text/number",
+    nonempty: "value is present/non-blank",
+    empty: "value is empty/blank",
+    gt: "value, read as a number, is greater than the given number",
+    lt: "value, read as a number, is less than the given number",
+    gte: "value, read as a number, is >= the given number",
+    lte: "value, read as a number, is <= the given number",
+    regex: "value matches the given regular expression",
+};
 
 // how a source combines beyond a plain key-matched join (matches JoinSource.mode in models.py)
 const SOURCE_MODES = ["join", "exclude", "mark", "broadcast"];
@@ -31,6 +45,19 @@ const SOURCE_MODE_LABEL = {
     join: "join (key-match)", exclude: "exclude (anti-join)",
     mark: "mark (semi-join, annotate)", broadcast: "broadcast (merge onto every row)",
 };
+const SS_DIR_DESC = { asc: "lowest/earliest first", desc: "highest/latest first" };
+const SOURCE_MODE_DESC = {
+    join: "match this source's rows onto the key, keeping the matched columns",
+    exclude: "drop rows whose key appears in this source (anti-join) — no columns added",
+    mark: "annotate whether the key was found in this source (semi-join) — no row expansion",
+    broadcast: "merge this source's row(s) onto EVERY output row, unkeyed",
+};
+
+// a rich-dd-btn button, marking `val` current via optional label/desc lookups — wiring (wireSubset,
+// below) has the model access to open the picker.
+const richBtn = (val, labels, descs, cls, dataset) =>
+    h("button", { class: `${cls} rich-dd-btn`, type: "button", title: (descs && descs[val]) || "", dataset },
+        `<${(labels && labels[val]) || val}>`);
 
 
 
@@ -86,12 +113,21 @@ function viewColumnGroups(s, cols) {
 // columns of whatever list they're in. Array.sort is stable, so everything else keeps its order.
 const metaLast = (cols) => cols.slice().sort((a, b) => (a.startsWith("_") ? 1 : 0) - (b.startsWith("_") ? 1 : 0));
 
-// A subset's column dropdown: grouped by source once it joins, flat when it has one input.
-function subColOpts(s, cols, sel) {
+// richPickerPop-shaped groups for a subset's column picker (recipe C — identifier list, no meta
+// beyond the source-group label) — mirrors subColOpts's shape (blank "—" entry, grouped by source
+// once joined, pins a saved value no group currently offers) but returns picker groups, not DOM.
+function subColPickerGroups(s, cols, sel) {
     const groups = viewColumnGroups(s, cols);
-    return groups
-        ? _optGroups(groups.map((g) => ({ label: g.label, cols: metaLast(g.cols) })), sel)
-        : _colOpts(metaLast(cols), sel);
+    const blank = { value: "", label: "—" };
+    if (!groups) {
+        const flat = metaLast(cols);
+        const pin = sel && !flat.includes(sel) ? [{ value: sel, label: sel }] : [];
+        return [[null, [blank, ...pin, ...flat.map((c) => ({ value: c, label: c }))]]];
+    }
+    const named = groups.map((g) => ({ label: g.label, cols: metaLast(g.cols) }));
+    const known = sel && named.some((g) => g.cols.includes(sel));
+    const pinGroup = sel && !known ? [[null, [{ value: sel, label: sel }]]] : [];
+    return [[null, [blank]], ...pinGroup, ...named.map((g) => [g.label, g.cols.map((c) => ({ value: c, label: c }))])];
 }
 
 function hideToggleNodes(s) {
@@ -187,7 +223,6 @@ function sourceCfgNode(s, ds, joined) {
     const jf = src.join_field || "";
     const showAgg = !isView && model.datasetDedup(ds);
     if (!joined && !showAgg) return null;   // single non-dedup source: nothing to configure
-    const cols = model.inputColumns(ds);
     // source header spans BOTH grid columns (gspan) — a shared node subheading above its settings
     const rows = [h("span", { class: "gspan sv-src-h", title: "this source's settings" }, ds)];
     // "many ->" is the read/collapse policy, NOT a join input — render it FIRST, above the join config,
@@ -201,16 +236,12 @@ function sourceCfgNode(s, ds, joined) {
     }
     if (joined) {
         const mode = src.mode || "join";
-        const modeOpts = SOURCE_MODES.map((m) => h("option", { value: m, selected: m === mode },
-            m === mode ? `<${SOURCE_MODE_LABEL[m]}>` : SOURCE_MODE_LABEL[m]));
         rows.push(labCell("mode", "how this source combines into the join — see the option list"),
-            h("select", { class: "sv-smode", dataset: { ds } }, modeOpts));
+            richBtn(mode, SOURCE_MODE_LABEL, SOURCE_MODE_DESC, "sv-smode", { ds }));
         // broadcast merges onto every row unkeyed -- no join key to configure at all.
         if (mode !== "broadcast") {
-            const joinOpts = [h("option", { value: "", selected: !jf }, "(no join)"),
-                ...[...new Set([jf, ...cols])].filter(Boolean).map((c) => h("option", { value: c, selected: c === jf }, c === jf ? `<${c}>` : c))];
             rows.push(labCell("join on", "this source's column used as the join key; (no join) stacks its rows"),
-                h("select", { class: "sv-sjoin", dataset: { ds } }, joinOpts));
+                h("button", { class: "sv-sjoin rich-dd-btn", type: "button", dataset: { ds } }, jf ? `<${jf}>` : "(no join)"));
             if (jf) {
                 // required only gates a plain join's output presence -- meaningless for exclude/mark,
                 // which never affect whether a key survives on their own.
@@ -324,10 +355,11 @@ function subConfigNode(s) {
     // filters / derived / sort are three add-delete lists — all on the shared listBlock primitive
     // (rule 7); each supplies only its per-row cells + wiring classes, so main.js handlers still key
     // off .sf-*/.sd-*/.ss-* + data-i as before.
+    const colBtn = (cls, cur, i) => h("button", { class: `${cls} rich-dd-btn`, type: "button", dataset: { i } }, `<${cur || "—"}>`);
     const filters = listBlock({ items: s.filters, rowClass: "sub-row", del: { cls: "sf-del", title: "remove filter" },
         render: (f, i) => [
-            h("select", { class: "sf-field", dataset: { i } }, subColOpts(s, cols, f.field)),
-            h("select", { class: "sf-op", dataset: { i } }, SUB_OPS.map((o) => h("option", { selected: o === f.op }, o === f.op ? `<${o}>` : o))),
+            colBtn("sf-field", f.field, i),
+            richBtn(f.op || "contains", null, SUB_OP_DESC, "sf-op", { i }),
             h("input", { class: "sf-val", dataset: { i }, value: f.value || "", placeholder: "value" })] });
     const derived = listBlock({ items: s.derived, rowClass: "sub-row", del: { cls: "sd-del", title: "remove column" },
         render: (d, i) => [
@@ -337,10 +369,8 @@ function subConfigNode(s) {
     // multi-column sort: primary row first, each a column + direction; applied before limit
     const sortRows = listBlock({ items: s.sort, rowClass: "sub-row", del: { cls: "ss-del", title: "remove sort" },
         render: (so, i) => [
-            h("select", { class: "ss-field", dataset: { i } }, subColOpts(s, cols, so.field)),
-            h("select", { class: "ss-dir", dataset: { i } },
-                h("option", { value: "asc", selected: !so.desc }, !so.desc ? "<asc>" : "asc"),
-                h("option", { value: "desc", selected: !!so.desc }, !!so.desc ? "<desc>" : "desc"))] });
+            colBtn("ss-field", so.field, i),
+            richBtn(so.desc ? "desc" : "asc", null, SS_DIR_DESC, "ss-dir", { i })] });
     // label + its inline "+" add button — a col-1 cell for the ONE node grid (matches labCell),
     // so filters/columns/sort/visible line up in the same label column as sources/limit/latest.
     const addLbl = (text, title, addCls, addTitle) => labAdd(text, title, addCls, addTitle);
@@ -384,22 +414,6 @@ function subsetParts(s) {
         body: subConfigNode(s),
         ports: h("span", { class: "port out", title: "drag to another subset to feed it this subset's rows" }),
     };
-}
-
-// The sort/filter/join selects are built from the STATIC schema at render time — before the
-// live join exposes its real columns. Repaint their options (preserving the current value)
-// once the live column set changes, so every actual column is offered. Only touches the DOM
-// when the set actually changed (event-driven, not a poll).
-function repaintSubsetCols(el, s) {
-    const cols = viewColumns(s);
-    const sig = cols.join("|");
-    if (el._colsig === sig) return;
-    el._colsig = sig;
-    for (const sel of el.querySelectorAll(".ss-field, .sf-field")) {
-        const v = sel.value;
-        sel.replaceChildren(...subColOpts(s, cols, v));
-        sel.value = v;
-    }
 }
 
 // Its compute can be slow — never run two at once for one subset, but a request that arrives
@@ -456,7 +470,7 @@ async function _refreshSubsetNode(id, pre, { superseded } = {}) {
         // the live join may expose columns the static schema can't know (orders/enrich fields) —
         // cache them and re-render the visible/hide toggles so every actual column is listed.
         subsetLiveCols.set(id, cols || []);
-        if (s && el) { renderHideToggles(el, s); repaintSubsetCols(el, s); }
+        if (s && el) renderHideToggles(el, s);
     } catch (e) {
         if (superseded?.()) return;
         // a just-added subset isn't on the backend until the profile saves (debounced) —
@@ -600,12 +614,47 @@ function wireSubset(div, s) {
     // PER-SOURCE join config — each control carries its source id in dataset.ds. Setting/clearing a
     // source's join field toggles its required + match rows, so rebuild the node (restructure);
     // the other knobs just re-canonicalise/recompute the view.
-    div.querySelectorAll(".sv-sjoin").forEach((el) => el.addEventListener("change", (e) => restructure(() => model.setSourceJoinField(s.id, el.dataset.ds, e.target.value.trim()))));
+    div.querySelectorAll(".sv-sjoin").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, ds = b.dataset.ds;
+        const jf = model.subsetSource(s.id, ds)?.join_field || "";
+        const cols = model.inputColumns(ds);
+        richPickerPop({
+            anchor: b, current: jf,
+            groups: [[null, [
+                { value: "", label: "(no join)", meta: "stack this source's rows instead of joining them on a key" },
+                ...[...new Set([jf, ...cols])].filter(Boolean).map((c) => ({ value: c, label: c })),
+            ]]],
+            onPick: (v) => restructure(() => model.setSourceJoinField(s.id, ds, v.trim())),
+        });
+    }));
     div.querySelectorAll(".sv-sreq").forEach((el) => el.addEventListener("change", (e) => recompute(() => model.setSourceRequired(s.id, el.dataset.ds, e.target.checked))));
     div.querySelectorAll(".sv-sprefnew").forEach((el) => el.addEventListener("change", (e) => recompute(() => model.setSourcePreferNewest(s.id, el.dataset.ds, e.target.checked))));
     // switching mode toggles which rows show (required/join-on/norm), so rebuild the node
-    div.querySelectorAll(".sv-smode").forEach((el) => el.addEventListener("change", (e) => restructure(() => model.setSourceMode(s.id, el.dataset.ds, e.target.value))));
-    div.querySelectorAll(".sv-sagg").forEach((el) => el.addEventListener("change", (e) => recompute(() => model.setSourceAggregate(s.id, el.dataset.ds, e.target.value))));
+    div.querySelectorAll(".sv-smode").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, ds = b.dataset.ds;
+        richPickerPop({
+            anchor: b, current: model.subsetSource(s.id, ds)?.mode || "join",
+            groups: [[null, SOURCE_MODES.map((m) => ({ value: m, label: SOURCE_MODE_LABEL[m], meta: SOURCE_MODE_DESC[m] || "" }))]],
+            onPick: (v) => restructure(() => model.setSourceMode(s.id, ds, v)),
+        });
+    }));
+    div.querySelectorAll(".sv-sagg").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, ds = b.dataset.ds;
+        const cur = model.sourceAggregate(s.id, ds);
+        const inheritLbl = model.sourceAggregateEffective(s.id, ds);
+        richPickerPop({
+            anchor: b, current: cur,
+            groups: [[null, [
+                { value: "", label: `inherit (${inheritLbl})`, meta: "use the dataset's own many->one policy" },
+                ...AGGREGATES.map((v) => ({ value: v, label: v, meta: AGGREGATE_DESC[v] || "" })),
+                { value: "all", label: "all (no collapse)", meta: AGGREGATE_DESC.all },
+            ]]],
+            onPick: (v) => {
+                recompute(() => model.setSourceAggregate(s.id, ds, v));
+                b.textContent = `<${v === "" ? `inherit (${inheritLbl})` : v === "all" ? "all (no collapse)" : v}>`;
+            },
+        });
+    }));
     // norm knobs re-render the worked example IN PLACE (realtime) — no node rebuild, no refetch (the
     // sample is cached on the eg element) — then recompute() refreshes the actual joined view.
     const egFor = (ds) => div.querySelector(`.sv-norm-eg[data-ds="${CSS.escape(ds)}"]`);
@@ -640,8 +689,22 @@ function wireSubset(div, s) {
 
     // filters
     div.querySelectorAll(".sf-del").forEach((b) => armConfirm(b, () => restructure(() => model.removeFilter(s.id, +b.dataset.i)), { silent: true, resetOnOutside: true }));
-    div.querySelectorAll(".sf-field").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.filters[+el.dataset.i].field = e.target.value; })));
-    div.querySelectorAll(".sf-op").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.filters[+el.dataset.i].op = e.target.value; })));
+    div.querySelectorAll(".sf-field").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        richPickerPop({
+            anchor: b, current: s.filters[i].field || "",
+            groups: subColPickerGroups(s, viewColumns(s), s.filters[i].field || ""),
+            onPick: (v) => restructure(() => { s.filters[i].field = v; }),
+        });
+    }));
+    div.querySelectorAll(".sf-op").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        richPickerPop({
+            anchor: b, current: s.filters[i].op || "contains",
+            groups: [[null, SUB_OPS.map((o) => ({ value: o, label: o, meta: SUB_OP_DESC[o] || "" }))]],
+            onPick: (v) => restructure(() => { s.filters[i].op = v; }),
+        });
+    }));
     div.querySelectorAll(".sf-val").forEach((el) => onValueEdit(el, (e) => recompute(() => { s.filters[+el.dataset.i].value = e.target.value; })));
 
     // derived columns — editing a name changes the available column set, so restructure
@@ -652,8 +715,22 @@ function wireSubset(div, s) {
     // sort — every mutation restructures (removal shifts indices; field/dir rebuild so the
     // picked option re-renders wrapped in < > like every other select)
     div.querySelectorAll(".ss-del").forEach((b) => armConfirm(b, () => restructure(() => model.removeSort(s.id, +b.dataset.i)), { silent: true, resetOnOutside: true }));
-    div.querySelectorAll(".ss-field").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.sort[+el.dataset.i].field = e.target.value; })));
-    div.querySelectorAll(".ss-dir").forEach((el) => el.addEventListener("change", (e) => restructure(() => { s.sort[+el.dataset.i].desc = e.target.value === "desc"; })));
+    div.querySelectorAll(".ss-field").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        richPickerPop({
+            anchor: b, current: s.sort[i].field || "",
+            groups: subColPickerGroups(s, viewColumns(s), s.sort[i].field || ""),
+            onPick: (v) => restructure(() => { s.sort[i].field = v; }),
+        });
+    }));
+    div.querySelectorAll(".ss-dir").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        richPickerPop({
+            anchor: b, current: s.sort[i].desc ? "desc" : "asc",
+            groups: [[null, [["asc", "asc"], ["desc", "desc"]].map(([v, l]) => ({ value: v, label: l, meta: SS_DIR_DESC[v] || "" }))]],
+            onPick: (v) => restructure(() => { s.sort[i].desc = v === "desc"; }),
+        });
+    }));
 
     // hide/show result columns — toggling changes the column set, so restructure
     wireHideToggles(div, s);

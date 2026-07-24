@@ -7,14 +7,19 @@ import * as api from "../api.js";
 import * as rectTxn from "./edit_txn.js";
 import { model, setStatus } from "./state.js";
 import { whenVisible } from "./visible.js";
-import { h, svg, autoGrow, restripeSelect } from "../dom.js";
+import { h, svg, autoGrow } from "../dom.js";
 import { renameNode, movePos } from "./node_lifecycle.js";
 import { drawEdges } from "./routing.js";
 import { persist } from "./persist.js";
 import { beginDrag } from "./dragresize.js";
 import { onGlobal } from "../inputbus.js";
 import { richPickerPop } from "./rich_picker.js";
-import { tokenGroups, blockPreviewLook, elemOptLabel, elemOptMeta } from "./toast_node.js";
+import { FONT_CHOICES, BORDER_STYLES } from "./textctl.js";
+import {
+    tokenGroups, blockPreviewLook, elemOptLabel, elemOptMeta,
+    DURATIONS, DURATION_DESC, STYLES, STYLE_DESC, ALIGNS, ALIGN_DESC, SKIP_MODES, SKIP_MODE_DESC,
+    IMG_PLACE, IMG_PLACE_DESC, IMG_UNITS, IMG_UNIT_DESC, IMG_BGTYPES, IMG_BGTYPE_DESC,
+} from "./toast_node.js";
 import { openIconPickerModal } from "./icon_picker.js";
 import { render, autosave, rebuildNode, wireArmedRemove, NUDGE, armConfirm } from "./main.js";
 
@@ -29,7 +34,18 @@ function wireToast(div, n) {
             () => { render(); autosave(null); });
     });
     $(".tn-app")?.addEventListener("change", (e) => { model.setToastProp(x.id, "app_name", e.target.value); autosave(null); });
-    $(".tn-duration")?.addEventListener("change", (e) => { model.setToastProp(x.id, "duration", e.target.value); restripeSelect(e.target); autosave(null); });
+    $(".tn-duration")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: x.duration || "short",
+            groups: [[null, DURATIONS.map(([v, l]) => ({ value: v, label: l, meta: DURATION_DESC[v] || "" }))]],
+            onPick: (v) => {
+                model.setToastProp(x.id, "duration", v);
+                btn.textContent = `<${(DURATIONS.find(([x2]) => x2 === v) || [, v])[1]}>`;
+                autosave(null);
+            },
+        });
+    });
     // browse-for-an-icon: the field itself is read-only display (iconName in toast_node.js), so
     // picking via the modal is the only way to set it.
     $(".tn-icon-browse")?.addEventListener("click", () => {
@@ -88,9 +104,42 @@ function wireToast(div, n) {
         el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "content", e.target.value); autosave(null); refreshBlocksPreview(); });
         autoGrow(el);
     });
-    div.querySelectorAll(".tn-bk-style").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "style", e.target.value); restripeSelect(e.target); autosave(null); refreshPvLine(+el.dataset.i); }));
-    div.querySelectorAll(".tn-bk-align").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "align", e.target.value); restripeSelect(e.target); autosave(null); refreshPvLine(+el.dataset.i); }));
-    div.querySelectorAll(".tn-bk-skip").forEach((el) => el.addEventListener("change", (e) => { model.setToastText(x.id, +el.dataset.i, "skip_mode", e.target.value); restripeSelect(e.target); autosave(null); }));
+    div.querySelectorAll(".tn-bk-style").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        richPickerPop({
+            anchor: b, current: (x.texts[i].style || ""),
+            groups: [[null, STYLES.map(([v, l]) => ({ value: v, label: l, meta: STYLE_DESC[v] || "" }))]],
+            onPick: (v) => {
+                model.setToastText(x.id, i, "style", v);
+                b.textContent = `<${(STYLES.find(([sv]) => sv === v) || [, v])[1]}>`;
+                autosave(null); refreshPvLine(i);
+            },
+        });
+    }));
+    div.querySelectorAll(".tn-bk-align").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        richPickerPop({
+            anchor: b, current: (x.texts[i].align || ""),
+            groups: [[null, ALIGNS.map(([v, l]) => ({ value: v, label: l, meta: ALIGN_DESC[v] || "" }))]],
+            onPick: (v) => {
+                model.setToastText(x.id, i, "align", v);
+                b.textContent = `<${(ALIGNS.find(([av]) => av === v) || [, v])[1]}>`;
+                autosave(null); refreshPvLine(i);
+            },
+        });
+    }));
+    div.querySelectorAll(".tn-bk-skip").forEach((btn) => btn.addEventListener("click", (e) => {
+        const b = e.currentTarget, i = +b.dataset.i;
+        richPickerPop({
+            anchor: b, current: (x.texts[i].skip_mode || "none"),
+            groups: [[null, SKIP_MODES.map(([v, l]) => ({ value: v, label: l, meta: SKIP_MODE_DESC[v] || "" }))]],
+            onPick: (v) => {
+                model.setToastText(x.id, i, "skip_mode", v);
+                b.textContent = `<${(SKIP_MODES.find(([sv]) => sv === v) || [, v])[1]}>`;
+                autosave(null);
+            },
+        });
+    }));
     $(".tn-bk-add")?.addEventListener("click", () => { model.addToastText(x.id); rebuildNode(n.id); autosave(null); });
     div.querySelectorAll(".tn-bk-del").forEach((b) => armConfirm(b, () => { model.removeToastText(x.id, +b.dataset.i); rebuildNode(n.id); autosave(null); }, { silent: true, resetOnOutside: true }));
     div.querySelectorAll(".tn-bk-up").forEach((b) => b.addEventListener("click", () => { if (model.moveToastText(x.id, +b.dataset.i, -1)) { rebuildNode(n.id); autosave(null); } }));
@@ -570,8 +619,25 @@ function wireToastImage(sec, x, n) {
             if (key === "match_w") { const w = q(".tn-il-w"); if (w) w.disabled = !!v; const p = q(".tn-il-mwp"); if (p) p.disabled = !v; }
             if (key === "match_h") { const hh = q(".tn-il-h"); if (hh) hh.disabled = !!v; const p = q(".tn-il-mhp"); if (p) p.disabled = !v; }
         };
-        sec.querySelector(".tn-il-mw")?.addEventListener("change", (e) => matchEdit("match_w", e.target.value));
-        sec.querySelector(".tn-il-mh")?.addEventListener("change", (e) => matchEdit("match_h", e.target.value));
+        const matchLabel = (v) => {
+            if (!v) return "—";
+            const lab = v === "image" ? "image" : `${+v + 1}: ${(texts()[+v]?.content || "").trim() || "(empty)"}`;
+            return `<${lab}>`;
+        };
+        const matchPick = (cls, key) => sec.querySelector(cls)?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            const cur = (texts()[sel] || {})[key] || "";
+            richPickerPop({
+                anchor: btn, current: cur,
+                groups: [[null, [
+                    { value: "", label: "—" },
+                    { value: "image", label: "image" },
+                    ...texts().map((tt, k) => k === sel ? null : { value: String(k), label: `${k + 1}: ${(tt.content || "").trim() || "(empty)"}` }).filter(Boolean),
+                ]]],
+                onPick: (v) => { btn.textContent = matchLabel(v); matchEdit(key, v); },
+            });
+        });
+        matchPick(".tn-il-mw", "match_w"); matchPick(".tn-il-mh", "match_h");
         sec.querySelector(".tn-il-mwp")?.addEventListener("input", (e) => matchEdit("match_w_pct", e.target.value));
         sec.querySelector(".tn-il-mhp")?.addEventListener("input", (e) => matchEdit("match_h_pct", e.target.value));
         // colour = native picker + linked hex text, kept in sync (edit either). Returns a bound
@@ -579,8 +645,22 @@ function wireToastImage(sec, x, n) {
         const cpair = (cls, apply) => bindColorPair(sec, cls, apply);
         const setTextColor = cpair(".tn-il-color", (v) => { setText(sel, "color", v); autosave(null); refreshPreview(); });
         const setBgColor = cpair(".tn-il-bg", (v) => { setText(sel, "bg_color", v); autosave(null); refreshPreview(); });
-        // font family
-        sec.querySelector(".tn-il-font")?.addEventListener("change", (e) => { setText(sel, "font_family", e.target.value); autosave(null); refreshPreview(); });
+        // font family — each row renders in its own typeface (labelStyle) so the face is visible
+        // while browsing, not only after picking.
+        sec.querySelector(".tn-il-font")?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            const cur = (texts()[sel] || {}).font_family || "";
+            richPickerPop({
+                anchor: btn, current: cur,
+                groups: [[null, FONT_CHOICES.map(([v, l]) => ({
+                    value: v, label: `${l} — Ag 123`, labelStyle: v ? { fontFamily: v } : null,
+                }))]],
+                onPick: (v) => {
+                    btn.textContent = `<${(FONT_CHOICES.find(([fv]) => fv === v) || [, v])[1]}>`;
+                    setText(sel, "font_family", v); autosave(null); refreshPreview();
+                },
+            });
+        });
         // bold / italic / underline toggles
         sec.querySelectorAll(".tn-il-biu .tn-biu-b").forEach((b) => b.addEventListener("click", () => {
             const k = b.dataset.k, on = !(texts()[sel] || {})[k];
@@ -597,7 +677,7 @@ function wireToastImage(sec, x, n) {
             const t = texts()[sel] || {};
             const src = bdSide ? ((t.border_sides || {})[bdSide] || t.border || {}) : (t.border || {});
             const w = q(".tn-bd-w"), s = q(".tn-bd-s");
-            if (w) w.value = src.w ?? 0; if (s) s.value = src.style || "solid";
+            if (w) w.value = src.w ?? 0; if (s) s.textContent = `<${src.style || "solid"}>`;
             setBdColor(src.color || "#ffffff");   // push into the picker + its hex text
         };
         // accent each side button whose border is set (w>0); "all" reflects the base border
@@ -615,11 +695,37 @@ function wireToastImage(sec, x, n) {
             syncBorder();
         }));
         const bd = (cls, key, ev) => q(cls)?.addEventListener(ev, (e) => { model.setToastImageBorder(x.id, idx, sel, bdSide, key, e.target.value); refreshSetFlags(); autosave(null); refreshPreview(); });
-        bd(".tn-bd-w", "w", "input"); bd(".tn-bd-s", "style", "change");
+        bd(".tn-bd-w", "w", "input");
+        q(".tn-bd-s")?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            const t = texts()[sel] || {};
+            const cur = (bdSide ? (t.border_sides || {})[bdSide] : t.border)?.style || "solid";
+            richPickerPop({
+                anchor: btn, current: cur,
+                groups: [[null, BORDER_STYLES.map(([v, l]) => ({ value: v, label: l }))]],
+                onPick: (v) => {
+                    btn.textContent = `<${v}>`;
+                    model.setToastImageBorder(x.id, idx, sel, bdSide, "style", v);
+                    refreshSetFlags(); autosave(null); refreshPreview();
+                },
+            });
+        });
         const setBdColor = cpair(".tn-bd-c", (v) => { model.setToastImageBorder(x.id, idx, sel, bdSide, "color", v); refreshSetFlags(); autosave(null); refreshPreview(); });
         // anchor: target select + this/target 9-point grids. reanchor() keeps the element visually put.
-        sec.querySelector(".tn-anch-to")?.addEventListener("change", (e) => {
-            reanchor(sel, "to", e.target.value);   // grids stay enabled for the image (pins to the canvas)
+        sec.querySelector(".tn-anch-to")?.addEventListener("click", (e) => {
+            const btn = e.currentTarget;
+            const cur = (texts()[sel] || {}).anchor?.to || "";
+            richPickerPop({
+                anchor: btn, current: cur,
+                groups: [[null, [
+                    { value: "", label: "image" },
+                    ...texts().map((el, k) => k === sel ? null : { value: String(k), label: `element ${k + 1}` }).filter(Boolean),
+                ]]],
+                onPick: (v) => {
+                    btn.textContent = `<${v === "" ? "image" : `element ${+v + 1}`}>`;
+                    reanchor(sel, "to", v);   // grids stay enabled for the image (pins to the canvas)
+                },
+            });
         });
         const anchGrid = (cls, key) => sec.querySelectorAll(`${cls} .tn-nine-b`).forEach((b) => b.addEventListener("click", () => {
             sec.querySelectorAll(`${cls} .tn-nine-b`).forEach((o) => o.classList.remove("on"));
@@ -645,20 +751,16 @@ function wireToastImage(sec, x, n) {
             setV(".tn-il-content", e.content || ""); insp.querySelector(".tn-il-content")?._autogrow?.();
             setV(".tn-il-size", e.size ?? 20);
             setV(".tn-il-x", e.x ?? 0); setV(".tn-il-y", e.y ?? 0);
-            setV(".tn-il-w", e.width || ""); setV(".tn-il-h", e.height || ""); setV(".tn-il-font", e.font_family || "");
+            setV(".tn-il-w", e.width || ""); setV(".tn-il-h", e.height || "");
+            const fontBtn = insp.querySelector(".tn-il-font");
+            if (fontBtn) fontBtn.textContent = `<${(FONT_CHOICES.find(([v]) => v === (e.font_family || "")) || [, e.font_family])[1]}>`;
             setV(".tn-il-z", e.z_index ?? 0);
             const wr = insp.querySelector(".tn-il-wrap"); if (wr) wr.checked = e.wrap !== false;
             const ov = insp.querySelector(".tn-il-over"); if (ov) ov.checked = !!e.overflow;
             const cd = insp.querySelector(".tn-il-cond"); if (cd) cd.checked = !!e.disable_if_empty;
             const cda = insp.querySelector(".tn-il-condanchor"); if (cda) cda.checked = !!e.disable_if_anchor_disabled;
-            // rebuild each match select's sibling <option>s (self excluded), then set the current value
-            const matchOpts = (cls, cur) => {
-                const s = insp.querySelector(cls); if (!s) return;
-                const opts = [h("option", { value: "" }, "—"), h("option", { value: "image" }, "image")];
-                for (let k = 0; k < texts().length; k++) if (k !== j)
-                    opts.push(h("option", { value: String(k) }, `${k + 1}: ${(texts()[k].content || "").trim() || "(empty)"}`));
-                s.replaceChildren(...opts); s.value = cur || "";
-            };
+            // sibling options are computed live at click time now (richPickerPop) — just refresh the label.
+            const matchOpts = (cls, cur) => { const s = insp.querySelector(cls); if (s) s.textContent = matchLabel(cur); };
             matchOpts(".tn-il-mw", e.match_w); matchOpts(".tn-il-mh", e.match_h);
             setV(".tn-il-mwp", e.match_w_pct ?? 100); setV(".tn-il-mhp", e.match_h_pct ?? 100);
             // a match on an axis WINS over its own width/height (dimension input dead); a match-percent
@@ -674,12 +776,9 @@ function wireToastImage(sec, x, n) {
             insp.querySelectorAll(".tn-bd-side").forEach((o) => o.classList.toggle("on", o.dataset.side === ""));
             refreshSetFlags(); syncBorder();
             const a = e.anchor || { to: "", corner: "tl", target: "tl" };
-            const toSel = insp.querySelector(".tn-anch-to");
-            if (toSel) {   // rebuild only the sibling <option>s (self excluded), not the whole inspector
-                const opts = [h("option", { value: "" }, "image")];
-                for (let k = 0; k < texts().length; k++) if (k !== j) opts.push(h("option", { value: String(k) }, `element ${k + 1}`));
-                toSel.replaceChildren(...opts); toSel.value = a.to || "";
-            }
+            const toBtn = insp.querySelector(".tn-anch-to");
+            // sibling options are computed live at click time now (richPickerPop) — just refresh the label.
+            if (toBtn) toBtn.textContent = `<${!a.to ? "image" : `element ${+a.to + 1}`}>`;
             insp.querySelectorAll(".tn-anch-corner .tn-nine-b").forEach((b) => b.classList.toggle("on", b.dataset.code === (a.corner || "tl")));
             insp.querySelectorAll(".tn-anch-target .tn-nine-b").forEach((b) => b.classList.toggle("on", b.dataset.code === (a.target || "tl")));
         };
@@ -708,9 +807,27 @@ function wireToastImage(sec, x, n) {
         onPick: (v) => selectLine(v === "" ? null : +v),
     }));
     // placement (hero/inline/none) — no layout change, just persist + (nothing to repreview)
-    q(".tn-img-place")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "placement", e.target.value); restripeSelect(e.target); autosave(null); });
+    q(".tn-img-place")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: im().placement || "inline",
+            groups: [[null, IMG_PLACE.map(([v, l]) => ({ value: v, label: l, meta: IMG_PLACE_DESC[v] || "" }))]],
+            onPick: (v) => {
+                model.setToastImageProp(x.id, idx, "placement", v);
+                btn.textContent = `<${(IMG_PLACE.find(([pv]) => pv === v) || [, v])[1]}>`;
+                autosave(null);
+            },
+        });
+    });
     // unit toggle (px / % of image) — convert stored coords so the on-screen design is preserved
-    q(".tn-img-unit")?.addEventListener("change", (e) => { model.convertToastImageUnit(x.id, idx, e.target.value); rebuildNode(n.id); autosave(null); });
+    q(".tn-img-unit")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: im().unit || "px",
+            groups: [[null, IMG_UNITS.map(([v, l]) => ({ value: v, label: l, meta: IMG_UNIT_DESC[v] || "" }))]],
+            onPick: (v) => { model.convertToastImageUnit(x.id, idx, v); rebuildNode(n.id); autosave(null); },
+        });
+    });
     armConfirm(q(".tn-img-del"), () => { model.removeToastImage(x.id, idx); rebuildNode(n.id); autosave(null); }, { silent: true, resetOnOutside: true });
     // scalar props (size + gradient colours/angle) — persist + repreview on input
     const scalar = (s, key) => q(s)?.addEventListener("input", (e) => { model.setToastImageProp(x.id, idx, key, e.target.value); autosave(null); refreshPreview(); });
@@ -719,7 +836,14 @@ function wireToastImage(sec, x, n) {
     const imgColor = (key) => (v) => { model.setToastImageProp(x.id, idx, key, v); autosave(null); refreshPreview(); };
     bindColorPair(sec, ".tn-img-c1", imgColor("color1")); bindColorPair(sec, ".tn-img-c2", imgColor("color2"));
     // bg type flips which controls show (color2/angle) -> rebuild the node body, then repreview
-    q(".tn-img-bgtype")?.addEventListener("change", (e) => { model.setToastImageProp(x.id, idx, "bg_type", e.target.value); rebuildNode(n.id); autosave(null); });
+    q(".tn-img-bgtype")?.addEventListener("click", (e) => {
+        const btn = e.currentTarget;
+        richPickerPop({
+            anchor: btn, current: im().bg_type || "solid",
+            groups: [[null, IMG_BGTYPES.map(([v, l]) => ({ value: v, label: l, meta: IMG_BGTYPE_DESC[v] || "" }))]],
+            onPick: (v) => { model.setToastImageProp(x.id, idx, "bg_type", v); rebuildNode(n.id); autosave(null); },
+        });
+    });
     wireInspector();
     autoGrow(sec.querySelector(".tn-il-content"));
     if (sel != null) setActive(true);   // a rebuild that kept a selection (add/clone element) shows its overlay

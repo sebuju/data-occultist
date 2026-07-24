@@ -183,7 +183,7 @@ a.node.win:hover { border-color: var(--accent); }
 .sv-distinct-col.on { opacity: 1; background: color-mix(in oklab, var(--nt, var(--accent)) 14%, transparent); }
 .sub-row { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; margin-left: 4px; }
 .sub-row select, .sub-row input { min-width: 0; }
-.sub-row select { max-width: 140px; }
+.sub-row select, .sub-row .rich-dd-btn { max-width: 140px; }
 .sub-row .sf-val, .sub-row .sd-tpl, .sub-row .sd-name { flex: 1 1 0; }
 .sub-row .sf-field, .sub-row .sf-op, .sub-row .se-type, .sub-row .se-src { flex: 0 0 auto; }
 /* sort row has no free-text input to grow, so the column select fills instead — the row
@@ -193,8 +193,8 @@ a.node.win:hover { border-color: var(--accent); }
    (graph.css) instead of a per-row `.sub-row .flab` — labels line up in col 1, inputs fill col 2. */
 .sub-row button.danger, .sub-row .btn-trash { flex: 0 0 auto; padding: 0; }
 .sub-row > span.muted { align-self: center; }
-.gnode .sub-rows > .sub-row > select.ss-dir { width: 50px; text-align: center; }
-.gnode .sub-rows > .sub-row > select.ss-op { width: 70px; text-align: center; }
+.gnode .sub-rows > .sub-row > select.ss-dir, .gnode .sub-rows > .sub-row > .rich-dd-btn.ss-dir { width: 50px; text-align: center; }
+.gnode .sub-rows > .sub-row > .rich-dd-btn.sf-op { width: 70px; text-align: center; }
 .sv-inputs { display: flex; flex-wrap: wrap; align-items: center; column-gap: 1ch }
 .sv-input { position: relative; display: inline-flex; align-items: center; gap: 0px; box-sizing: border-box;
     color: var(--nt);
@@ -403,7 +403,7 @@ label.inline input:not([type="checkbox"]) { width: auto; }
 .gnode .pr-chk input.pr-f-req { margin: 0; margin-left: 0px; }
 .pr-arr .pr-ff-add { align-self: start; }   /* array-reduction's inline "+ filter" stays compact, not full-width */
 .pr-ff-op { max-width: 6ch; box-sizing: content-box; }   /* op dropdown stays narrow; long labels (contains/ncontains) truncate, value unchanged */
-.pr-f-type { width: auto; }
+.pr-f-type, .pr-fa-agg { width: auto; }
 
 /* producer preview satellite (resolved inputs + output schema + live test-fetch) */
 .pp-cols { font-size: var(--fs-sm); white-space: normal; }

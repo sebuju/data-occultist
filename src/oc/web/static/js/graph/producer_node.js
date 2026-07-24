@@ -14,10 +14,40 @@ import { log } from "../log.js";
 
 // Backends the type picker offers (mirrors registry._PRODUCER). http is the one generic fetch+map
 // backend (URL / headers / mapping, per-item or list mode).
-const PRODUCER_TYPES = ["http"];
+export const PRODUCER_TYPES = ["http"];
+export const PRODUCER_TYPE_DESC = { http: "generic fetch+map backend (URL/headers/mapping, per-item or list mode)" };
 
-const AGG_OPS = ["min", "max", "sum", "count", "median", "median_low", "first"];
-const FILTER_OPS = ["eq", "ne", "in", "nin", "gt", "ge", "lt", "le", "contains", "ncontains"];
+export const AGG_OPS = ["min", "max", "sum", "count", "median", "median_low", "first"];
+export const AGG_OP_DESC = {
+    min: "smallest of the kept values", max: "largest of the kept values",
+    sum: "add every kept value", count: "how many values were kept",
+    median: "middle value of the kept set", median_low: "median of the lowest N (see depth)",
+    first: "the first kept value, in element order",
+};
+export const FILTER_OPS = ["eq", "ne", "in", "nin", "gt", "ge", "lt", "le", "contains", "ncontains"];
+export const FILTER_OP_DESC = {
+    eq: "equals the value", ne: "does not equal the value",
+    in: "is one of a comma-separated list", nin: "is not one of a comma-separated list",
+    gt: "greater than the value", ge: "greater than or equal to the value",
+    lt: "less than the value", le: "less than or equal to the value",
+    contains: "contains the value as a substring", ncontains: "does not contain the value as a substring",
+};
+export const KEY_TRANSFORMS = ["none", "lowercase", "slugify", "catalogue"];
+export const KEY_TRANSFORM_DESC = {
+    none: "use the item name as-is", lowercase: "fold the item name to lowercase",
+    slugify: "url-safe slug (lowercase, spaces/punctuation -> dashes)",
+    catalogue: "resolve the name against a taught catalogue (see the cat rows below)",
+};
+export const QUEUE_MODES = ["drop", "latest", "queue"];
+export const QUEUE_MODE_DESC = {
+    drop: "ignore a fire while a sweep is already running",
+    latest: "run only the newest pending fire once the current sweep finishes",
+    queue: "run every pending fire in order once the current sweep finishes",
+};
+export const HTTP_METHODS = ["GET", "POST"];
+export const HTTP_METHOD_DESC = { GET: "fetch without a request body", POST: "fetch with a request body" };
+export const PR_FIELD_TYPES = ["text", "number"];
+export const PR_FIELD_TYPE_DESC = { text: "keep the raw value", number: "coerce to a number (drops non-numeric)" };
 
 // Elapsed between two ISO instants (end defaults to now) as "m:ss" / "h:mm:ss".
 const elapsed = (start, end) => {
@@ -28,11 +58,13 @@ const elapsed = (start, end) => {
     return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 };
 
-const typeSel = (pn) => h("select", { class: "prtype" },
-    ...PRODUCER_TYPES.map((t) => h("option", { value: t, selected: t === (pn.type || "http") }, t === (pn.type || "http") ? `<${t}>` : t)));
+const typeSel = (pn) => h("button", { class: "prtype rich-dd-btn", type: "button" }, `<${pn.type || "http"}>`);
 
-const sel = (cls, opts, cur, title = "") => h("select", { class: cls, title: title || null },
-    ...opts.map((o) => h("option", { value: o, selected: o === cur }, o === cur ? `<${o}>` : o)));
+// a rich-dd-btn button for a plain string-valued enum (value === label), marking `cur` current —
+// wiring (io_wire.js) has the model access to open the picker. `title` is the fallback tooltip
+// when there's no per-option desc map (or as the whole-control hint the old <select> carried).
+const sel = (cls, opts, cur, title = "") =>
+    h("button", { class: `${cls} rich-dd-btn`, type: "button", title: title || "" }, `<${cur}>`);
 
 // checkbox WITH an inline text label (for list rows that have no labCell of their own)
 const chk = (cls, on, label) =>
@@ -115,7 +147,7 @@ const fieldsBlock = (fields) => {
                 h("input", { class: "pr-f-path", value: f.path || "", placeholder: "json path", title: "dotted/[i] path to the value ('' = response root)" }),
                 trashBtn({ cls: "sv-rmin pr-f-del", dataset: { i }, title: "remove column" })),
             h("div", { class: "pr-row" },
-                sel("pr-f-type", ["text", "number"], f.type || "text", "text keeps the raw value; number coerces (drops non-numeric)"),
+                sel("pr-f-type", PR_FIELD_TYPES, f.type || "text", "text keeps the raw value; number coerces (drops non-numeric)"),
                 chk("pr-f-req", f.required, "required"),
                 chk("pr-f-arr", !!arr, "array")),
             h("div", { class: "pr-row" },
@@ -153,27 +185,24 @@ export function producerParts(pn, cols = [], free = []) {
     // When `source_array` is set, `source_field` instead names a field WITHIN each element of
     // that nested array column (e.g. `mod` inside each build row's `slots` list).
     const nf = pn.source_field || "name";
-    const nfOpts = [...new Set([nf, ...cols])].map((c) => h("option", { selected: c === nf }, c === nf ? `<${c}>` : c));
     // Output identity column (per-item, non-explode only): diverges from "name by" when the
     // source view hides the dataset's own key under a different name (e.g. a distinct-by view
     // exposes `item` while the priced dataset keys on `name`) — "" falls back to "name by".
     const idf = pn.identity_field || "";
-    const idOpts = [h("option", { value: "", selected: idf === "" }, `<${nf}>`),
-        ...[...new Set([idf, ...cols].filter(Boolean))].map((c) => h("option", { value: c, selected: c === idf }, c))];
     const keyFld = hasSrc
         ? frag(labCell("name by", "which source column names the item (fed to the URL / catalogue) — or, with 'array field' set, a field WITHIN each element of that nested array"),
-            h("select", { class: "enr-keyfld-sel" }, nfOpts),
+            h("button", { class: "enr-keyfld-sel rich-dd-btn", type: "button" }, `<${nf}>`),
             labCell("array field", "optional: a NESTED array column to read source items from instead — every element's 'name by' field, deduped across every row (e.g. a build's 'slots' -> the distinct mod ids used)"),
             h("input", { class: "pr-srcarray", value: pn.source_array || "", placeholder: "blank = source_field is a top-level column" }),
             ...(!isExplode ? [
                 labCell("identity col", "output column the fetched item's identity is written under — must match the dataset's key / what consumers join on. Blank = same as 'name by'. Set this when the source names the item differently than the dataset's own key field."),
-                h("select", { class: "pr-identity" }, idOpts),
+                h("button", { class: "pr-identity rich-dd-btn", type: "button" }, idf === "" ? `<${nf}>` : `<${idf}>`),
             ] : []))
         : null;
     // per-item-only knobs (how {key} is built, which sources feed it) — irrelevant in list mode.
     const perItem = isList ? [] : [
         labCell("key", "how {key} is built from the item name"),
-        sel("pr-keytransform", ["none", "lowercase", "slugify", "catalogue"], spec.key_transform || "slugify",
+        sel("pr-keytransform", KEY_TRANSFORMS, spec.key_transform || "slugify",
             "transform each source name into the {key} the URL substitutes"),
         labCell("encode", "percent-encode the substituted {key}"),
         chkBare("pr-keyencode", spec.key_encode !== false, "percent-encode the substituted {key}"),
@@ -189,8 +218,8 @@ export function producerParts(pn, cols = [], free = []) {
         labCell("label", "status label only (no behaviour) — shown in progress copy"),
         h("input", { class: "pr-mode", value: pn.mode || "", placeholder: "e.g. orders", title: "status label only (no behaviour)" }),
         labCell("on new fire", "if fired again while this sweep is still running: drop = ignore; latest = run only the newest pending batch after; queue = run every pending batch in order"),
-        sel("pr-queuemode", ["drop", "latest", "queue"], pn.queue_mode || "drop", "what to do when fired while already sweeping"),
-        labCell("method", "HTTP method"), sel("pr-method", ["GET", "POST"], req.method || "GET", "HTTP method"),
+        sel("pr-queuemode", QUEUE_MODES, pn.queue_mode || "drop", "what to do when fired while already sweeping"),
+        labCell("method", "HTTP method"), sel("pr-method", HTTP_METHODS, req.method || "GET", "HTTP method"),
         labCell("url", isList ? "the URL fetched once (no {name}/{key} in list mode)" : "{name} = raw item name, {key} = transformed key"),
         h("input", { class: "pr-url", value: req.url || "", placeholder: "https://…/{key}", title: "request URL; templates {name}/{key} in per-item mode" }),
         labAdd("headers", "request headers", "pr-h-add", "add header", true), mapBlock("headers", req.headers),

@@ -424,7 +424,7 @@
 .insp-intlbl { display: flex; align-items: center; gap: 3px; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
 .insp-intlbl input { margin: 0; }
 .insp-send { flex: none; }
-.insp-type { font-size: var(--fs-xs); }
+.insp-type { font-size: var(--fs-xs); width: auto; }
 .insp-acts { display: flex; flex-wrap: wrap; gap: 6px; }
 .insp-act { flex: 1; min-width: 72px; }
 .insp-dsbar { display: flex; }
