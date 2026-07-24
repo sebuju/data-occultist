@@ -1,8 +1,7 @@
-// e2e: an on_register trigger (and action) must list a register's PROCESS-fed keys, not just its
-// readout keys — the single-truth model.registerKeys(id) SSOT. And deleting a watched register must
-// drop it out of every trigger body (watch chip + free select) live, no reload.
-//   bug 2: trigger "+ key" dropdown was empty for a process-fed register (readout-only filter).
-//   bug 1: watch select stale after register removal (regression-locked here).
+// e2e: a watched register must drop out of every trigger body (watch chip + free add-list) live
+// when deleted, no reload — regression lock for a stale-select bug.
+// (This spec used to also cover a trigger "+ key" condition dropdown, but that feature is gone:
+// fire conditions are wired GATE nodes now, not an inline per-key select — see trigger_node.js.)
 //
 // Run:  node tests/e2e/register-process-keys.mjs   (server must be up: data-occultist serve)
 import { chromium } from "playwright";
@@ -51,18 +50,22 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
     }, setup.winId);
     ok(!!ids.pid && !!ids.reg && !!ids.tid, `built readout=${ids.readoutId} process=${ids.pid} register=${ids.reg} trigger=${ids.tid}`);
 
-    // --- bug 2: the trigger's "+ key" condition dropdown lists the process output key ---
-    const condSel = `#gnodes [data-id="trigger:${ids.tid}"] select.tg-addcond`;
-    await page.waitForSelector(condSel, { timeout: 5000 });
-    const keyOpts = await page.$$eval(`${condSel} option`, (os) => os.map((o) => o.value).filter(Boolean));
-    console.log(`   trigger + key options: ${JSON.stringify(keyOpts)}`);
-    ok(keyOpts.includes("procKey"), "🔍 process output key 'procKey' appears in the on_register trigger's + key dropdown (bug 2)");
-
-    // the register node itself scaffolds the same key (parity with the SSOT it now shares).
+    // the register still scaffolds a process-fed key (parity with the registerKeys SSOT it shares).
     const regKeys = await page.evaluate((reg) => window.__t.model.registerKeys(reg), ids.reg);
     ok(regKeys.includes("procKey"), `model.registerKeys('${ids.reg}') = ${JSON.stringify(regKeys)} includes the process key`);
 
-    // --- bug 1: the watched register shows as a chip; deleting it drops the chip + any select option ---
+    // the watch-register add control is a sourcesInput "+" trigger (input.tg-addregwatch) that
+    // opens a searchable combo popover -- scrape its live free-list the same way as reg-addsrc.
+    const watchTriggerSel = `#gnodes [data-id="trigger:${ids.tid}"] input.tg-addregwatch`;
+    const readWatchOptions = async () => {
+        await page.click(watchTriggerSel);
+        await page.waitForSelector(".sv-combo-pop", { timeout: 5000 });
+        const vals = await page.$$eval(".sv-combo-opt", (os) => os.map((o) => o.title));
+        await page.keyboard.press("Escape");
+        return vals;
+    };
+
+    // --- bug 1: the watched register shows as a chip; deleting it drops the chip + any add option ---
     const chipSel = `#gnodes [data-id="trigger:${ids.tid}"] .sv-input[data-node="register:${ids.reg}"]`;
     const hadChip = await page.$$eval(chipSel, (c) => c.length);
     ok(hadChip >= 1, `watched register shows as a watch chip on the trigger (found ${hadChip})`);
@@ -75,8 +78,8 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
 
     const chipAfter = await page.$$eval(chipSel, (c) => c.length).catch(() => 0);
     ok(chipAfter === 0, "🔍 deleting the register drops its watch chip from the trigger live (bug 1)");
-    const watchOpts = await page.$$eval(`#gnodes [data-id="trigger:${ids.tid}"] select.tg-addregwatch option`, (os) => os.map((o) => o.value).filter(Boolean)).catch(() => []);
-    ok(!watchOpts.includes(ids.reg), `deleted register is gone from the + watch register select too (opts=${JSON.stringify(watchOpts)})`);
+    const watchOpts = await readWatchOptions().catch(() => []);
+    ok(!watchOpts.includes(ids.reg), `deleted register is gone from the + watch register add-list too (opts=${JSON.stringify(watchOpts)})`);
 
     // cleanup the trigger + process + readout so a re-run starts clean.
     await page.evaluate((a) => {

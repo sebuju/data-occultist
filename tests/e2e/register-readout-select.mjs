@@ -40,10 +40,19 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
     });
     ok(!!regId, `register node created (id=${regId})`);
 
-    // Sanity: the add-select should exist and NOT yet contain a readout we haven't made yet.
-    const selSel = `#gnodes [data-id="register:${regId}"] select.reg-addsrc`;
-    await page.waitForSelector(selSel, { timeout: 5000 });
-    const optsBefore = await page.$$eval(`${selSel} option`, (os) => os.map((o) => o.value));
+    // The add control is now a sourcesInput "+" trigger (input.reg-addsrc) that opens a searchable
+    // combo popover on click -- read its live free-list by opening it and scraping .sv-combo-opt
+    // rows (title attr carries the option value), then close it back down.
+    const triggerSel = `#gnodes [data-id="register:${regId}"] input.reg-addsrc`;
+    await page.waitForSelector(triggerSel, { timeout: 5000 });
+    const readComboOptions = async () => {
+        await page.click(triggerSel);
+        await page.waitForSelector(".sv-combo-pop", { timeout: 5000 });
+        const vals = await page.$$eval(".sv-combo-opt", (os) => os.map((o) => o.title));
+        await page.keyboard.press("Escape");
+        return vals;
+    };
+    const optsBefore = await readComboOptions();
     console.log(`   register's add-select options before: ${JSON.stringify(optsBefore)}`);
 
     // 2) Create a NEW readout on an existing window, exactly like imaging.js's draw-readout path:
@@ -59,8 +68,8 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
     }, setup.winId);
     ok(!!readoutId, `new readout created on window "${setup.winId}" (id=${readoutId})`);
 
-    // 3) Without any reload, the ALREADY-OPEN register's select must now list the new readout.
-    const optsAfter = await page.$$eval(`${selSel} option`, (os) => os.map((o) => o.value));
+    // 3) Without any reload, the ALREADY-OPEN register's add popover must now list the new readout.
+    const optsAfter = await readComboOptions();
     console.log(`   register's add-select options after:  ${JSON.stringify(optsAfter)}`);
     ok(optsAfter.includes(`readout:${readoutId}`), `new readout "${readoutId}" appears in the OPEN register's + readout select without reload`);
 
@@ -71,7 +80,7 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
         model.addRegisterSource(a.regId, `readout:${a.readoutId}`);
         rebuildNode(`register:${a.regId}`);
     }, { regId, readoutId });
-    const optsWired = await page.$$eval(`${selSel} option`, (os) => os.map((o) => o.value));
+    const optsWired = await readComboOptions();
     ok(!optsWired.includes(`readout:${readoutId}`), "wiring the readout as a source removes it from the free-options list");
     const chipSel = `#gnodes [data-id="register:${regId}"] .sv-input`;
     const chipCount = await page.$$eval(chipSel, (c) => c.length).catch(() => 0);
@@ -84,7 +93,7 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
         render();
         rebuildNode(`win:${a.winId}`);
     }, { regId, readoutId, winId: setup.winId });
-    const optsFinal = await page.$$eval(`${selSel} option`, (os) => os.map((o) => o.value));
+    const optsFinal = await readComboOptions();
     ok(!optsFinal.includes(`readout:${readoutId}`), "🔍 deleting the readout drops it from the register's select live too (not just missing, actually gone)");
 
     if (pageErrs.length) { console.log("\npage errors:"); pageErrs.forEach((e) => console.log("   " + e)); }
