@@ -16,7 +16,7 @@ import {
     $, setStatus, model, pos, nodeEls, collapsed, view, selected, nodeSizes, openImages,
     imageCanvases, boot, nextFrame, flushBoot,
 } from "./state.js";
-import { drawEdges } from "./routing.js";
+import { drawEdges, seedRouteCache } from "./routing.js";
 import { applyView, MIN_ZOOM } from "./camera.js";
 import { floatWins } from "./floatwin.js";
 import { clearGuides } from "./guides.js";
@@ -231,7 +231,7 @@ export async function loadGame(name, { discard = false } = {}) {
         });
         return;
     }
-    const { profile, local, migrated } = opened;
+    const { profile, local, routes, migrated } = opened;
     done();
     nodeTxn.abandon();   // a pending edit belongs to the OUTGOING profile's objects — drop it, don't carry it across
     model.load(profile);
@@ -244,6 +244,7 @@ export async function loadGame(name, { discard = false } = {}) {
     clearGuides();          // wipe alignment guides drawn against the outgoing game's nodes
     hydrateLayout();        // restore node positions/sizes/collapse/open-images from the profile
     applyLocal(local);      // restore canvas zoom/pan + minimap from the per-device sidecar
+    seedRouteCache(routes); // pre-load last boot's routed lines so render() below paints them straight away, not the provisional elbow
     // Prefetch every node's data in ONE request before building the nodes, so each node renders
     // from `_bootDetails` instead of firing its own fetch (and a dataset feeding many views is
     // fetched once, not once per consumer). Best-effort: on failure nodes fall back to per-node fetch.

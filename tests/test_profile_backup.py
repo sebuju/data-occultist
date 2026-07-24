@@ -12,9 +12,11 @@ from oc.profile import (
     backup_meta,
     list_backups,
     load_graph_local,
+    load_graph_routes,
     load_profile,
     restore_backup,
     save_graph_local,
+    save_graph_routes,
     save_profile,
 )
 from oc.profile.loader import (
@@ -199,6 +201,17 @@ def test_graph_local_roundtrip_and_missing(tmp_path):
     assert load_graph_local(d, "g") == {}              # missing -> {}
     save_graph_local(d, "g", {"view": {"zoom": 2}, "minimap": {"visible": True}})
     assert load_graph_local(d, "g")["view"]["zoom"] == 2
+
+
+# ---- routed-line cache sidecar ----------------------------------------------------
+
+def test_graph_routes_roundtrip_and_missing(tmp_path):
+    d = _profiles_dir(tmp_path)
+    assert load_graph_routes(d, "g") == {}             # missing -> {}
+    save_graph_routes(d, "g", {"ver": 1, "sig": "abc", "routes": {"a b": {"pts": [[0, 0], [10, 0]]}}})
+    loaded = load_graph_routes(d, "g")
+    assert loaded["sig"] == "abc"
+    assert loaded["routes"]["a b"]["pts"] == [[0, 0], [10, 0]]
 
 
 # ---- restore ---------------------------------------------------------------------

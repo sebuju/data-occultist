@@ -224,6 +224,17 @@ export const graphLocal = {
     }).then((r) => ok(r, "graphlocal save")).then((r) => r.json()),   // reject on HTTP error too — persist.js flushLocal logs it
 };
 
+// The routed-wire cache ({ver,sig,routes}), a purely-derived gitignored sidecar — never
+// authored, safe to lose, only ever busts and regenerates. Used only by routing.js, to
+// paint the FINAL routed lines on the very first boot frame instead of the provisional
+// elbow + a worker A* round-trip. Mirrors graphLocal above.
+export const graphRoutes = {
+    get: (name) => tfetch(`/api/profiles/${encodeURIComponent(name)}/graphroutes`).then((r) => (r.ok ? r.json() : {})).catch(() => ({})),
+    put: (name, state) => tfetch(`/api/profiles/${encodeURIComponent(name)}/graphroutes`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state),
+    }).then((r) => ok(r, "graphroutes save")).then((r) => r.json()).catch(() => {}),   // best-effort — never worth surfacing
+};
+
 // Versioned profile backups: list snapshots (meta only), fetch one's full profile,
 // or restore one (which re-saves it live and snapshots the current state first).
 export const backups = {

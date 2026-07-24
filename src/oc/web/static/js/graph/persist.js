@@ -27,9 +27,11 @@ let recordLayoutHistory = null; // () => same, but DEBOUNCED (keyboard-nudge bur
 let flushHistory = null;      // () => commit any pending debounced push now (game switch / before an immediate push)
 let onConflict = null;        // (payload, wasContent) => show the stale-tab conflict modal
 
-let tProfile = null, tLocal = null;
+let tProfile = null, tLocal = null, tRoutes = null;
 let pendingContent = false;
+let pendingRoutes = null;   // latest {ver,sig,routes} payload from routing.js, or null
 const DEBOUNCE = 400;
+const ROUTES_DEBOUNCE = 2000;   // routing settles in bursts (drag, resize) — save the QUIET state, not every tick
 
 // Pretty Studio injects a "scrub" here: before each save it temporarily restores any
 // pretty-dirty node-input paths to their authored value (and returns an undo), so transient
@@ -120,6 +122,17 @@ async function flushLocal() {
     try { await api.graphLocal.put(M.profile.name, collectLocal()); } catch (e) { log(`layout save failed: ${e.message || e}`, "warn"); }   // sidecar is best-effort
 }
 
+// The routed-wire cache: purely derived, never worth an undo entry or a conflict check —
+// just best-effort, so the NEXT boot can paint final lines instantly instead of routing
+// from scratch behind the veil. routing.js hands over the payload; this only debounces +
+// PUTs it (api.graphRoutes.put already swallows its own errors).
+async function flushRoutes() {
+    tRoutes = null;
+    if (!M?.profile?.name || !pendingRoutes) return;
+    const payload = pendingRoutes; pendingRoutes = null;
+    await api.graphRoutes.put(M.profile.name, payload);
+}
+
 export const persist = {
     // A configuration edit: debounced profile save; fires onContentSaved on success.
     // Records an undo snapshot HERE — not in the callers — so every content edit is undoable
@@ -135,6 +148,9 @@ export const persist = {
     layout(opts) { (opts?.coalesce ? recordLayoutHistory : recordHistory)?.(); scheduleProfile(false); },
     // Viewport/minimap change: debounced sidecar save.
     local() { clearTimeout(tLocal); tLocal = setTimeout(flushLocal, DEBOUNCE); },
+    // A fresh routed-wire cache from routing.js (post-A*): debounced sidecar save, so a
+    // burst of re-routes (drag settle, several resizes) writes once, not per pass.
+    routes(payload) { pendingRoutes = payload; clearTimeout(tRoutes); tRoutes = setTimeout(flushRoutes, ROUTES_DEBOUNCE); },
 
     // Force any pending saves out immediately (e.g. before switching games).
     async flush() {
@@ -142,6 +158,7 @@ export const persist = {
         if (bootArmed) { bootArmed = false; await flushProfile(); }
         if (tProfile) { clearTimeout(tProfile); await flushProfile(); }
         if (tLocal) { clearTimeout(tLocal); await flushLocal(); }
+        if (tRoutes) { clearTimeout(tRoutes); await flushRoutes(); }
     },
 
     // The conflict modal's "overwrite server" action: force the save through regardless
@@ -156,18 +173,19 @@ export const persist = {
     // WITHOUT flushing it — flushing here would just resubmit the stale edit and
     // immediately re-trigger the same 409. The caller then reloads the profile fresh.
     discardPending() {
-        clearTimeout(tProfile); clearTimeout(tLocal);
-        tProfile = null; tLocal = null;
-        pendingContent = false;
+        clearTimeout(tProfile); clearTimeout(tLocal); clearTimeout(tRoutes);
+        tProfile = null; tLocal = null; tRoutes = null;
+        pendingContent = false; pendingRoutes = null;
         bootArmed = false;
     },
 
-    // Load a game's profile + viewport sidecar, migrating any legacy localStorage once.
-    // Returns { profile, local, migrated }; main.js does model.load + hydrate.
+    // Load a game's profile + viewport sidecar + routed-wire cache, migrating any legacy
+    // localStorage once. Returns { profile, local, routes, migrated }; main.js does
+    // model.load + hydrate, then seeds routing.js's cache from `routes` before the first render.
     async open(name) {
-        const [profile, local] = await Promise.all([api.getProfile(name), api.graphLocal.get(name)]);
+        const [profile, local, routes] = await Promise.all([api.getProfile(name), api.graphLocal.get(name), api.graphRoutes.get(name)]);
         const migrated = migrateLegacy(name, profile, local);
-        return { profile, local, migrated };
+        return { profile, local, routes, migrated };
     },
 };
 

@@ -20,7 +20,7 @@
 // routing.js's contract (see ROUTE.router in routing.js).
 
 import { simplify } from "./route.js";
-import { faceKeep, FACE_OUT } from "./faces.js";
+import { faceKeep, FACE_OUT, MIN_FACING_SPAN } from "./faces.js";
 import { makeHeap } from "./minheap.js";
 
 const EPS = 0.6;
@@ -54,15 +54,21 @@ function facingGeom(a, b, nodeRects) {
     // carries the short-face guard so a narrow overlap can't invert. The line-of-sight test below
     // stays on the RAW band: what the port may not do is not what the gap must be clear of.
     const band = (lo, hi) => { const k = faceKeep(hi - lo); return { bandLo: lo + k, bandHi: hi - k }; };
+    // A pair whose facing span is too narrow to fit MIN_FACING_SPAN can never clear a rounded
+    // corner at both ends (see faces.js) — not a straight shot, fall through to the bus network.
     if (a.y < by1 && b.y < ay1) {                            // y overlap -> horizontal shot (band in Y)
         const yo0 = Math.max(a.y, b.y), yo1 = Math.min(ay1, by1);
-        if (ax1 <= b.x && !anyNodeIn(nodeRects, ax1, yo0, b.x, yo1)) return { axis: "h", ...band(yo0, yo1), p0: ax1, p1: b.x, d1: "R", d2: "L" };
-        if (bx1 <= a.x && !anyNodeIn(nodeRects, bx1, yo0, a.x, yo1)) return { axis: "h", ...band(yo0, yo1), p0: a.x, p1: bx1, d1: "L", d2: "R" };
+        if (yo1 - yo0 >= MIN_FACING_SPAN) {
+            if (ax1 <= b.x && !anyNodeIn(nodeRects, ax1, yo0, b.x, yo1)) return { axis: "h", ...band(yo0, yo1), p0: ax1, p1: b.x, d1: "R", d2: "L" };
+            if (bx1 <= a.x && !anyNodeIn(nodeRects, bx1, yo0, a.x, yo1)) return { axis: "h", ...band(yo0, yo1), p0: a.x, p1: bx1, d1: "L", d2: "R" };
+        }
     }
     if (a.x < bx1 && b.x < ax1) {                            // x overlap -> vertical shot (band in X)
         const xo0 = Math.max(a.x, b.x), xo1 = Math.min(ax1, bx1);
-        if (ay1 <= b.y && !anyNodeIn(nodeRects, xo0, ay1, xo1, b.y)) return { axis: "v", ...band(xo0, xo1), p0: ay1, p1: b.y, d1: "B", d2: "T" };
-        if (by1 <= a.y && !anyNodeIn(nodeRects, xo0, by1, xo1, a.y)) return { axis: "v", ...band(xo0, xo1), p0: a.y, p1: by1, d1: "T", d2: "B" };
+        if (xo1 - xo0 >= MIN_FACING_SPAN) {
+            if (ay1 <= b.y && !anyNodeIn(nodeRects, xo0, ay1, xo1, b.y)) return { axis: "v", ...band(xo0, xo1), p0: ay1, p1: b.y, d1: "B", d2: "T" };
+            if (by1 <= a.y && !anyNodeIn(nodeRects, xo0, by1, xo1, a.y)) return { axis: "v", ...band(xo0, xo1), p0: a.y, p1: by1, d1: "T", d2: "B" };
+        }
     }
     return null;
 }

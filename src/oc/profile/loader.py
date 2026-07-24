@@ -685,3 +685,30 @@ def save_graph_local(profiles_dir: Path | str, name: str, state: dict) -> Path:
     path = graph_local_path(profiles_dir, name)
     _atomic_write_text(path, json.dumps(state, indent=0))
     return path
+
+
+# ---- routed-line cache (gitignored sidecar, purely derived/regenerable) ----------
+
+def graph_routes_path(profiles_dir: Path | str, name: str) -> Path:
+    return Path(profiles_dir) / ".local" / f"{name}.routes.json"
+
+
+def load_graph_routes(profiles_dir: Path | str, name: str) -> dict:
+    """The routed-wire cache for a profile ({ver, sig, routes}), or ``{}`` if
+    none/unreadable. Purely a boot-paint speedup — the client re-derives everything
+    from scratch (and overwrites this) whenever the cached sig doesn't match the
+    live layout, so a stale/corrupt file is never trusted blindly."""
+    path = graph_routes_path(profiles_dir, name)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_graph_routes(profiles_dir: Path | str, name: str, state: dict) -> Path:
+    path = graph_routes_path(profiles_dir, name)
+    _atomic_write_text(path, json.dumps(state, indent=0))
+    return path

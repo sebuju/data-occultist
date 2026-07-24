@@ -16,7 +16,7 @@
 // is genuinely cheaper (a small stickiness bias), so a tiny node move can't flip a route's whole
 // shape across a cost-equality threshold.
 
-import { FACE_OUT, insetEndpoint, faceKeep, PORT_MIN } from "./faces.js";
+import { FACE_OUT, insetEndpoint, faceKeep, PORT_MIN, MIN_FACING_SPAN } from "./faces.js";
 
 const C = {
     clearance: 22,   // routing margin around each node => gutter width for waypoints
@@ -468,18 +468,29 @@ export function routeGraph(nodes, groups, edges, opts = {}) {
     // Returns the facing FACES {src,dst} when the two nodes truly face with a clear gap between (a direct
     // connector), else null. The sides are PINNED below so a facing line leaves/enters the facing faces
     // and A* draws the straight/L directly, instead of the super-source picking odd sides and doglegging.
+    // A facing span narrower than MIN_FACING_SPAN can't clear a rounded corner at both ends
+    // (faces.js) — not a straight shot, falls through to the normal A* search instead. The chosen
+    // `coord` is clamped by faceKeep the same way busroute.js's `band()` insets its port, so both
+    // straight-shot detectors place an endpoint identically off the corner.
+    const facingCoord = (lo, hi) => { const k = faceKeep(hi - lo); return Math.max(lo + k, Math.min(hi - k, (lo + hi) / 2)); };
     const facingLine = (ln) => {
         if (ln.fromGate || ln.toGate) return null;
         const a = byId.get(ln.from), b = byId.get(ln.to); if (!a || !b) return null;
         if (a.y < b.y + b.h && b.y < a.y + a.h) {   // y overlap -> horizontally facing? straight line at coord y
-            const yo0 = Math.max(a.y, b.y), yo1 = Math.min(a.y + a.h, b.y + b.h), coord = (yo0 + yo1) / 2;
-            if (a.x + a.w <= b.x && !anyNodeIn(a.x + a.w, yo0, b.x, yo1)) return { horiz: true, src: "R", dst: "L", p0: a.x + a.w, p1: b.x, coord, lo: yo0, hi: yo1 };
-            if (b.x + b.w <= a.x && !anyNodeIn(b.x + b.w, yo0, a.x, yo1)) return { horiz: true, src: "L", dst: "R", p0: a.x, p1: b.x + b.w, coord, lo: yo0, hi: yo1 };
+            const yo0 = Math.max(a.y, b.y), yo1 = Math.min(a.y + a.h, b.y + b.h);
+            if (yo1 - yo0 >= MIN_FACING_SPAN) {
+                const coord = facingCoord(yo0, yo1);
+                if (a.x + a.w <= b.x && !anyNodeIn(a.x + a.w, yo0, b.x, yo1)) return { horiz: true, src: "R", dst: "L", p0: a.x + a.w, p1: b.x, coord, lo: yo0, hi: yo1 };
+                if (b.x + b.w <= a.x && !anyNodeIn(b.x + b.w, yo0, a.x, yo1)) return { horiz: true, src: "L", dst: "R", p0: a.x, p1: b.x + b.w, coord, lo: yo0, hi: yo1 };
+            }
         }
         if (a.x < b.x + b.w && b.x < a.x + a.w) {   // x overlap -> vertically facing? straight line at coord x
-            const xo0 = Math.max(a.x, b.x), xo1 = Math.min(a.x + a.w, b.x + b.w), coord = (xo0 + xo1) / 2;
-            if (a.y + a.h <= b.y && !anyNodeIn(xo0, a.y + a.h, xo1, b.y)) return { horiz: false, src: "B", dst: "T", p0: a.y + a.h, p1: b.y, coord, lo: xo0, hi: xo1 };
-            if (b.y + b.h <= a.y && !anyNodeIn(xo0, b.y + b.h, xo1, a.y)) return { horiz: false, src: "T", dst: "B", p0: a.y, p1: b.y + b.h, coord, lo: xo0, hi: xo1 };
+            const xo0 = Math.max(a.x, b.x), xo1 = Math.min(a.x + a.w, b.x + b.w);
+            if (xo1 - xo0 >= MIN_FACING_SPAN) {
+                const coord = facingCoord(xo0, xo1);
+                if (a.y + a.h <= b.y && !anyNodeIn(xo0, a.y + a.h, xo1, b.y)) return { horiz: false, src: "B", dst: "T", p0: a.y + a.h, p1: b.y, coord, lo: xo0, hi: xo1 };
+                if (b.y + b.h <= a.y && !anyNodeIn(xo0, b.y + b.h, xo1, a.y)) return { horiz: false, src: "T", dst: "B", p0: a.y, p1: b.y + b.h, coord, lo: xo0, hi: xo1 };
+            }
         }
         return null;
     };

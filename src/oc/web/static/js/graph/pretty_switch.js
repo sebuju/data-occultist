@@ -7,6 +7,7 @@ import { floatWins } from "./floatwin.js";
 import { stopAllForgePreview } from "./sound_wire.js";
 import * as prettyOverrides from "../pretty/overrides.js";
 import { armConfirm } from "./main.js";
+import { drawEdges } from "./routing.js";
 
 let prettyActive = false;
 let _pretty = null;
@@ -44,6 +45,11 @@ export async function setPrettyView(on) {
     } else {
         if (_pretty) _pretty.deactivatePretty();   // pretty tools go out
         setNodePanelsHidden(false);                // node tools come back as they were
+        // #graph is visible again as of the class toggle above, so nw()/nh() (state.js) now read
+        // real offsetWidth/offsetHeight instead of the "hidden" fallback. Routing was suppressed
+        // the whole time #graph was display:none (routing.js scheduleRouting); force the one
+        // correctly-measured pass now — cheap (a no-op sig match) when nothing actually changed.
+        drawEdges();
     }
 }
 $("vtNode")?.addEventListener("click", () => setPrettyView(false));

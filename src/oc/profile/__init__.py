@@ -16,6 +16,7 @@ from .loader import (
     list_dictionaries,
     list_profiles,
     load_graph_local,
+    load_graph_routes,
     load_profile,
     profile_signature,
     profile_write_lock,
@@ -23,6 +24,7 @@ from .loader import (
     read_dictionary,
     restore_backup,
     save_graph_local,
+    save_graph_routes,
     save_profile,
     structural_yaml,
 )
@@ -43,6 +45,7 @@ __all__ = [
     "list_dictionaries",
     "list_profiles",
     "load_graph_local",
+    "load_graph_routes",
     "load_profile",
     "profile_signature",
     "profile_write_lock",
@@ -50,6 +53,7 @@ __all__ = [
     "read_dictionary",
     "restore_backup",
     "save_graph_local",
+    "save_graph_routes",
     "save_profile",
     "structural_yaml",
 ]

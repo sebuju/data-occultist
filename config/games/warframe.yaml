@@ -7434,7 +7434,7 @@ layout:
       x: -2080.0
       y: -4340.0
       w: 300.0
-      h: 400.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true
@@ -7652,7 +7652,7 @@ layout:
       x: -3560.0
       y: -4340.0
       w: 420.0
-      h: 400.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true
@@ -7672,7 +7672,7 @@ layout:
       x: -2820.0
       y: -4340.0
       w: 420.0
-      h: 400.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true
@@ -7692,7 +7692,7 @@ layout:
       x: -3560.0
       y: -3860.0
       w: 420.0
-      h: 400.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true
@@ -7700,7 +7700,7 @@ layout:
       softH: true
     ro:live_game_window:value_ab_4:
       x: -3100.0
-      y: -3840.0
+      y: -3860.0
       w: 240.0
       h: 380.0
       collapsed: false
@@ -7712,7 +7712,7 @@ layout:
       x: -2820.0
       y: -3860.0
       w: 420.0
-      h: 400.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true

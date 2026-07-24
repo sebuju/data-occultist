@@ -44,3 +44,11 @@ export const PORT_END_KEEP = 18; // min distance an endpoint stays off a node co
 // band never inverts (a 20px face would otherwise want 18px of keep at each end). Shared by every
 // endpoint placer — route.js fans/clamps, busroute.js straight shots — so no path is left unclamped.
 export const faceKeep = (span) => Math.min(PORT_END_KEEP, Math.max(0, (span - PORT_MIN) / 2));
+
+// The facing-span a straight-shot pair needs to clear a corner at BOTH ends: the span at which
+// faceKeep() first reaches its full PORT_END_KEEP (> the 14px corner radius). Below this, a
+// straight connector's port would land inside the rounded corner — so a pair whose facing overlap
+// is narrower than this is NOT straight-shottable and must be bus-/A*-routed instead, where the
+// router bends and lands the endpoint on a clean face. Shared by route.js `facingLine` and
+// busroute.js `facingGeom` so neither can admit a corner-docking pair the other rejects.
+export const MIN_FACING_SPAN = PORT_MIN + 2 * PORT_END_KEEP;

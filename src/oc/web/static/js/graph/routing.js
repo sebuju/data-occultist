@@ -14,6 +14,7 @@ import { busRouteGraph } from "./busgraph.js";
 import { gradeRoutes } from "./followable.js";
 import { faceKeep, faceToward, faceMidpoint, faceCss, OPPOSITE_FACE } from "./faces.js";
 import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot, urlFlag, freezeNodeSizes, thawNodeSizes } from "./state.js";
+import { persist } from "./persist.js";
 import { selectedNodeId, wire, startWire, canDisable, nodeTypeOf } from "./main.js";
 import { setEdges, invalidateEdges, setCorridors } from "./edgecanvas.js";
 import { typeColor, grayscale, cssVar } from "./colors.js";
@@ -727,6 +728,48 @@ if (typeof window !== "undefined") {
 
 let routeCache = new Map();     // link key -> { pts:[[x,y]…], sig } (sig = its own deps)
 let routeHash = "";             // global layout signature of the last pass (cheap change gate)
+
+// ---- boot route cache (persisted, gitignored sidecar via persist.routes) -----------------------
+// routeCache/routeHash already survive a pretty<->node view switch for free (both are module-level
+// and nothing on that path touches them). What they DON'T survive is a page reload: every boot
+// re-derives them from a frozen-then-one-shot A* pass (routing.js `boot.phase`), so the first paint
+// is either a provisional elbow or a ~4s worker round-trip under the veil. Persisting the last
+// pass's routes and seeding them back in BEFORE the first drawEdges (game_lifecycle.js loadGame,
+// right after hydrateLayout/applyLocal) lets paintCanvas take the final-line path immediately
+// (routing.js:585 `paintCanvas`, keyed purely by routeCache — no dependency on drawSig/routeHash
+// matching), and — if the layout truly hasn't changed since the save — lets the post-boot
+// scheduleRouting pass no-op entirely (`sig === routeHash`, `runRouting` above): zero A* on boot.
+// Bump on any change to the router algorithm/output shape so a stale cache from an older build
+// never gets trusted even when the geometry sig happens to coincide.
+const ROUTE_CACHE_VER = 1;
+
+// Build the persisted payload from the current routeCache. Coordinates are rounded — this is a
+// paint cache, not the routing source of truth, and it shrinks the sidecar file.
+function serializeRouteCache() {
+    const routes = {};
+    for (const [k, c] of routeCache) {
+        if (!c.pts || c.pts.length < 2) continue;
+        routes[k] = { pts: c.pts.map((p) => [Math.round(p[0]), Math.round(p[1])]), p1: c.p1, d1: c.d1, p2: c.p2, d2: c.d2, via: c.via || null };
+    }
+    return { ver: ROUTE_CACHE_VER, sig: routeHash, routes };
+}
+
+// Seed routeCache/routeHash from a persisted payload — called once, on boot, before the first
+// render()/drawEdges so paintCanvas paints the final lines on frame one. Ignored (silently — a
+// missing/busted cache is normal, e.g. first-ever boot) unless its version matches; a SIG mismatch
+// is deliberately NOT checked here — that comparison happens naturally against the freshly computed
+// `linksSig` the moment routing runs post-boot (`runRouting`'s `sig === routeHash` gate), so a
+// stale seed just gets silently overwritten by the next real pass instead of needing its own guard.
+export function seedRouteCache(payload) {
+    if (!payload || payload.ver !== ROUTE_CACHE_VER || !payload.routes || typeof payload.sig !== "string") return;
+    const m = new Map();
+    for (const [k, r] of Object.entries(payload.routes)) {
+        if (!Array.isArray(r.pts) || r.pts.length < 2) continue;
+        m.set(k, { pts: r.pts, p1: r.p1, d1: r.d1, p2: r.p2, d2: r.d2, via: r.via || null });
+    }
+    routeCache = m;
+    routeHash = payload.sig;
+}
 let gateFaces = new Map();      // "key|gid" -> gate face last frame (hierRoute hysteresis, anti-flicker)
 let hierPassCache = new Map();  // "outer"/"inner:<gid>" -> {sig,res}: memoised sub-pass routes (per-pass cache)
 let routeRaf = null;            // pending requestAnimationFrame handle (one in flight at a time)
@@ -824,6 +867,14 @@ function scheduleRouting() {
                                          // the single clean route runs on settle
     if (routingFrozen) return;           // OCR in progress -> don't re-route (lines would wiggle)
     if (boot.phase) return;              // boot storm -> skip the A*/deCollide rAF hog; one clean pass runs on settle
+    // Pretty view hides #graph via `display:none` (pretty.css), which collapses EVERY node's
+    // offsetWidth/offsetHeight to 0 — nw()/nh() (state.js) then fall back to their "not measured
+    // yet" default (220x80) for every node alike, not its real size. A pass run on that fake
+    // uniform geometry corrupts routeCache with bogus obstacle rects (wrongly-overlapping nodes,
+    // wrong bends) that nothing corrects on return — background refresh loops (hub/dsevents) keep
+    // running and can still trigger drawEdges while pretty is up, even though nothing is visible.
+    // Skip entirely while hidden; pretty_switch.js forces one correctly-measured pass on return.
+    if (document.body.classList.contains("pretty-mode")) return;
     if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
     if (routeRaf) return;                // one recompute already queued for the next frame
     if (routeInflight) return;           // a worker pass is already in flight; its result will re-check drawSig
@@ -843,13 +894,48 @@ function applyRoutes(res) {
     routeHash = pendingSig;
     tweenRoutes = true;   // a fresh route landed -> the next drawEdges animates each changed line into its
                           // new shape (interpolated morph) instead of snapping — feels far less janky
+    persist.routes(serializeRouteCache());   // best-effort, debounced: next boot paints this instantly
     drawEdges();
 }
 
 let pendingSig = "";   // signature of the in-flight (or just-completed inline) routing pass
 
+// Nodes are never SUPPOSED to intersect — it's a layout mistake the user must fix by hand
+// (no auto-move). Two overlapping rects are degenerate input for every router: a buried
+// endpoint, a corridor carve sliced to nothing, A* thrashing before it falls back — heavy
+// CPU for wires that can't route cleanly anyway. So an intersecting node is dropped from the
+// `nodes` list entirely: no obstacle cost, and (since it's no longer in the id->rect map) its
+// own links are silently skipped by every router (busgraph.js `if (!ra||!rb) continue`,
+// route.js `byId.has(...)` guards) — wires vanish along with the node until it's moved clear.
+// Marked with `.node-intersecting` (graph.css) so the user can see and fix it.
+let markedIsx = new Set();   // ids currently ringed — reconciled in place, never rebuilt wholesale
+function intersectingIds(rects) {
+    const isx = new Set();
+    for (let i = 0; i < rects.length; i++) {
+        const a = rects[i].r;
+        for (let j = i + 1; j < rects.length; j++) {
+            const b = rects[j].r;
+            if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) {
+                isx.add(rects[i].id); isx.add(rects[j].id);
+            }
+        }
+    }
+    return isx;
+}
+function markIntersecting(isx) {
+    for (const id of isx) if (!markedIsx.has(id)) nodeEls.get(id)?.classList.add("node-intersecting");
+    for (const id of markedIsx) if (!isx.has(id)) nodeEls.get(id)?.classList.remove("node-intersecting");
+    markedIsx = isx;
+}
+
 function runRouting() {
     routeRaf = null;                     // this frame's pass is running; let drawEdges queue the next one
+    // A pass queued (rAF) just before pretty view opened can still fire after #graph goes
+    // display:none (the class flip and this rAF can land in the same frame) — re-check here too,
+    // not just in scheduleRouting's gate, so a race never routes on the fake-uniform-size geometry
+    // (see scheduleRouting's comment). Bail without clearing routeHash: nothing is stale, the pass
+    // just never happened; pretty_switch.js's return-path drawEdges() will queue a fresh one.
+    if (document.body.classList.contains("pretty-mode")) return;
     const links = buildLinks();          // route the layout as it stands NOW
     const sig = linksSig(links);
     if (sig === routeHash) return;       // nothing moved since the last pass
@@ -857,8 +943,12 @@ function runRouting() {
     // The whole graph is routed in one pass (the engine needs every line together for face-
     // selection + nudging). Obstacles = every node; soft obstacles = groups. Carry each line's
     // last-frame faces in as hysteresis so a tiny move can't flip a route's whole shape.
+    const allRects = [];
+    for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) allRects.push({ id: n.id, r }); }
+    const isx = intersectingIds(allRects);
+    markIntersecting(isx);
     const nodes = [];
-    for (const n of model.nodes()) { const r = nodeRect(n.id); if (r) nodes.push({ id: n.id, x: r.x, y: r.y, w: r.w, h: r.h }); }
+    for (const { id, r } of allRects) { if (isx.has(id)) continue; nodes.push({ id, x: r.x, y: r.y, w: r.w, h: r.h }); }
     // pass the REAL rendered box + title-band height (groupBox uses PAD=40 + titleH, NOT the
     // router's member-bounds guess) so the heading soft/hard rect lands exactly on the banner.
     const boxOf = new Map(groups.groupBoxes().map((b) => [b.id, b]));

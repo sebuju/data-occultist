@@ -17,12 +17,14 @@ from ...profile import (
     list_backups,
     list_profiles,
     load_graph_local,
+    load_graph_routes,
     load_profile,
     profile_signature,
     profile_write_lock,
     read_backup,
     restore_backup,
     save_graph_local,
+    save_graph_routes,
     save_profile,
     structural_yaml,
 )
@@ -166,6 +168,19 @@ def get_graphlocal(name: str, sbx: str | None = Depends(sandbox_flag)):
 @router.put("/{name}/graphlocal")
 def put_graphlocal(name: str, state: dict = Body(...), sbx: str | None = Depends(sandbox_flag)):
     save_graph_local(_pdir(sbx), name, state)
+    return {"ok": True}
+
+
+# ---- routed-line cache (gitignored sidecar, purely derived/regenerable) ----------
+
+@router.get("/{name}/graphroutes")
+def get_graphroutes(name: str, sbx: str | None = Depends(sandbox_flag)):
+    return load_graph_routes(_pdir(sbx), name)
+
+
+@router.put("/{name}/graphroutes")
+def put_graphroutes(name: str, state: dict = Body(...), sbx: str | None = Depends(sandbox_flag)):
+    save_graph_routes(_pdir(sbx), name, state)
     return {"ok": True}
 
 
