@@ -808,7 +808,7 @@ class PrecaptureSession:
                 auto = self._autoscroll.is_set()
                 # Park at the top once, the first time we reach an auto-scroll window on top — so
                 # capture always starts from row 0 (the user may have opened it mid-list).
-                if not homed and auto and fg and wd is not None and wd.scroll is not None:
+                if not homed and auto and wd is not None and wd.scroll is not None:
                     self._home_to_top(win, wd)
                     homed = True
                     pos_ref = None
@@ -818,7 +818,7 @@ class PrecaptureSession:
                 # scrollbar thumb decides progress: nudged even a hair, keep going; didn't move at
                 # all, that's the end (or a dead scroll) -> park at the top and pause.
                 has_bar = wd is not None and wd.scroll is not None and wd.scroll.scrollbar is not None
-                if auto and fg and has_bar:
+                if auto and has_bar:
                     # TIME-BASED step-and-shoot. Scroll -> wait -> capture -> save, one frame per tick,
                     # unconditionally (no dedup). Each next scroll is timed a full `interval` from the
                     # ACTUAL fire time of the PREVIOUS scroll — NOT a fixed grid. So a scroll can only
@@ -872,9 +872,10 @@ class PrecaptureSession:
                         except Exception:
                             fg = True
                         # window changed under us (a popup / navigated away) -> back to the outer loop
-                        # to re-classify. Cheap: detsig runs on the frame we ALREADY captured.
-                        left = (not fg) or (detsig.changed(detsig.features(f, self._detect_fracs),
-                                                            scroll_feat) or 0) >= detsig.MIN_CELLS
+                        # to re-classify. Cheap: detsig runs on the frame we ALREADY captured. Being
+                        # backgrounded is NOT "left" — recording (and scrolling) runs fine off-screen.
+                        left = (detsig.changed(detsig.features(f, self._detect_fracs),
+                                                scroll_feat) or 0) >= detsig.MIN_CELLS
                         if left:
                             break
                         # The thumb LAGS a step from the top, so a single no-move is render lag, not the
@@ -903,7 +904,7 @@ class PrecaptureSession:
                         kept = True
                         saved_thumb = thumb
                 scrolled = False
-                if auto and fg and kept:                       # one nudge per kept frame
+                if auto and kept:                              # one nudge per kept frame
                     scrolled = scroll_window(win, self._scroll_clicks)
                 prev_thumb = thumb
                 self._stop.wait(max(interval, 0.03) if (not settled or scrolled) else idle)

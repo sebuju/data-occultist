@@ -79,7 +79,8 @@ def record_start(game: str, max_frames: int = 300, interval_ms: int = 0, label: 
     if auto_process:
         s.batch_device = "gpu" if read_mode() == "auto" else None
     # auto-scroll defaults ON (start_recording seeds it; a classified window can opt out via
-    # ScrollDef.autoscroll). The live knob below flips it during a recording.
+    # ScrollDef.autoscroll). The record loop re-reads the on-screen window's config live, so
+    # navigating between windows during a recording re-picks it up automatically.
     s.start_recording(max_frames=max_frames, interval_ms=interval_ms, label=label,
                       auto_process=auto_process)
     try:   # a precapture recording counts as a capture start -> fire on_capture triggers
@@ -87,15 +88,6 @@ def record_start(game: str, max_frames: int = 300, interval_ms: int = 0, label: 
         fire_capture(game, get_settings())
     except Exception:   # noqa: BLE001 - a lifecycle fire must never break recording
         pass
-    return s.status()
-
-
-@router.post("/{game}/record/autoscroll")
-def record_autoscroll(game: str, on: bool = False, clicks: int | None = None):
-    """Live-toggle the recorder's auto-scroll (and optionally its wheel-notch step). The
-    record loop re-reads both every grab, so this takes effect on the next step."""
-    s = _session(game, create=True)
-    s.set_autoscroll(on, clicks)
     return s.status()
 
 
