@@ -12,6 +12,12 @@ import { GraphModel } from "./model.js";
 export const $ = (id) => document.getElementById(id);
 export const setStatus = (m, level) => log(m, level);   // #status is gone — the log bar shows messages now
 
+// #graph is hidden (pretty_switch.js body.pretty-mode, pretty.css) while Pretty Studio is up.
+// The ONE shared check for "don't do graph-view work right now" — every module that reacts to a
+// live push (routing, groups, …) gates on this instead of rolling its own class check, so nothing
+// new can silently forget it the way most of them already had.
+export const graphHidden = () => document.body.classList.contains("pretty-mode");
+
 // Launch-time URL switches (?debug=1&load=1&routedebug=1 …). Parsed ONCE — the query string cannot
 // change without a reload. Booleans read "0"/"false" as off and anything else (including a bare
 // "?veil" with no value) as on, so a flag can be flipped on by name alone. One implementation, shared

@@ -13,7 +13,7 @@ import { deCollide } from "./decollide.js";
 import { busRouteGraph } from "./busgraph.js";
 import { gradeRoutes } from "./followable.js";
 import { faceKeep, faceToward, faceMidpoint, faceCss, OPPOSITE_FACE } from "./faces.js";
-import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot, urlFlag, freezeNodeSizes, thawNodeSizes } from "./state.js";
+import { $, setStatus, model, nodeEls, pos, nw, nh, selected, boot, urlFlag, freezeNodeSizes, thawNodeSizes, graphHidden } from "./state.js";
 import { persist } from "./persist.js";
 import { selectedNodeId, wire, startWire, canDisable, nodeTypeOf } from "./main.js";
 import { setEdges, invalidateEdges, setCorridors, setObstacles } from "./edgecanvas.js";
@@ -410,6 +410,11 @@ function lineCrossesDragged(pts, aId, bId) {
     return false;
 }
 function drawEdges() {
+    // Central choke point: #graph is invisible (pretty view up) — every live push that would
+    // otherwise land here (gate-state beat, node resize, dataset refresh, …) just no-ops instead
+    // of measuring/painting/routing a view nobody can see. pretty_switch.js forces one real pass
+    // on return, after which measurements are trustworthy again.
+    if (graphHidden()) return;
     const links = buildLinks();
     // a selection dims every UNselected line (grayscale + near-transparent) so the selected node's
     // own lines read at a glance; the canvas renderer bakes the dim into each line's stroke/alpha.
@@ -902,14 +907,9 @@ function scheduleRouting() {
                                          // the single clean route runs on settle
     if (routingFrozen) return;           // OCR in progress -> don't re-route (lines would wiggle)
     if (boot.phase) return;              // boot storm -> skip the A*/deCollide rAF hog; one clean pass runs on settle
-    // Pretty view hides #graph via `display:none` (pretty.css), which collapses EVERY node's
-    // offsetWidth/offsetHeight to 0 — nw()/nh() (state.js) then fall back to their "not measured
-    // yet" default (220x80) for every node alike, not its real size. A pass run on that fake
-    // uniform geometry corrupts routeCache with bogus obstacle rects (wrongly-overlapping nodes,
-    // wrong bends) that nothing corrects on return — background refresh loops (hub/dsevents) keep
-    // running and can still trigger drawEdges while pretty is up, even though nothing is visible.
-    // Skip entirely while hidden; pretty_switch.js forces one correctly-measured pass on return.
-    if (document.body.classList.contains("pretty-mode")) return;
+    // No separate pretty-mode check here: scheduleRouting is only ever called from the tail of
+    // drawEdges() (state.js graphHidden() gate at its top), so this is already unreachable while
+    // #graph is hidden — the central choke point, not a second copy of the same check.
     if (drawSig === routeHash) return;   // routes already current (drawSig set in drawEdges)
     if (routeRaf) return;                // one recompute already queued for the next frame
     if (routeInflight) return;           // a worker pass is already in flight; its result will re-check drawSig
@@ -965,12 +965,12 @@ function markIntersecting(isx) {
 
 function runRouting() {
     routeRaf = null;                     // this frame's pass is running; let drawEdges queue the next one
-    // A pass queued (rAF) just before pretty view opened can still fire after #graph goes
-    // display:none (the class flip and this rAF can land in the same frame) — re-check here too,
-    // not just in scheduleRouting's gate, so a race never routes on the fake-uniform-size geometry
-    // (see scheduleRouting's comment). Bail without clearing routeHash: nothing is stale, the pass
-    // just never happened; pretty_switch.js's return-path drawEdges() will queue a fresh one.
-    if (document.body.classList.contains("pretty-mode")) return;
+    // A pass queued (rAF) just before pretty view opened can still fire after #graph goes hidden
+    // (the class flip and this rAF can land in the same frame) — re-check here too, not just in
+    // drawEdges' gate, so a race never spends a route pass on an invisible view. Bail without
+    // clearing routeHash: nothing is stale, the pass just never happened; pretty_switch.js's
+    // return-path drawEdges() will queue a fresh one.
+    if (graphHidden()) return;
     const links = buildLinks();          // route the layout as it stands NOW
     const sig = linksSig(links);
     if (sig === routeHash) return;       // nothing moved since the last pass

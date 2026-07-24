@@ -8,6 +8,7 @@ import { stopAllForgePreview } from "./sound_wire.js";
 import * as prettyOverrides from "../pretty/overrides.js";
 import { armConfirm } from "./main.js";
 import { drawEdges } from "./routing.js";
+import { renderGroups } from "./groups.js";
 
 let prettyActive = false;
 let _pretty = null;
@@ -45,10 +46,15 @@ export async function setPrettyView(on) {
     } else {
         if (_pretty) _pretty.deactivatePretty();   // pretty tools go out
         setNodePanelsHidden(false);                // node tools come back as they were
-        // #graph is visible again as of the class toggle above, so nw()/nh() (state.js) now read
-        // real offsetWidth/offsetHeight instead of the "hidden" fallback. Routing was suppressed
-        // the whole time #graph was display:none (routing.js scheduleRouting); force the one
-        // correctly-measured pass now — cheap (a no-op sig match) when nothing actually changed.
+        // #graph is visible again as of the class toggle above (state.js graphHidden() now reads
+        // false), so every render/route path that gated on it while pretty was up (groups.js
+        // renderGroups, routing.js drawEdges) is live again but has done ZERO work this whole
+        // time — force the one real catch-up pass now. Groups first: their box geometry/title
+        // extents feed the router's obstacle rects, so they must be current before drawEdges()
+        // reads them. paintCanvas only marks the wire raster dirty when a line's geometry/style
+        // actually changed (routing.js/edgecanvas.js setEdges dirty flag), so this is a genuine
+        // no-op — no re-raster — when nothing moved while pretty was up.
+        renderGroups();
         drawEdges();
     }
 }
