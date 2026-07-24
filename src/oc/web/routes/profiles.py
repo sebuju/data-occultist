@@ -28,18 +28,27 @@ from ...profile import (
 )
 from ...profile.merge import merge_profiles
 from ..deps import get_settings
-from ..sandbox import profiles_dir_dep
+from ..sandbox import ensure_sandbox, sandbox_flag, wants_sandbox
 
 router = APIRouter(prefix="/api/profiles", tags=["profiles"])
 
 
+def _pdir(sbx: str | None) -> Path:
+    """The real profiles_dir (via this module's OWN get_settings() call, so a test's
+    ``monkeypatch.setattr("oc.web.routes.profiles.get_settings", ...)`` still applies), or
+    its sandboxed copy when the request opted in."""
+    real = get_settings().profiles_dir
+    return ensure_sandbox(real) if wants_sandbox(sbx) else real
+
+
 @router.get("")
-def all_profiles(pdir: Path = Depends(profiles_dir_dep)):
-    return list_profiles(pdir)
+def all_profiles(sbx: str | None = Depends(sandbox_flag)):
+    return list_profiles(_pdir(sbx))
 
 
 @router.get("/{name}")
-def get_profile(name: str, pdir: Path = Depends(profiles_dir_dep)):
+def get_profile(name: str, sbx: str | None = Depends(sandbox_flag)):
+    pdir = _pdir(sbx)
     if name not in list_profiles(pdir):
         raise HTTPException(status_code=404, detail=f"No profile {name!r}")
     body = load_profile(pdir, name).model_dump(mode="json", exclude_none=True)
@@ -75,7 +84,7 @@ def put_profile(
     merge: bool = True,
     layout: bool = False,
     if_match: str | None = Header(None, alias="If-Match"),
-    pdir: Path = Depends(profiles_dir_dep),
+    sbx: str | None = Depends(sandbox_flag),
 ):
     """Save a profile. With ``merge`` (default), upsert the incoming window(s) and
     field(s) into the existing profile so other windows are preserved — this is how
@@ -95,6 +104,7 @@ def put_profile(
     if profile.name != name:
         raise HTTPException(status_code=400, detail="Body name must match URL name")
     settings = get_settings()
+    pdir = ensure_sandbox(settings.profiles_dir) if wants_sandbox(sbx) else settings.profiles_dir
     # Phase wall-clocks for the slow-save warn below — a save that blocks (GIL contention from
     # OCR/toast work, a lock wait, a Windows sharing-violation retry) shows WHERE it blocked
     # instead of just feeling slow in the UI.
@@ -149,41 +159,43 @@ def put_profile(
 # ---- per-device graph-local state (viewport/minimap, gitignored sidecar) ---------
 
 @router.get("/{name}/graphlocal")
-def get_graphlocal(name: str, pdir: Path = Depends(profiles_dir_dep)):
-    return load_graph_local(pdir, name)
+def get_graphlocal(name: str, sbx: str | None = Depends(sandbox_flag)):
+    return load_graph_local(_pdir(sbx), name)
 
 
 @router.put("/{name}/graphlocal")
-def put_graphlocal(name: str, state: dict = Body(...), pdir: Path = Depends(profiles_dir_dep)):
-    save_graph_local(pdir, name, state)
+def put_graphlocal(name: str, state: dict = Body(...), sbx: str | None = Depends(sandbox_flag)):
+    save_graph_local(_pdir(sbx), name, state)
     return {"ok": True}
 
 
 # ---- versioned backups -----------------------------------------------------------
 
 @router.get("/{name}/backups")
-def get_backups(name: str, limit: int = 10, offset: int = 0, pdir: Path = Depends(profiles_dir_dep)):
+def get_backups(name: str, limit: int = 10, offset: int = 0, sbx: str | None = Depends(sandbox_flag)):
     """A PAGE of snapshots, newest first, each with date + node/structural counts.
     Only the returned page is parsed (counts need a YAML load) — listing is a cheap
     glob, so a profile with hundreds of backups still opens instantly. ``limit<=0``
     returns the rest from ``offset``. Returns ``{total, items}`` for the lazy list."""
-    paths = list(reversed(list_backups(pdir, name)))   # newest first
+    paths = list(reversed(list_backups(_pdir(sbx), name)))   # newest first
     page = paths[offset:] if limit <= 0 else paths[offset:offset + limit]
     return {"total": len(paths), "items": [backup_meta(p) for p in page]}
 
 
 @router.get("/{name}/backups/{stamp}")
-def get_backup(name: str, stamp: str, pdir: Path = Depends(profiles_dir_dep)):
+def get_backup(name: str, stamp: str, sbx: str | None = Depends(sandbox_flag)):
     """The full backup profile (drives the preview render and restore)."""
+    pdir = _pdir(sbx)
     if not backup_path(pdir, name, stamp).exists():
         raise HTTPException(status_code=404, detail=f"No backup {stamp!r} for {name!r}")
     return read_backup(pdir, name, stamp).model_dump(mode="json", exclude_none=True)
 
 
 @router.post("/{name}/backups/{stamp}/restore")
-def post_restore_backup(name: str, stamp: str, pdir: Path = Depends(profiles_dir_dep)):
+def post_restore_backup(name: str, stamp: str, sbx: str | None = Depends(sandbox_flag)):
     """Load a backup as the new live profile (snapshotting the current state first).
     The chosen backup file is left intact."""
+    pdir = _pdir(sbx)
     if not backup_path(pdir, name, stamp).exists():
         raise HTTPException(status_code=404, detail=f"No backup {stamp!r} for {name!r}")
     profile = restore_backup(pdir, name, stamp)

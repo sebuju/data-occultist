@@ -3,13 +3,20 @@
 Debug mode (``?debug=1``) and Playwright e2e both hit the user's already-running shared
 server, so a launch-time override can't tell a debug/test tab apart from real work on the
 same process — isolation has to be per-request. A client that wants isolation sends
-``X-OC-Sandbox: 1``; :func:`profiles_dir_dep` then resolves ``profiles_dir`` to an
-ephemeral per-boot copy of ``config/games`` instead of the real one, so nothing a debug tab
-or an e2e run does to a profile (edits, layout saves, backups) ever touches the real YAML.
+``X-OC-Sandbox: 1``; ``ensure_sandbox`` then resolves ``profiles_dir`` to an ephemeral
+per-boot copy of ``config/games`` instead of the real one, so nothing a debug tab or an
+e2e run does to a profile (edits, layout saves, backups) ever touches the real YAML.
 
 Scope is the profile YAML + its sidecars only (pretty doc, ``.local`` graph-state, dict-term
 externalize, new backup snapshots) — the live collector and dataset store are untouched and
 keep reading/writing the real ``data_dir``.
+
+This module deliberately does NOT call :func:`oc.web.deps.get_settings` itself — route
+tests monkeypatch ``get_settings`` as a name *inside each route module* (e.g.
+``monkeypatch.setattr("oc.web.routes.profiles.get_settings", ...)``), which only rebinds
+that module's own import, not this one. A route resolves its OWN (possibly patched)
+``settings.profiles_dir`` and passes it in here; this module only decides real-vs-sandbox
+and does the copy.
 """
 
 from __future__ import annotations
@@ -21,8 +28,6 @@ import threading
 from pathlib import Path
 
 from fastapi import Header
-
-from .deps import get_settings
 
 _lock = threading.Lock()
 _sandboxed: Path | None = None   # memoized for this process — one sandbox per boot
@@ -36,7 +41,8 @@ def _sandbox_root() -> Path:
     return Path(tempfile.gettempdir()) / f"oc-sandbox-{boot}"
 
 
-def _ensure_sandbox(real: Path) -> Path:
+def ensure_sandbox(real: Path) -> Path:
+    """The sandboxed copy of ``real``, seeding it once (per process) on first use."""
     global _sandboxed
     if _sandboxed is not None:
         return _sandboxed
@@ -58,10 +64,11 @@ def _ensure_sandbox(real: Path) -> Path:
         return root
 
 
-def profiles_dir_dep(x_oc_sandbox: str | None = Header(None, alias="X-OC-Sandbox")) -> Path:
-    """FastAPI dependency: the real ``profiles_dir``, or a sandboxed copy when the caller
-    (a debug tab or an e2e run) sent ``X-OC-Sandbox``."""
-    real = get_settings().profiles_dir
-    if x_oc_sandbox and x_oc_sandbox not in ("0", "false"):
-        return _ensure_sandbox(real)
-    return real
+def sandbox_flag(x_oc_sandbox: str | None = Header(None, alias="X-OC-Sandbox")) -> str | None:
+    """FastAPI dependency: just extracts the header, so a route can resolve its own
+    (possibly test-patched) settings before deciding real-vs-sandbox."""
+    return x_oc_sandbox
+
+
+def wants_sandbox(flag: str | None) -> bool:
+    return bool(flag) and flag not in ("0", "false")
