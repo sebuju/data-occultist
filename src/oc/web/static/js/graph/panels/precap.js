@@ -237,16 +237,6 @@ function buildPrecap() {
         // reflect it without waiting out the cadence
         if (["record", "recstop", "process", "pause", "resume", "cancel"].includes(a)) hub.kick();
     });
-    // live auto-scroll knob (shown while recording): the record loop re-reads the flag + step
-    // every grab, and status re-reflects them each poll (so a server-side give-up unchecks it
-    // here). Per-window ScrollDef.autoscroll still seeds the default at record start.
-    pcNode.addEventListener("change", (ev) => {
-        if (!ev.target.closest(".pc-autoscroll-live, .pc-clicks-live")) return;
-        const game = model.profile.name; if (!game) return;
-        const on = !!pcNode.querySelector(".pc-autoscroll-live")?.checked;
-        const clicks = +pcNode.querySelector(".pc-clicks-live")?.value || 1;
-        _pcRun(() => api.precapture.setAutoscroll(game, on, clicks, pcSig));
-    });
 }
 
 // (Re-)parent pcNode into `adapter.host`. The node moves intact, so the session list + its
@@ -526,6 +516,8 @@ function renderPrecap(node, st) {
             const nothingStaged = (st.read || 0) > 0 && !(st.datasets || []).length;
             log(`  staged: ${st.read || 0} read · ${st.no_key || 0} dropped (no key) · datasets: ${ds}`, nothingStaged ? "warn" : "ok");
         }
+        else if (phase === "paused" && st.kind === "recording")
+            log(`precapture: auto-scroll done — reached list end (${st.frames} frames)`, "ok");
         else if (phase === "cancelled") log("precapture: cancelled", "warn");
         else if (phase === "saved") log("precapture: committed", "ok");
         // recording just finished -> flip to the loaded session's controls (process / save /
@@ -647,7 +639,7 @@ function renderPrecap(node, st) {
         if (r.cycle_ms != null) barRows.push(h("span", { class: "muted" },
             `period ${r.cycle_ms}ms (dwell ${r.wait_ms}) · worst ${r.max_cycle_ms}ms · ${r.clicks}-notch`));
     }
-    if (recPaused) barRows.push(h("span", { class: "conf-warn" }, PAUSE(), " auto-scroll reached the list end — resume to retry, or uncheck it"));
+    if (recPaused) barRows.push(h("span", { class: "conf-warn" }, PAUSE(), " auto-scroll reached the list end — resume to retry, or stop recording"));
     if (st.warning) barRows.push(h("span", { class: "conf-warn" }, WARN(), " ", st.warning));
     if (st.error) barRows.push(h("span", { class: "conf-bad" }, st.error));
     const bar = right.querySelector(".pc-bar");   // absent in the new-session pane
@@ -692,21 +684,10 @@ function renderPrecap(node, st) {
         const save = (anyRun || (!staged && !justSaved)) ? null
             : h("button", { dataset: { act: "save" }, class: justSaved ? "pc-saved" : null, disabled: !(staged && !precapStopping && !justSaved) },
                 justSaved ? "committed" : `commit${staged ? ` ${staged}` : ""}`);
-        // live auto-scroll knob — shown while a recording is live (or auto-paused at the list
-        // end). Reflects the worker's current flag from status; the change handler in buildPrecap
-        // pushes toggles to the server. Its focused clicks input is what the `editing` guard below
-        // protects from the poll.
-        const asKnob = recLive ? h("label", { class: "flab pc-as-lab", title: "toggle auto-scroll live; reaching the list end pauses the recording" },
-            "auto-scroll ", h("input", { type: "checkbox", class: "pc-autoscroll-live", checked: !!st.autoscroll })) : null;
-        const clkKnob = recLive ? h("label", { class: "flab", title: "wheel notches sent per scroll" },
-            "clicks ", h("input", { type: "number", class: "pc-clicks-live", value: st.scroll_clicks || 1, min: "1" })) : null;
-        ctlNodes = [proc, cancel, save, asKnob, clkKnob];
+        ctlNodes = [proc, cancel, save];
     }
     const ctlEl = right.querySelector(".pc-ctl");
-    // don't clobber a live INPUT the user is editing (the clicks field) on a poll tick;
-    // a focused button must NOT block the rebuild (else post-save state wouldn't render)
-    const editing = ctlEl.contains(document.activeElement) && document.activeElement.matches("input");
-    if (!editing) ctlEl.replaceChildren(...ctlNodes.filter(Boolean));
+    ctlEl.replaceChildren(...ctlNodes.filter(Boolean));
 
     // an un-processed loaded session (nothing staged yet) shows its captured frames as a
     // thumbnail grid — so you can eyeball what was recorded before spending OCR on it. Empty
