@@ -117,6 +117,20 @@ windows:
       min_frac: 0.0
     corroborate: false
     confirm: 1
+  - id: rof_92
+    type: number
+    rules: []
+    min_confidence: 0.7
+    isolate: false
+    glyph_check: false
+    preprocess:
+      mode: none
+      colors: []
+      tolerance: 60
+      scale: 1.0
+      min_frac: 0.0
+    corroborate: false
+    confirm: 1
   detect:
   - id: detect_group_badge
     enabled: true
@@ -217,6 +231,14 @@ windows:
       min: '0'
       max: '100'
       step: '1'
+  - id: ro_91
+    box:
+      x: 0.1
+      y: 0.1
+      w: 0.05
+      h: 0.05
+    field: rof_92
+    enabled: true
   preprocess:
     mode: none
     colors: []
@@ -5060,6 +5082,23 @@ triggers:
   input_rect: []
   input_window: ''
   input_double_ms: 350.0
+- id: trigger
+  kind: on_register
+  interval_s: 300.0
+  watch: []
+  readout_watch: []
+  register_watch: []
+  targets: []
+  enabled: true
+  ready_field: ''
+  window_watch: []
+  item_watch: ''
+  input_event: down
+  input_button: ''
+  input_mods: []
+  input_rect: []
+  input_window: ''
+  input_double_ms: 350.0
 gates:
 - id: gate_value_ab_1
   source: register:value_ab_register#value_ab_1
@@ -5926,6 +5965,13 @@ processes:
     then: extract
     strategy: alphanum_before
     sep: '['
+  enabled: true
+- id: process
+  type: text
+  sources:
+  - ref: readout:ro_91
+    out: procKey
+  rules: []
   enabled: true
 dictionaries:
 - id: wiki
@@ -8048,6 +8094,18 @@ layout:
       custH: true
       softW: true
       softH: true
+    process:process:
+      x: -740.0
+      y: -9160.0
+      collapsed: false
+    trigger:trigger:
+      x: -780.0
+      y: -9160.0
+      collapsed: false
+    ro:live_game_window:ro_91:
+      x: 300.0
+      y: 20.0
+      collapsed: false
   tables:
     warframe:ds:master:
       sorts:
