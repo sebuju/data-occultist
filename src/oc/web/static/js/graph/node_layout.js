@@ -3,15 +3,16 @@
 // unpositioned nodes, and the node-drag loop (single/shift-subtree/multi-select). Split out of
 // main.js; buildNode/positionNode/render/renderNodeViews stay in main and are imported back.
 import { $, model, pos, nodeEls, selected, view } from "./state.js";
-import { snap, beginDrag, suppressNextClick, requestDragFrame } from "./dragresize.js";
+import { snap, GRID, beginDrag, suppressNextClick, requestDragFrame } from "./dragresize.js";
 import { requestEdges, flushEdges, setDraggingNodes, nodeRect } from "./routing.js";
 import { showGuides, flashGuides } from "./guides.js";
-import { viewportCenterWorld, resizeCanvas } from "./camera.js";
+import { viewportCenterWorld, usableViewport, resizeCanvas } from "./camera.js";
+import { freeRects } from "./corridors.js";
 import { persist } from "./persist.js";
 import * as groups from "./groups.js";
 import { setStatus, nh } from "./state.js";
 import { renderNodeViews } from "./panels/nodemap.js";
-import { buildNode, positionNode, render } from "./main.js";
+import { buildNode, positionNode, render, selectedNodeId } from "./main.js";
 
 function elForPos(id) {
     return nodeEls.get(id);   // everything is a node now (image/preview/data/batches all in-node)
@@ -65,26 +66,101 @@ async function measureNode(n) {
     return dims;
 }
 
+// Overlap area between two {x,y,w,h} rects (0 = clear). Same idiom as corridors.js's areaIn.
+function overlapArea(a, b) {
+    const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+    const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    return ix * iy;
+}
+
+// Grid-snap a proposed top-left. `awayStep` (cursor-driven adds only) additionally steps it away
+// from a node it would land hugging — capped at ONE grid cell so the anchor never wanders far from
+// where the user actually pointed; it only avoids starting the placement search already touching a
+// neighbour. Not a search in itself: picks the least-overlap of the 8 one-grid neighbours.
+function startAnchor(ideal, dims, obst, { awayStep = false } = {}) {
+    const base = { x: snap(ideal.x), y: snap(ideal.y) };
+    if (!awayStep) return base;
+    const hugBox = (p) => ({ x: p.x - GRID, y: p.y - GRID, w: dims.w + GRID * 2, h: dims.h + GRID * 2 });
+    let bestArea = 0;
+    for (const o of obst) bestArea += overlapArea(hugBox(base), o);
+    if (!bestArea) return base;   // already clear of every neighbour by a grid — no nudge needed
+    let best = base;
+    for (const [dx, dy] of [[GRID, 0], [-GRID, 0], [0, GRID], [0, -GRID], [GRID, GRID], [GRID, -GRID], [-GRID, GRID], [-GRID, -GRID]]) {
+        const p = { x: base.x + dx, y: base.y + dy };
+        let a = 0; for (const o of obst) a += overlapArea(hugBox(p), o);
+        if (a < bestArea) { bestArea = a; best = p; }
+    }
+    return best;
+}
+
+// Fit the node into free space near `anchor`, reusing the router's own open-space decomposition
+// (corridors.js: freeRects) instead of a blind spiral scan — a real free RECTANGLE, not a probed
+// point, so the nearest legal spot inside it is exact. Three tiers, in order:
+//   1. clear  — a free rect with >=1 grid of clearance on every side (freeRects margin=GRID)
+//   2. tight  — no clearance to spare, but a rect the node fits with ZERO overlap (margin=0)
+//   3. anchor — the node fits nowhere in the visible viewport; drop it at the anchor as asked
+// Search is bounded to the current viewport (usableViewport, panel-aware) — a node never gets
+// placed somewhere the user isn't looking.
+function placeInFreeRects(anchor, dims, obst) {
+    const u = usableViewport();
+    const bounds = {
+        x: (u.left - view.panX) / view.zoom, y: (u.top - view.panY) / view.zoom,
+        w: u.w / view.zoom, h: u.h / view.zoom,
+    };
+    const asAnchor = (fit) => ({ x: anchor.x, y: anchor.y, fit, rects: 0, obst: obst.length });
+    if (dims.w > bounds.w || dims.h > bounds.h) return asAnchor("anchor");   // node bigger than the viewport
+    const nodeRects = {}; obst.forEach((r, i) => { nodeRects[i] = r; });
+    const nearestSpot = (margin) => {
+        const rects = freeRects(nodeRects, { margin, bounds }).filter((r) => r.w >= dims.w && r.h >= dims.h);
+        let best = null, bestD = Infinity;
+        for (const r of rects) {
+            const x = Math.min(Math.max(anchor.x, r.x), r.x + r.w - dims.w);
+            const y = Math.min(Math.max(anchor.y, r.y), r.y + r.h - dims.h);
+            const d = Math.hypot(x - anchor.x, y - anchor.y);
+            if (d < bestD) { bestD = d; best = { x: snap(x), y: snap(y) }; }
+        }
+        return { spot: best, count: rects.length };
+    };
+    const clear = nearestSpot(GRID);
+    if (clear.spot) return { ...clear.spot, fit: "clear", rects: clear.count, obst: obst.length };
+    const tight = nearestSpot(0);
+    if (tight.spot) return { ...tight.spot, fit: "tight", rects: tight.count, obst: obst.length };
+    return asAnchor("anchor");   // nothing fits anywhere in view — grid-snap rounding may still touch
+}
+
 // Position a just-created node. Call BEFORE render() so ensurePositions() leaves it alone.
 // `srcId` is the node that SPAWNED this one (a node adding a node): the new node is placed
 // just beside it and — if that source sits in a group — allowed to land inside that group's
 // box (it then JOINS the group via inheritGroupFrom() after render). With no `srcId` (a
-// toolbox spawn) it lands at the viewport centre, clear of every group.
-// The node is prerendered (measureNode) so its REAL size drives the free-spot search.
-// `at` (world-coords {x,y}) drops the node centred on a specific point — the spot the canvas
-// right-click add-node menu was opened at — taking precedence over the viewport-centre default.
+// toolbox spawn) it starts beside the selected node, else at the viewport centre.
+// The node is prerendered (measureNode) so its REAL size drives placement.
+// `at` (world-coords {x,y}) is the spot the canvas right-click add-node menu was opened at — the
+// only path that gets the ≤1-grid away-step (see startAnchor); a toolbox add is placed, not pointed.
 export async function placeNewNode(id, type, srcId = null, at = null) {
     const n = model.nodes().find((x) => x.id === id);
+    const t0 = performance.now();
     const dims = n ? await measureNode(n) : { w: 240, h: 160 };
+    const tMeasure = performance.now();
     const sp = srcId && pos.get(srcId);
-    // No free-spot search: a node lands exactly where it was asked for — directly BELOW its
-    // spawning node (a bonded preview / subset), else centred on the click/drop point, else the
-    // viewport centre. Overlaps are the user's to sort out; they asked for it placed HERE.
-    let x, y;
-    if (sp) { x = sp.x; y = sp.y + nh(srcId) + 24; }
-    else if (at) { x = at.x - dims.w / 2; y = at.y - dims.h / 2; }
-    else { const c = viewportCenterWorld(); x = c.x - dims.w / 2; y = c.y - dims.h / 2; }
-    pos.set(id, { x: snap(x), y: snap(y) });
+    let x, y, info = "";
+    if (sp) {
+        // Bonded child (preview/etc): stacks directly below its parent — no search, matches its parent.
+        x = snap(sp.x); y = snap(sp.y + nh(srcId) + 24);
+    } else {
+        const obst = []; for (const oid of pos.keys()) { const r = nodeRect(oid); if (r) obst.push(r); }
+        const selR = !at && selectedNodeId && nodeRect(selectedNodeId);
+        let ideal;
+        if (at) ideal = { x: at.x - dims.w / 2, y: at.y - dims.h / 2 };
+        else if (selR) ideal = { x: selR.x + selR.w + GRID, y: selR.y };
+        else { const c = viewportCenterWorld(); ideal = { x: c.x - dims.w / 2, y: c.y - dims.h / 2 }; }
+        const anchor = startAnchor(ideal, dims, obst, { awayStep: !!at });
+        const r = placeInFreeRects(anchor, dims, obst);
+        x = r.x; y = r.y;
+        info = ` rects=${r.rects} obst=${r.obst} fit=${r.fit}`;
+    }
+    const tPlace = performance.now();
+    pos.set(id, { x, y });
+    console.log(`[create ${type}] measure=${(tMeasure - t0).toFixed(1)}ms place=${(tPlace - tMeasure).toFixed(1)}ms${info} @(${x},${y})`);
     setStatus(`created ${type} ${id.split(":").pop()}`);
 }
 

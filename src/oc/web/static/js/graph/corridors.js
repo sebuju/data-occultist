@@ -54,14 +54,24 @@ function gaps(covered, lo, hi) {
 
 // Core: find maximal free strips in abstract (a = cross/thickness axis, b = long/length axis) space.
 // rects here are {a0,a1,b0,b1} inflated. Returns [{a0,a1,b0,b1}] maximal free rectangles.
-function stripsAB(rects) {
-    if (!rects.length) return [];
-    const bLo = Math.min(...rects.map(r => r.b0));
-    const bHi = Math.max(...rects.map(r => r.b1));
+// `bounds` (optional {aLo,aHi,bLo,bHi}) frames the free space by an outer box instead of the tightest
+// bounding box of the obstacles themselves — used by freeRects() so open canvas beyond the node
+// cluster (out to the viewport edge) counts as free space too. Omitted (findCorridors' path): behaves
+// exactly as before — the a/b range is derived purely from the obstacle rects.
+function stripsAB(rects, bounds = null) {
+    if (!bounds && !rects.length) return [];
+    const bLo = bounds ? bounds.bLo : Math.min(...rects.map(r => r.b0));
+    const bHi = bounds ? bounds.bHi : Math.max(...rects.map(r => r.b1));
 
-    // slab boundaries along the cross axis = every unique inflated edge
+    // slab boundaries along the cross axis = every unique inflated edge, clipped into the bounds
+    // when given (a node edge outside the bounds contributes the bounds edge instead).
     const edgeSet = new Set();
-    for (const r of rects) { edgeSet.add(r.a0); edgeSet.add(r.a1); }
+    if (bounds) { edgeSet.add(bounds.aLo); edgeSet.add(bounds.aHi); }
+    for (const r of rects) {
+        if (!bounds) { edgeSet.add(r.a0); edgeSet.add(r.a1); continue; }
+        const a0 = Math.max(r.a0, bounds.aLo), a1 = Math.min(r.a1, bounds.aHi);
+        if (a1 > a0) { edgeSet.add(a0); edgeSet.add(a1); }
+    }
     const aEdges = [...edgeSet].sort((p, q) => p - q);
     if (aEdges.length < 2) return [];
 
@@ -157,6 +167,35 @@ function suppressOverlaps(cor, laneGap, minLen, minAspect) {
         }
     }
     return kept;
+}
+
+/**
+ * Find every maximal free (obstacle-clear) rectangle in a node layout — the same slab-decomposition
+ * core findCorridors uses to carve wire channels, minus the corridor-only filters (walled, min
+ * aspect/length), so a wide near-square gap ("plaza") a node could sit in is kept, not discarded.
+ * Used by node placement (node_layout.js) to find where a freshly-created node fits without overlap.
+ * @param {Object<string,{x,y,w,h}>} nodeRects
+ * @param {Object} [opts]
+ * @param {number} [opts.margin=0]  keep-out halo inflated around every node (0 = touching allowed)
+ * @param {{x,y,w,h}} [opts.bounds] frame free space by this outer box (else the obstacles' own extent)
+ * @returns {Array<{x:number, y:number, w:number, h:number}>}
+ */
+export function freeRects(nodeRects, opts = {}) {
+    const { margin = 0, bounds = null } = opts;
+    const rects = Object.values(nodeRects || {});
+
+    // vertical-cross pass: cross axis = x (a), long axis = y (b)
+    const vRects = rects.map(r => ({ a0: r.x - margin, a1: r.x + r.w + margin, b0: r.y - margin, b1: r.y + r.h + margin }));
+    const vBounds = bounds ? { aLo: bounds.x, aHi: bounds.x + bounds.w, bLo: bounds.y, bHi: bounds.y + bounds.h } : null;
+    const vOut = dropContained(stripsAB(vRects, vBounds)).map(s => ({ x: s.a0, y: s.b0, w: s.a1 - s.a0, h: s.b1 - s.b0 }));
+
+    // horizontal-cross pass: cross axis = y (a), long axis = x (b) — catches wide gaps the vertical
+    // pass' slab merge might not extend into (same two-pass shape findCorridors uses).
+    const hRects = rects.map(r => ({ a0: r.y - margin, a1: r.y + r.h + margin, b0: r.x - margin, b1: r.x + r.w + margin }));
+    const hBounds = bounds ? { aLo: bounds.y, aHi: bounds.y + bounds.h, bLo: bounds.x, bHi: bounds.x + bounds.w } : null;
+    const hOut = dropContained(stripsAB(hRects, hBounds)).map(s => ({ x: s.b0, y: s.a0, w: s.b1 - s.b0, h: s.a1 - s.a0 }));
+
+    return [...vOut, ...hOut];
 }
 
 /**
