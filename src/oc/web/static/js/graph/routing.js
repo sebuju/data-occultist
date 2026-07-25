@@ -777,7 +777,7 @@ let routeHash = "";             // global layout signature of the last pass (che
 // scheduleRouting pass no-op entirely (`sig === routeHash`, `runRouting` above): zero A* on boot.
 // Bump on any change to the router algorithm/output shape so a stale cache from an older build
 // never gets trusted even when the geometry sig happens to coincide.
-const ROUTE_CACHE_VER = 1;
+const ROUTE_CACHE_VER = 2;   // 2: deCollide keeps a slid endpoint inside BOTH its faces' faceKeep bands
 
 // Build the persisted payload from the current routeCache. Coordinates are rounded — this is a
 // paint cache, not the routing source of truth, and it shrinks the sidecar file.

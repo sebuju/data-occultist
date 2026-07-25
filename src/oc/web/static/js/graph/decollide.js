@@ -16,6 +16,7 @@
 // Held fixed (never moved): a port-stub endpoint segment (moving it detaches the wire from its node)
 // and a run sitting INSIDE a wall (an inner-pass run within its own group box — evicting it is wrong).
 import { simplify } from "./route.js";
+import { faceKeep } from "./faces.js";
 
 const CLEAR = 5;           // px kept clear of each alley wall (matches nudge's `clear`)
 
@@ -36,7 +37,6 @@ function alleyOf(axis, coord, lo, hi, walls) {
 
 const spanOverlap = (a, b) => Math.min(a.hi, b.hi) - Math.max(a.lo, b.lo) > 1;
 
-const FACE_M = 8;   // keep a slid port this far inside its node face (off the corners)
 // The node face a port stub attaches to, as its slidable perp span (an H stub rides an L/R face, slides
 // in Y; a V stub rides a T/B face, slides in X). Returns {lo,hi} or null (free/gate end — leave pinned).
 function faceSpanFor(port, axis, walls) {
@@ -45,6 +45,14 @@ function faceSpanFor(port, axis, walls) {
     else { for (const w of walls) if (port[0] > w.x - 1 && port[0] < w.x + w.w + 1 && (Math.abs(port[1] - w.y) < T || Math.abs(port[1] - (w.y + w.h)) < T)) return { lo: w.x, hi: w.x + w.w }; }
     return null;
 }
+// Where a port may legally sit on that face: the span inset by the SHARED `faceKeep` (faces.js), the
+// same keep-out route.js's fans and busroute.js's straight-shot band use — so a slide here can never
+// park a port somewhere neither router would have placed it (i.e. inside a rounded corner).
+const faceBandOf = (f) => { if (!f) return null; const k = faceKeep(f.hi - f.lo); return { lo: f.lo + k, hi: f.hi - k }; };
+// A run that is the FIRST and the LAST segment at once (a 2-point straight shot) is BOTH ends' stub:
+// its single coord docks a face on each node. Sliding it against one node's face alone is what drove a
+// window<->trigger shot onto the window's corner — the coord must satisfy BOTH bands, so intersect them.
+const bandMeet = (p, q) => (p && q ? { lo: Math.max(p.lo, q.lo), hi: Math.min(p.hi, q.hi) } : p || q);
 // would a run on `axis` at coord `c` spanning [lo,hi] pierce any node interior?
 function stubHitsNode(axis, c, lo, hi, walls) {
     for (const w of walls) {
@@ -105,7 +113,11 @@ export function deCollide(routes, walls, config = {}) {
                 s = { key, axis: "H", coord: a[1], cur: a[1], lo: Math.min(a[0], b[0]), hi: Math.max(a[0], b[0]), i0: i, i1: i + 1 };
             if (!s) continue;
             s.isEnd = endpoint;
-            if (endpoint) s.face = faceSpanFor(i === 0 ? pts[0] : pts[last], s.axis, walls);
+            if (endpoint) {
+                const fa = i === 0 ? faceBandOf(faceSpanFor(pts[0], s.axis, walls)) : null;
+                const fb = i + 1 === last ? faceBandOf(faceSpanFor(pts[last], s.axis, walls)) : null;
+                s.face = bandMeet(fa, fb);   // both when this run is the whole wire (see bandMeet)
+            }
             const al = endpoint ? null : alleyOf(s.axis, s.coord, s.lo, s.hi, walls);
             s.movable = !endpoint && !(al && al.straddled);
             let lb = al ? al.lb : -Infinity, rb = al ? al.rb : Infinity;
@@ -170,11 +182,15 @@ export function deCollide(routes, walls, config = {}) {
     for (let iter = 0; iter < 30; iter++) {
         let fixed = false;
         for (const seg of segs) {
-            if (!seg.isEnd || !seg.face || seg.face.hi - seg.face.lo <= 2 * FACE_M) continue;
-            // resolve an end-stub that either collides with another run OR pierces a node (a long stub
-            // nudge shoved through a node row) — both fix by sliding along the face to a clear coord.
-            if (!collides(seg, seg.cur) && !stubHitsNode(seg.axis, seg.cur, seg.lo, seg.hi, walls)) continue;
-            const lo = seg.face.lo + FACE_M, hi = seg.face.hi - FACE_M;
+            if (!seg.isEnd || !seg.face || seg.face.hi - seg.face.lo < 2) continue;   // no legal band left — leave it put
+            // resolve an end-stub that collides with another run, pierces a node (a long stub nudge
+            // shoved through a node row), or sits OUTSIDE its own legal face band — all fix by sliding
+            // along the face to a clear coord. The out-of-band case is what left a straight shot docked
+            // on a node corner: an earlier iteration slid it there to dodge a collision, and once it no
+            // longer collided nothing pulled it back inside the keep-out.
+            const outOfBand = seg.cur < seg.face.lo - 0.5 || seg.cur > seg.face.hi + 0.5;
+            if (!outOfBand && !collides(seg, seg.cur) && !stubHitsNode(seg.axis, seg.cur, seg.lo, seg.hi, walls)) continue;
+            const lo = seg.face.lo, hi = seg.face.hi;   // already inset by faceKeep on every face it docks
             let best = null, bestd = 1e9;
             for (let c = lo; c <= hi; c += 2) {
                 if (stubHitsNode(seg.axis, c, seg.lo, seg.hi, walls)) continue;
