@@ -33,6 +33,7 @@ import numpy as np
 from ..interfaces import OcrEngine
 from ..registry import register_ocr
 from ..types import OcrLine
+from .charset import apply as apply_charset
 from .cuda import patch_arena_shrinkage, register_cuda_dlls
 from .directml import patch_dml_provider_cfg
 from .rapidocr3_map import join_rec, to_lines, to_params
@@ -97,6 +98,9 @@ class Rapid3OcrEngine(OcrEngine):
 
     def __init__(self, **options) -> None:
         self._gpu = bool(options.pop("use_gpu", False))
+        # Ours, not a rapidocr param — popped before to_params, which raises on unknown
+        # flat keys. Empty/absent = unconstrained decode (the stock model alphabet).
+        self._charset = str(options.pop("charset", "") or "")
         self._options = options
         self._engine = None
         self._scale = 1   # integer downscale factor for big frames (1 = off; 2 -> quarter area)
@@ -202,10 +206,15 @@ class Rapid3OcrEngine(OcrEngine):
         cache mixes this into its keys so results cached under one engine are never
         served after a swap. Perf-only knobs (thread caps, batch size) and the
         cpu/gpu device are excluded: they alter speed, not output, and auto device
-        mode flips per batch. scale=1 adds nothing so existing cache keys survive."""
+        mode flips per batch. scale=1 adds nothing so existing cache keys survive.
+
+        ``charset`` MUST be in here: it changes which characters a read can contain, so
+        cached reads taken under a wider alphabet would otherwise still be served after
+        it is narrowed. An empty charset adds nothing, so existing keys survive."""
         opts = {k: v for k, v in self._options.items() if k not in _PERF_ONLY}
         scale = f"scale={self._scale}|" if self._scale > 1 else ""
-        return f"ppocr5|{scale}" + json.dumps(opts, sort_keys=True, default=str)
+        charset = f"charset={self._charset}|" if self._charset else ""
+        return f"ppocr5|{scale}{charset}" + json.dumps(opts, sort_keys=True, default=str)
 
     @property
     def cuda_capable(self) -> bool:
@@ -308,6 +317,13 @@ class Rapid3OcrEngine(OcrEngine):
                         params["Det.limit_type"] = "min"
                         params["Det.limit_side_len"] = 320
                     self._engine = RapidOCR(params=_to_enums(params))
+                    if self._charset:
+                        # Constrain the CTC decode to the allowed alphabet — see
+                        # oc.ocr.charset for why this can't be done by swapping in a
+                        # smaller character dict. Deliberately NOT best-effort: a charset
+                        # that silently failed to apply would read as working while
+                        # emitting the very characters it was configured to forbid.
+                        apply_charset(self._engine, self._charset)
                     # baseline det params (settings.yaml Det.* passthrough already folded
                     # in above) — the concrete numbers a per-window override falls back to,
                     # since update_params() below skips None and would otherwise leave a

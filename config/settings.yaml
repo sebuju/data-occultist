@@ -22,6 +22,13 @@ ocr:                # oc.ocr.*          -> reads text from regions
   options:
     engine_type: onnxruntime   # or openvino ([ppocr5-openvino] extra) — often faster on CPU
     rec_batch_num: 16          # grid reads recognise dozens of crops; fewer, bigger launches
+    # Alphabet the recogniser is ALLOWED to emit. The v6 models decode over 18710 classes
+    # (CJK, Cyrillic, Thai, accented Latin, emoji); reading an English UI, all of that is
+    # only a way to be wrong — a smudged 'o' comes back as 'ö'. Masked at the CTC decode,
+    # so the model picks its best PERMITTED character instead of the text being rewritten
+    # afterwards. 'ascii' = digits/letters/punctuation/space; any other value is a literal
+    # alphabet (e.g. '0123456789.' for digits only). Blank if you want the stock alphabet.
+    charset: ascii
     # Cap ORT's CPU pool: the default is one worker per core, spin-waiting between
     # inferences — CPU stolen from the game. 2 threads keeps reads quick while staying
     # polite; the same option caps openvino's pool when that engine is selected.
