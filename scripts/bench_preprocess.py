@@ -21,67 +21,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
-# run straight from a checkout without an editable install
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+# benchlib puts src/ on sys.path — keep it above every oc.* import
+from benchlib import build_reader, load_frames, name_field, reads_for  # noqa: E402
 
-from oc.collect.reader import RegionReader          # noqa: E402
 from oc.engine import Engine                         # noqa: E402
-from oc.learn.dictionary import build_dictionaries, _norm  # noqa: E402
-from oc.learn.resolver import FieldResolver          # noqa: E402
+from oc.learn.dictionary import _norm                 # noqa: E402
 from oc.ocr.serialize import ocr_job                 # noqa: E402
 from oc.runtime import load_live_profile             # noqa: E402
 from oc.profile.models import Preprocess, PreprocessMode  # noqa: E402
-from oc.web import captures_store                     # noqa: E402
-
-import cv2  # noqa: E402
-
-
-def _name_field(window) -> str | None:
-    """The window's primary text field id (the item name), for scoring."""
-    for f in window.fields:
-        if f.type.value == "text":
-            return f.id
-    return window.fields[0].id if window.fields else None
-
-
-def _frame_for(engine, game, cap):
-    from oc.types import Frame, PixelBox
-
-    path = captures_store.path_for(engine.settings.captures_dir, game, cap)
-    if not path:
-        return None
-    img = cv2.imread(str(path))
-    if img is None:
-        return None
-    h, w = img.shape[:2]
-    return Frame(image=img, client=PixelBox(0, 0, w, h))
-
-
-def _reader(engine, profile, game, window):
-    from oc.collect.items import item_templates
-
-    pooled, dmap = build_dictionaries(profile, engine.corrector)
-    resolver = FieldResolver(engine.corrector, engine.settings.tuning.accept_confidence,
-                             dictionary=pooled, dictionaries=dmap)
-    templates = item_templates([window], captures_store.cutout_loader(
-        engine.settings.captures_dir, game))
-    return RegionReader(engine.ocr, resolver, templates)
-
-
-def _reads_for(reader, frame, window, fields, name_fid):
-    """Every valid cell's (name value, confidence) for one frame."""
-    result = reader.read_preview(frame, window, fields)
-    out = []
-    for cell in result["cells"]:
-        if not cell.get("valid", True):
-            continue
-        f = cell["fields"].get(name_fid)
-        if f and f.get("value"):
-            out.append((str(f["value"]), float(f.get("confidence") or 0.0)))
-    return out
 
 
 def main() -> None:
@@ -105,14 +56,10 @@ def main() -> None:
     if window is None:
         sys.exit(f"no window {args.window!r} in {args.game}")
     fields = {f.id: f for f in profile.fields_for(window)}
-    name_fid = _name_field(window)
+    name_fid = name_field(window)
     floor = engine.settings.tuning.min_confidence
 
-    caps = captures_store.get_bindings(engine.settings.captures_dir, args.game).get(args.window) or []
-    if isinstance(caps, str):
-        caps = [caps]
-    frames = [(c, _frame_for(engine, args.game, c)) for c in caps]
-    frames = [(c, f) for c, f in frames if f is not None]
+    frames = load_frames(engine, args.game, args.window)
     if not frames:
         sys.exit(f"no bound captures for {args.window!r}")
 
@@ -129,7 +76,7 @@ def main() -> None:
         plans.append((f"color@{scale:g}", Preprocess(mode=PreprocessMode.color, colors=colors, tolerance=args.tol, scale=scale)))
         plans.append((f"invert@{scale:g}", Preprocess(mode=PreprocessMode.invert, scale=scale)))
 
-    reader = _reader(engine, profile, args.game, window)
+    reader = build_reader(engine, profile, args.game, window)
 
     if args.dump:
         # Per frame, read every mode and lay the values side by side, sorted by cell
@@ -144,7 +91,7 @@ def main() -> None:
             for mlabel, pp in modes:
                 window.preprocess = pp
                 with ocr_job(engine.ocr):
-                    per_mode[mlabel] = [v for v, _ in _reads_for(reader, frame, window, fields, name_fid)]
+                    per_mode[mlabel] = [v for v, _ in reads_for(reader, frame, window, fields, name_fid)]
             n = max(len(v) for v in per_mode.values())
             print(f"\n{cap}")
             for i in range(n):
@@ -156,7 +103,6 @@ def main() -> None:
         print(f"\n{disagreements} cell(s) where modes disagree\n")
         return
 
-    import re
     shape = re.compile(args.shape) if args.shape else None
 
     print(f"\n{args.window}: {len(frames)} frames, name field {name_fid!r}, floor {floor}\n")
@@ -167,7 +113,7 @@ def main() -> None:
         confs, matched, expected_total, shaped = [], 0, 0, 0
         with ocr_job(engine.ocr):
             for cap, frame in frames:
-                reads = _reads_for(reader, frame, window, fields, name_fid)
+                reads = reads_for(reader, frame, window, fields, name_fid)
                 confs.extend(c for _, c in reads)
                 if shape:
                     shaped += sum(1 for v, _ in reads if shape.match(v))
