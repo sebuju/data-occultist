@@ -983,8 +983,6 @@ windows:
     type: text
     rules:
     - when: always
-      then: fold
-    - when: always
       then: extract
       strategy: text_before
       sep: relic
@@ -5941,8 +5939,6 @@ processes:
   - ref: readout:slot_exilus_name
   rules:
   - when: always
-    then: fold
-  - when: always
     then: lowercase
   - when: always
     then: dictionary
@@ -6006,8 +6002,6 @@ processes:
   - ref: readout:slot_arcane_2
   rules:
   - when: always
-    then: fold
-  - when: always
     then: lowercase
   - when: always
     then: dictionary
@@ -6021,8 +6015,6 @@ processes:
   - ref: readout:mod_drain_max
   - ref: readout:mod_drain_remaining
   rules:
-  - when: always
-    then: fold
   - when: always
     then: lowercase
   enabled: true
@@ -6049,8 +6041,6 @@ processes:
   rules:
   - when: empty
     then: drop
-  - when: always
-    then: fold
   - when: always
     then: lowercase
   - when: always
@@ -6111,7 +6101,7 @@ layout:
   nodes:
     game:
       x: -3860.0
-      y: -3100.0
+      y: -3120.0
       w: 260.0
       h: 320.0
       collapsed: false
@@ -6121,7 +6111,7 @@ layout:
       softH: true
     dict:wiki:
       x: -3040.0
-      y: -2700.0
+      y: -2720.0
       w: 320.0
       h: 360.0
       collapsed: false
@@ -6130,7 +6120,7 @@ layout:
       softW: true
     ds:master:
       x: -1580.0
-      y: -3100.0
+      y: -3120.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6139,7 +6129,7 @@ layout:
       softH: true
     ds:prices_live:
       x: -500.0
-      y: -1800.0
+      y: -1820.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6148,7 +6138,7 @@ layout:
       softH: true
     sub:live_prices_joined:
       x: -80.0
-      y: -3100.0
+      y: -3120.0
       w: 360.0
       h: 920.0
       collapsed: false
@@ -6157,7 +6147,7 @@ layout:
       softH: true
     producer:wf_market_live:
       x: -500.0
-      y: -3100.0
+      y: -3120.0
       w: 360.0
       h: 1260.0
       collapsed: false
@@ -6184,7 +6174,7 @@ layout:
       softH: true
     ds:mods:
       x: -1580.0
-      y: -2860.0
+      y: -2880.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6194,7 +6184,7 @@ layout:
       softH: true
     ds:mod_catalog:
       x: -2000.0
-      y: -2060.0
+      y: -2080.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6204,7 +6194,7 @@ layout:
       softH: true
     producer:mod_catalog_producer:
       x: -2000.0
-      y: -3100.0
+      y: -3120.0
       w: 360.0
       h: 1000.0
       collapsed: false
@@ -6213,25 +6203,27 @@ layout:
       softW: true
       softH: true
     win:mod_window:
-      x: 200.0
-      y: -900.0
+      x: 980.0
+      y: -980.0
       collapsed: false
     item:mod_window:mod:
-      x: -1000.0
-      y: -900.0
+      x: -220.0
+      y: -980.0
       collapsed: false
     win:equipment_window:
       x: -2520.0
-      y: -960.0
-      w: 500.0
-      h: 1227.0
+      y: -980.0
+      w: 620.0
+      h: 960.0
       collapsed: false
       custW: true
       custH: false
+      softW: false
+      softH: false
     sb:equipment_window:scrollbar:
       x: -2860.0
-      y: -60.0
-      w: 260.0
+      y: 0.0
+      w: 280.0
       h: 260.0
       collapsed: false
       custW: true
@@ -6239,7 +6231,7 @@ layout:
       softW: true
     item:equipment_window:arcane:
       x: -3860.0
-      y: 40.0
+      y: 60.0
       w: 540.0
       h: 1066.0
       collapsed: false
@@ -6247,7 +6239,7 @@ layout:
       custH: false
     item:equipment_window:normal:
       x: -3860.0
-      y: -960.0
+      y: -980.0
       w: 540.0
       h: 957.0
       collapsed: false
@@ -6255,17 +6247,17 @@ layout:
       custH: false
     det:equipment_window:detect_1:
       x: -2860.0
-      y: -500.0
+      y: -460.0
       w: 280.0
-      h: 407.0
+      h: 440.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     item:mod_window:drop_item:
-      x: -1000.0
-      y: 160.0
+      x: -220.0
+      y: 80.0
       w: 380.0
       h: 815.0
       collapsed: false
@@ -6273,7 +6265,7 @@ layout:
       custH: false
     fld:equipment_window:normal:name:
       x: -3260.0
-      y: -620.0
+      y: -680.0
       w: 320.0
       h: 420.0
       collapsed: false
@@ -6281,11 +6273,16 @@ layout:
       custH: false
     fld:equipment_window:normal:count:
       x: -3260.0
-      y: -960.0
+      y: -980.0
+      w: 320.0
+      h: 260.0
       collapsed: false
+      custW: false
+      custH: true
+      softH: true
     fld:equipment_window:arcane:name:
       x: -3260.0
-      y: 760.0
+      y: 680.0
       w: 320.0
       h: 360.0
       collapsed: false
@@ -6293,23 +6290,25 @@ layout:
       custH: false
     fld:equipment_window:arcane:arcane_level:
       x: -3260.0
-      y: 40.0
+      y: 60.0
       w: 320.0
-      h: 340.0
+      h: 300.0
       collapsed: false
       custW: true
       custH: true
+      softH: true
     fld:equipment_window:arcane:count:
       x: -3260.0
       y: 400.0
       w: 320.0
-      h: 340.0
+      h: 240.0
       collapsed: false
       custW: false
-      custH: false
+      custH: true
+      softH: true
     fld:mod_window:mod:mod_name:
-      x: -580.0
-      y: -240.0
+      x: 200.0
+      y: -320.0
       w: 320.0
       h: 300.0
       collapsed: false
@@ -6317,8 +6316,8 @@ layout:
       custH: true
       softH: true
     fld:mod_window:mod:mod_drain:
-      x: -580.0
-      y: -580.0
+      x: 200.0
+      y: -660.0
       w: 320.0
       h: 300.0
       collapsed: false
@@ -6326,8 +6325,8 @@ layout:
       custH: true
       softW: true
     fld:mod_window:mod:mod_count:
-      x: -580.0
-      y: -900.0
+      x: 200.0
+      y: -980.0
       w: 320.0
       h: 280.0
       collapsed: false
@@ -6335,12 +6334,12 @@ layout:
       custH: true
       softH: true
     tell:mod_window:drop_item:tell_3:
-      x: -560.0
-      y: 160.0
+      x: 220.0
+      y: 80.0
       collapsed: false
     trigger:owned_refresh:
       x: -920.0
-      y: -3100.0
+      y: -3120.0
       w: 360.0
       h: 363.0
       collapsed: false
@@ -6403,7 +6402,7 @@ layout:
       softW: true
     producer:producer:
       x: -2420.0
-      y: -3100.0
+      y: -3120.0
       w: 360.0
       h: 1000.0
       collapsed: false
@@ -6412,7 +6411,7 @@ layout:
       softH: true
     ds:relic_contents:
       x: -2420.0
-      y: -2060.0
+      y: -2080.0
       w: 360.0
       h: 160.0
       collapsed: false
@@ -6511,8 +6510,8 @@ layout:
       softW: true
       softH: true
     det:mod_window:detect_h:
-      x: -120.0
-      y: -900.0
+      x: 660.0
+      y: -980.0
       w: 280.0
       h: 407.0
       collapsed: false
@@ -6521,9 +6520,9 @@ layout:
       softW: true
     det:equipment_window:detect_h:
       x: -2860.0
-      y: -960.0
+      y: -980.0
       w: 280.0
-      h: 426.0
+      h: 460.0
       collapsed: false
       custW: true
       custH: true
@@ -6584,7 +6583,7 @@ layout:
       collapsed: false
     sub:master_prime_parts:
       x: 340.0
-      y: -3100.0
+      y: -3120.0
       w: 360.0
       h: 900.0
       collapsed: false
@@ -6593,11 +6592,11 @@ layout:
       softH: true
     ds:ee_log:
       x: -3460.0
-      y: -1820.0
+      y: -1840.0
       collapsed: false
     src:log_ee:
       x: -3860.0
-      y: -1820.0
+      y: -1840.0
       w: 360.0
       h: 560.0
       collapsed: false
@@ -6625,7 +6624,7 @@ layout:
       softH: true
     dict:relics:
       x: -3040.0
-      y: -2280.0
+      y: -2300.0
       w: 320.0
       h: 360.0
       collapsed: false
@@ -6772,7 +6771,7 @@ layout:
       softH: true
     atlas:
       x: -3860.0
-      y: -2700.0
+      y: -2720.0
       w: 720.0
       h: 780.0
       collapsed: false
@@ -7928,11 +7927,11 @@ layout:
       softH: true
     sub:distinct_relic_items:
       x: -920.0
-      y: -2880.0
+      y: -2900.0
       collapsed: false
     vt:ds:prices_live:
       x: -80.0
-      y: -1800.0
+      y: -1820.0
       collapsed: false
     trigger:on_new_relics_offered:
       x: -100.0
@@ -7944,12 +7943,12 @@ layout:
       custH: false
       softW: true
     prev:equipment_window:
-      x: -1960.0
-      y: -960.0
+      x: -1860.0
+      y: -980.0
       collapsed: false
     register:sweep:
-      x: -2880.0
-      y: 400.0
+      x: -2540.0
+      y: 360.0
       w: 280.0
       h: 300.0
       collapsed: false
@@ -7957,8 +7956,8 @@ layout:
       custH: false
       softW: false
     gate:sweep_go:
-      x: -1900.0
-      y: 400.0
+      x: -1560.0
+      y: 360.0
       w: 300.0
       h: 140.0
       collapsed: false
@@ -7967,12 +7966,12 @@ layout:
       softW: true
       softH: true
     trigger:sweep_f1:
-      x: -2220.0
-      y: 400.0
+      x: -1880.0
+      y: 360.0
       collapsed: false
     trigger:sweep_advance:
-      x: -2220.0
-      y: 700.0
+      x: -1880.0
+      y: 660.0
       w: 280.0
       h: 220.0
       collapsed: false
@@ -7980,8 +7979,8 @@ layout:
       custH: true
       softH: true
     trigger:sweep_bottom:
-      x: -2220.0
-      y: 960.0
+      x: -1880.0
+      y: 920.0
       w: 280.0
       h: 220.0
       collapsed: false
@@ -7989,8 +7988,8 @@ layout:
       custH: true
       softH: true
     action:sweep_arm:
-      x: -2560.0
-      y: 400.0
+      x: -2220.0
+      y: 360.0
       w: 300.0
       h: 260.0
       collapsed: false
@@ -7999,8 +7998,8 @@ layout:
       softW: true
       softH: true
     action:sweep_step:
-      x: -2560.0
-      y: 700.0
+      x: -2220.0
+      y: 660.0
       w: 300.0
       h: 220.0
       collapsed: false
@@ -8009,8 +8008,8 @@ layout:
       softW: true
       softH: true
     action:sweep_stop:
-      x: -2560.0
-      y: 960.0
+      x: -2220.0
+      y: 920.0
       w: 300.0
       h: 220.0
       collapsed: false
@@ -8186,7 +8185,7 @@ layout:
       collapsed: false
     gamehist:
       x: -3560.0
-      y: -3100.0
+      y: -3120.0
       w: 840.0
       h: 320.0
       collapsed: false
@@ -8269,11 +8268,11 @@ layout:
       softH: true
     vt:ds:master:
       x: -1580.0
-      y: -2640.0
+      y: -2660.0
       collapsed: false
     vt:sub:live_prices_joined:
       x: 740.0
-      y: -3100.0
+      y: -3120.0
       w: 760.0
       h: 900.0
       collapsed: false
@@ -9916,24 +9915,6 @@ layout:
     titleColor: '#7ddc7d'
     titleAlign: left
     schemeId: green
-  - id: subgroup_19
-    parent: group_19
-    title: ''
-    members:
-    - item:equipment_window:arcane
-    - fld:equipment_window:arcane:name
-    - fld:equipment_window:arcane:arcane_level
-    - fld:equipment_window:arcane:count
-    outline:
-      color: '#04dc91'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#0a2621'
-    titleBg: ''
-    titleColor: '#e69a5a'
-    titleAlign: left
-    schemeId: s_73972008-70b7-4159-add1-51fb9c3fd516
   schemes:
   - id: s_73972008-70b7-4159-add1-51fb9c3fd516
     name: loadout_groups
