@@ -882,13 +882,16 @@ function onTitlePress(gid, ev) {
     const stop = beginDrag(ev, { threshold: DRAG_THRESH, onStart: () => { stop(); ctx.moveMembers(members, ev); } });
 }
 
+// Same ctrl-click channel as a group title (ctrl_select.js), one tier up: the whole member set
+// toggles together, and an active NODE selection switches it to those groups' nodes instead.
+const SUPER_CTRL_SELECT_HINT = "Ctrl+click: select every group in this super group (all selected -> deselect them). With nodes selected, Ctrl+click toggles those groups' nodes.";
 function buildSuperEl(sg) {
     const el = document.createElement("div");
     el.className = "sgroup";
     el.dataset.sgid = sg.id;
     // cog + huge label, both pinned bottom-left (each absolute so the label never shifts the cog).
     const cog = h("button", { class: "sgroup-cog", title: "super group settings", "aria-label": "super group settings" }, COG(15));
-    const label = h("span", { class: "sgroup-label" });
+    const label = h("span", { class: "sgroup-label", title: SUPER_CTRL_SELECT_HINT });
     el.append(cog, label);
     label.addEventListener("mousedown", (ev) => onSuperPress(sg.id, ev));
     cog.addEventListener("mousedown", (ev) => {
@@ -1026,9 +1029,23 @@ export function toggleGroupSelected(gid) {
     if (selectedGroups.has(gid)) selectedGroups.delete(gid); else selectedGroups.add(gid);
     renderGroups(); ctx.afterChange?.();
 }
+// Ctrl+click a SUPER group's title: its member GROUPS toggle as one unit — any one out -> select
+// them all, all already in -> deselect them all (same all-in/all-out rule ctrlToggleGroupMembers
+// gives nodes). One render for the whole set, never a toggleGroupSelected loop.
+export function toggleSuperGroupSelected(sid) {
+    const sg = sById(sid);
+    const gids = (sg?.members || []).filter((id) => byId(id));
+    if (!gids.length) return;
+    const allIn = gids.every((id) => selectedGroups.has(id));
+    for (const id of gids) { if (allIn) selectedGroups.delete(id); else selectedGroups.add(id); }
+    renderGroups(); ctx.afterChange?.();
+}
 export function selectedGroupIds() { return [...selectedGroups].filter((id) => byId(id)); }
 export function clearGroupSelection() { if (selectedGroups.size) { selectedGroups.clear(); renderGroups(); ctx.afterChange?.(); } }
 export function groupMembers(gid) { const g = byId(gid); return g ? [...g.members] : []; }
+// node ids under a super group (its groups' members, flattened) — the one group->node fan-out,
+// shared by the super drag and the node-mode ctrl-select path (selection.js).
+export function superGroupMembers(sid) { const sg = sById(sid); return sg ? superMemberNodeIds(sg) : []; }
 
 // ---- options popover (shared by all three tiers — rule 7) ------------------
 // `target` is the record (mutated live). One builder for all tiers — the options differ only in

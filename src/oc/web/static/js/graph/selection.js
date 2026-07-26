@@ -56,16 +56,19 @@ export function ctrlToggleNode(id) {
     if (selected.has(id)) selected.delete(id); else selected.add(id);
     syncMultiSelect();
 }
-// Toggle a WHOLE group's member nodes in/out of the multi-selection as one unit (ctrl-click on a
-// group title while in node-mode — see ctrl_select.js). All-in -> remove all; else -> add all.
-export function ctrlToggleGroupMembers(gid) {
-    const members = groups.groupMembers(gid).filter((id) => nodeEls.has(id));
+// Toggle a WHOLE set of nodes in/out of the multi-selection as one unit (ctrl-click on a group or
+// super-group title while in node-mode — see ctrl_select.js). All-in -> remove all; else -> add all.
+// One core for both tiers: they differ only in how the id list is derived.
+function ctrlToggleNodes(ids) {
+    const members = [...new Set(ids)].filter((id) => nodeEls.has(id));
     if (!members.length) return;
     if (!selected.size && selectedNodeId && nodeEls.has(selectedNodeId)) selected.add(selectedNodeId);
     const allIn = members.every((id) => selected.has(id));
     for (const id of members) { if (allIn) selected.delete(id); else selected.add(id); }
     syncMultiSelect();
 }
+export function ctrlToggleGroupMembers(gid) { ctrlToggleNodes(groups.groupMembers(gid)); }
+export function ctrlToggleSuperMembers(sid) { ctrlToggleNodes(groups.superGroupMembers(sid)); }
 // ---- selection toolbar: ONE shared predictor for all three grouping tiers (rule 7) -----------
 // Every tier button (group / subgroup / super) derives its label, icon and tooltip from tierState()
 // — a PURE function of the member SET, so the button never changes meaning with selection ORDER

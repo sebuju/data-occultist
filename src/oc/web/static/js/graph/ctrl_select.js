@@ -15,10 +15,13 @@
 //     it does not fall back to selecting the group's nodes.
 //   • node-mode (a node selection is already active): ctrl-click a node toggles the node;
 //     ctrl-click a group TITLE toggles all of that group's member NODES (never the group itself).
+// A SUPER group's title (its watermark label) is the same thing one tier up: it resolves to the
+// WHOLE member set at once — every one of its groups in group-mode, every one of their nodes in
+// node-mode — with the same all-in -> remove-all / else -> add-all rule.
 import { $, view, selected, nodeEls } from "./state.js";
 import { selectedNodeId } from "./main.js";
 import * as groups from "./groups.js";
-import { ctrlToggleNode, ctrlToggleGroupMembers } from "./selection.js";
+import { ctrlToggleNode, ctrlToggleGroupMembers, ctrlToggleSuperMembers } from "./selection.js";
 import { suppressNextClick } from "./dragresize.js";
 
 function toWorld(ev) {
@@ -32,12 +35,14 @@ export function wireCtrlSelect() {
         // the cog is a DOM child of .ggroup-title but has its own action (open settings) — it used
         // to shield itself from the title's mousedown via its own stopPropagation; preserve that.
         const titleEl = ev.target.closest(".ggt-cog") ? null : ev.target.closest(".ggroup-title");
+        // the super group's cog is excluded the same way .ggt-cog is above — it stays settings-only.
+        const superEl = ev.target.closest(".sgroup-cog") ? null : ev.target.closest(".sgroup-label");
         const nodeEl = ev.target.closest(".gnode");
         const groupMode = groups.selectedGroupIds().length > 0;
         const nodeActive = selected.size > 0 || (selectedNodeId && nodeEls.has(selectedNodeId));
         // consume the mousedown AND swallow the trailing click on mouseup — else the control
         // under the cursor (button/checkbox/link/custom-click widget) still fires on a ctrl-select.
-        const consume = () => { ev.preventDefault(); ev.stopPropagation(); suppressNextClick(nodeEl || titleEl || $("graph")); };
+        const consume = () => { ev.preventDefault(); ev.stopPropagation(); suppressNextClick(nodeEl || titleEl || superEl || $("graph")); };
 
         if (titleEl) {
             consume();
@@ -48,6 +53,16 @@ export function wireCtrlSelect() {
             if (groupMode || !nodeActive) groups.toggleGroupSelected(gid);
             else ctrlToggleGroupMembers(gid);
             return;
+        }
+        if (superEl) {
+            // the label carries no id of its own — the .sgroup box it lives in does.
+            const sid = superEl.closest(".sgroup")?.dataset.sgid;
+            if (sid) {
+                consume();
+                if (groupMode || !nodeActive) groups.toggleSuperGroupSelected(sid);
+                else ctrlToggleSuperMembers(sid);
+                return;
+            }
         }
         if (nodeEl) {
             consume();
