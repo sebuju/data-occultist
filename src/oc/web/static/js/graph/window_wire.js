@@ -10,7 +10,9 @@ import {
     refreshGridPreview, refreshReadoutValues, scheduleWindowRead,
     mountMatchPreview, refreshMatchPreviews,
 } from "./imaging.js";
-import { markColorCollisions, WD_MODE_OPTS, WD_MODE_DESC, WD_NEG_OPTS, WD_NEG_DESC, PP_MODES, PP_MODE_DESC } from "./node_parts.js";
+import { markColorCollisions, mergeColors, WD_MODE_OPTS, WD_MODE_DESC, WD_NEG_OPTS, WD_NEG_DESC, PP_MODES, PP_MODE_DESC } from "./node_parts.js";
+import { makeClip } from "./clipboard.js";
+import { selectionIds } from "./selection.js";
 import { richPickerPop } from "./rich_picker.js";
 import { moveWindowPos, movePos, renameNode } from "./node_lifecycle.js";
 import { renderReadoutHistory } from "./readout_history_node.js";
@@ -40,6 +42,36 @@ export function setDetectKind(a, kind) {
 // transaction + save; ``nodeId`` is the node to rebuild (so `color`-mode controls show/hide and
 // chips refresh); ``pick()`` arms the eyedropper for the right sink. Selectors are scoped to
 // ``div`` (each node has its own), so window and readout controls never cross-fire.
+// Cross-node preprocess colour clipboard (the shared primitive — rules and the sound forge hold
+// their own clips): "copy" stashes this holder's colour list, "paste" MERGES it into another's.
+// One clip at module scope, re-wired to each body as it's built; since window and readout
+// preprocess share this wiring, a window's colours paste straight onto a readout override.
+const ppColorClip = makeClip(".ppcolpaste");
+
+// The OTHER multi-selected nodes a colour paste should also land on. A paste is a selection-wide
+// action (like the toolbar's size paste): with several nodes selected, pasting into one of them
+// fans out to every sibling that carries a preprocess block — window nodes (WindowDef) and readout
+// nodes (FieldDef), the two holders wirePreprocess already serves. Returns [] for a single
+// selection, or when the clicked node isn't part of the selection (then it's a plain one-node paste).
+// Siblings NOT in `color` mode are skipped: their colour list is inert, and silently flipping their
+// OCR mode is not what a paste asked for — the caller reports the skips.
+function ppFanoutTargets(nodeId) {
+    const ids = selectionIds();
+    if (ids.length < 2 || !ids.includes(nodeId)) return { targets: [], skipped: 0 };
+    const targets = [];
+    let skipped = 0;
+    for (const id of ids) {
+        if (id === nodeId) continue;
+        let holder = null, winId = null;
+        if (id.startsWith("win:")) { winId = id.slice(4); holder = model.window(winId); }
+        else if (id.startsWith("ro:")) { const [, w, ro] = id.split(":"); winId = w; holder = model.readoutFieldOf(w, ro); }
+        if (!holder) continue;                                   // node type with no preprocess
+        if ((model._ppOf(holder).mode || "none") !== "color") { skipped++; continue; }
+        targets.push({ id, holder, winId });
+    }
+    return { targets, skipped };
+}
+
 function wirePreprocess(div, holder, { nodeId, winId, edit, pick }) {
     // colour list: hex inputs that collide (same colour, or within tolerance of another) go red.
     const remarkCollide = () => markColorCollisions(div.querySelectorAll(".pp-color"), model._ppOf(holder).colors || [], model._ppOf(holder).tolerance ?? 60);
@@ -85,6 +117,36 @@ function wirePreprocess(div, holder, { nodeId, winId, edit, pick }) {
     div.querySelector(".pp-pick")?.addEventListener("click", () => pick());   // ⊙ sample-from-image
     div.querySelector(".pp-coloradd")?.addEventListener("click", () => {      // ＋ add an empty row
         edit(() => { model._ppOf(holder).colors.push(""); rebuildNode(nodeId); });
+    });
+    // copy/paste the whole colour list (buttons ride the mode row). Paste MERGES + dedups rather
+    // than replacing — see mergeColors; the rebuild re-runs remarkCollide, so a pasted colour that
+    // is redundant within tolerance goes red immediately. With several nodes selected it lands on
+    // ALL of them (ppFanoutTargets): the clicked node through its own transaction, the siblings as
+    // a straight mutation + their own autosave (a node txn owns ONE surface at a time, so arming
+    // one per sibling would just commit the previous — and their bodies aren't being edited).
+    ppColorClip.wire(div, {
+        copyCls: ".ppcolcopy", pasteCls: ".ppcolpaste",
+        read: () => model._ppOf(holder).colors || [],
+        write: (colors) => {
+            const { targets, skipped } = ppFanoutTargets(nodeId);
+            edit(() => {
+                const pp = model._ppOf(holder);
+                pp.colors = mergeColors(pp.colors || [], colors);
+                rebuildNode(nodeId);
+            });
+            for (const t of targets) {
+                const pp = model._ppOf(t.holder);
+                pp.colors = mergeColors(pp.colors || [], colors);
+                rebuildNode(t.id);
+                autosave(t.winId);                     // preprocess changed -> persist + re-read that window
+            }
+            refreshMatchPreviews(winId);
+            for (const t of targets) refreshMatchPreviews(t.winId);
+            if (targets.length || skipped) {
+                setStatus(`colours pasted to ${targets.length + 1} node${targets.length ? "s" : ""}`
+                    + (skipped ? ` — ${skipped} selected node${skipped === 1 ? "" : "s"} skipped (not in colour mode)` : ""));
+            }
+        },
     });
     // native swatch (OS colour picker) and the editable hex both write colour[i] — same shape as a
     // colour detector's rows (rule 7).

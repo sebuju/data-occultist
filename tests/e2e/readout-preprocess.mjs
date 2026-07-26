@@ -95,9 +95,47 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
     if (modal) {
         const canvas = await page.$eval(".pp-pick-canvas", (c) => ({ w: c.width, h: c.height }));
         ok(canvas.w > 0 && canvas.h > 0, `pick modal shows a blown-up cutout canvas (${canvas.w}x${canvas.h})`);
+        // clicking samples a colour and KEEPS the modal open — several picks in one visit (glyph
+        // core + fringe shades). Click distinct pixels until two distinct colours are kept.
+        const multi = await page.evaluate(async ({ winId, roId }) => {
+            const { model } = window.__t;
+            const fd = model.readoutFieldOf(winId, roId);
+            const cols = () => (model._ppOf(fd).colors || []).slice();
+            const c = document.querySelector(".pp-pick-canvas");
+            const r = c.getBoundingClientRect();
+            const click = (fx, fy) => c.dispatchEvent(new MouseEvent("click", { bubbles: true,
+                clientX: r.left + r.width * fx, clientY: r.top + r.height * fy }));
+            const sum = () => { const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2]; return s; };
+            const sum0 = sum();
+            const start = cols();
+            const spots = [[0.1, 0.5], [0.3, 0.5], [0.5, 0.5], [0.7, 0.5], [0.9, 0.5], [0.5, 0.2], [0.5, 0.8]];
+            let openAfterFirst = null;
+            for (const [fx, fy] of spots) {
+                click(fx, fy);
+                await new Promise((res) => setTimeout(res, 60));
+                if (openAfterFirst === null) openAfterFirst = !!document.querySelector(".pp-pick-modal");
+                if (cols().length >= start.length + 2) break;
+            }
+            const after = cols();
+            const dupe = after.length !== new Set(after).size;
+            const head = document.querySelector(".pp-pick-head span")?.textContent || "";
+            return { start, after, openAfterFirst, stillOpen: !!document.querySelector(".pp-pick-modal"), dupe, head,
+                sum0, sum1: sum() };
+        }, { winId: setup.winId, roId });
+        ok(multi.openAfterFirst, "🔍 first canvas click does NOT close the picker (multi-pick)");
+        ok(multi.after.length >= multi.start.length + 2,
+            `🔍 several colours added in one visit (${JSON.stringify(multi.start)} -> ${JSON.stringify(multi.after)})`);
+        ok(!multi.dupe, `🔍 repeat clicks on the same colour are deduped (${JSON.stringify(multi.after)})`);
+        ok(multi.stillOpen && /colours? kept/.test(multi.head), `🔍 picker stays open and reports the count ("${multi.head}")`);
+        ok(multi.sum1 !== multi.sum0, `🔍 the match overlay grows with each pick — live cfg, not an open-time snapshot (${multi.sum0} -> ${multi.sum1})`);
         await page.keyboard.press("Escape");
         const gone = await page.$(".pp-pick-modal");
         ok(!gone, "Escape closes the pick modal");
+        await page.evaluate(({ winId, roId }) => {           // back to the one seeded colour
+            const { model, rebuildNode } = window.__t;
+            model._ppOf(window.__t.model.readoutFieldOf(winId, roId)).colors = ["#ffffff"];
+            rebuildNode(`ro:${winId}:${roId}`);
+        }, { winId: setup.winId, roId });
     } else {
         console.log("   ~ pp-pick modal not shown (no capture bound to this window) — skipped, not a failure");
     }
@@ -225,6 +263,85 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ?
     ok(winning.count > 0 && winning.comps === 1, `preview paints exactly ONE connected region (${winning.count}px, ${winning.comps} comp; painted=${winning.paintedSum} raw=${winning.rawSum})`);
 
     await page.evaluate(({ winId, detId }) => window.__t.model.removeDetect(winId, detId), { winId: setup.winId, detId }).catch(() => {});
+
+    // 11) the colour-list copy/paste pair on the preprocess MODE row: icon-only, shown in colour
+    //     mode only, and paste MERGES + dedups (it does not replace, unlike the rules clip).
+    const clip = await page.evaluate(async ({ winId, roId }) => {
+        const { model, rebuildNode } = window.__t;
+        const nodeId = `ro:${winId}:${roId}`, sel = `#gnodes [data-id="${nodeId}"]`;
+        const fd = model.readoutFieldOf(winId, roId);
+        const pp = model._ppOf(fd);
+        const q = (s) => document.querySelector(`${sel} ${s}`);
+        pp.mode = "color"; pp.colors = ["#ffffff"]; rebuildNode(nodeId);
+        const copyBtn = q(".pp-mode-row .frule-btns .ppcolcopy"), pasteBtn = q(".pp-mode-row .frule-btns .ppcolpaste");
+        const iconOnly = !!copyBtn && !copyBtn.textContent.trim() && !!copyBtn.querySelector("svg")
+            && !!pasteBtn && !pasteBtn.textContent.trim() && !!pasteBtn.querySelector("svg");
+        const sameLook = copyBtn ? getComputedStyle(copyBtn).width : "";           // .frule-btns > button -> 12px
+        const before = { copyOn: !copyBtn?.disabled, pasteOn: !pasteBtn?.disabled };
+        copyBtn.click();                                                            // stash ["#ffffff"]
+        // paste into a DIFFERENT list: it must merge (union), not replace
+        pp.colors = ["#000000"]; rebuildNode(nodeId);
+        const pasteAfterCopy = !q(".pp-mode-row .ppcolpaste").disabled;
+        q(".pp-mode-row .ppcolpaste").click();
+        const merged = (model._ppOf(fd).colors || []).slice();
+        q(".pp-mode-row .ppcolpaste").click();                                      // second paste = no-op (dedup)
+        const twice = (model._ppOf(fd).colors || []).slice();
+        // colour mode only
+        pp.mode = "threshold"; rebuildNode(nodeId);
+        const hiddenOther = !q(".ppcolcopy") && !q(".ppcolpaste") && !!q(".ppmode");
+        pp.mode = "color"; pp.colors = ["#ffffff"]; rebuildNode(nodeId);
+        return { iconOnly, sameLook, before, pasteAfterCopy, merged, twice, hiddenOther };
+    }, { winId: setup.winId, roId });
+    ok(clip.iconOnly, "copy/paste pair rides the preprocess mode row, icons only (no label text)");
+    ok(clip.sameLook === "12px", `pair wears the shared .frule-btns button look (width ${clip.sameLook})`);
+    ok(clip.before.copyOn && !clip.before.pasteOn, `copy enabled with colours, paste dead until something is copied (${JSON.stringify(clip.before)})`);
+    ok(clip.pasteAfterCopy, "copying enables the paste button");
+    ok(JSON.stringify(clip.merged) === JSON.stringify(["#000000", "#ffffff"]), `paste MERGES into the existing list (${JSON.stringify(clip.merged)})`);
+    ok(JSON.stringify(clip.twice) === JSON.stringify(clip.merged), `pasting again is a no-op — duplicates skipped (${JSON.stringify(clip.twice)})`);
+    ok(clip.hiddenOther, "pair is hidden outside colour mode (the mode button stays)");
+
+    // 12) multi-select fan-out: with several nodes selected, pasting into ONE lands on all of them
+    //     — except selected nodes not in colour mode, which are skipped.
+    const fan = await page.evaluate(async ({ winId, roId }) => {
+        const { model, placeNewNode, render, rebuildNode } = window.__t;
+        const { setMultiSelect, clearMultiSelect } = await import("/js/graph/selection.js");
+        const mk = async (mode, colors, y) => {                       // a second/third readout node
+            const id = model.addReadout(winId, { x: 0.1, y, w: 0.08, h: 0.05 });
+            const pp = model._ppOf(model.readoutFieldOf(winId, id));
+            pp.mode = mode; pp.colors = colors;
+            await placeNewNode(`ro:${winId}:${id}`, "readout", `win:${winId}`, null);
+            render(); rebuildNode(`ro:${winId}:${id}`);
+            return id;
+        };
+        const bId = await mk("color", ["#010203"], 0.3);              // sibling in colour mode
+        const cId = await mk("threshold", [], 0.4);                   // sibling NOT in colour mode
+        const cols = (id) => (model._ppOf(model.readoutFieldOf(winId, id)).colors || []).slice();
+        const nodeId = `ro:${winId}:${roId}`;
+        const fd = model.readoutFieldOf(winId, roId);
+        const pp = model._ppOf(fd);
+        pp.mode = "color"; pp.colors = ["#ffffff"]; rebuildNode(nodeId);
+        document.querySelector(`#gnodes [data-id="${nodeId}"] .ppcolcopy`).click();   // stash ["#ffffff"]
+        pp.colors = ["#000000"]; rebuildNode(nodeId);
+        setMultiSelect([nodeId, `ro:${winId}:${bId}`, `ro:${winId}:${cId}`]);
+        document.querySelector(`#gnodes [data-id="${nodeId}"] .ppcolpaste`).click();
+        const out = { a: cols(roId), b: cols(bId), c: cols(cId),
+            status: document.querySelector("#logbar .log-latest")?.textContent || "" };   // setStatus -> the log bar
+        // ...and with a single selection it stays a one-node paste
+        clearMultiSelect();
+        const pp2 = model._ppOf(model.readoutFieldOf(winId, bId));
+        pp2.colors = ["#010203"]; rebuildNode(`ro:${winId}:${bId}`);
+        pp.colors = ["#000000"]; rebuildNode(nodeId);
+        document.querySelector(`#gnodes [data-id="${nodeId}"] .ppcolpaste`).click();
+        out.soloA = cols(roId); out.soloB = cols(bId);
+        model.removeReadout(winId, bId); model.removeReadout(winId, cId); render();
+        return out;
+    }, { winId: setup.winId, roId });
+    ok(JSON.stringify(fan.a) === JSON.stringify(["#000000", "#ffffff"]), `🔍 clicked node got the paste (${JSON.stringify(fan.a)})`);
+    ok(JSON.stringify(fan.b) === JSON.stringify(["#010203", "#ffffff"]), `🔍 the OTHER selected colour-mode node got it too, merged (${JSON.stringify(fan.b)})`);
+    ok(JSON.stringify(fan.c) === JSON.stringify([]), `🔍 a selected node not in colour mode is skipped (${JSON.stringify(fan.c)})`);
+    ok(/3 node|2 nodes/.test(fan.status) && /skipped/.test(fan.status), `🔍 status reports the fan-out + the skip ("${fan.status}")`);
+    ok(JSON.stringify(fan.soloA) === JSON.stringify(["#000000", "#ffffff"]) && JSON.stringify(fan.soloB) === JSON.stringify(["#010203"]),
+        `🔍 with one node selected the paste stays local (${JSON.stringify(fan.soloA)} / ${JSON.stringify(fan.soloB)})`);
 
     // cleanup: drop the throwaway readout so a rerun starts clean (mirrors register-readout-select).
     await page.evaluate(({ winId, roId }) => window.__t.model.removeReadout(winId, roId), { winId: setup.winId, roId }).catch(() => {});

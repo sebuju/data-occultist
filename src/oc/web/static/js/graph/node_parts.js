@@ -299,9 +299,11 @@ export const PP_MODE_DESC = {
 const PP_TIP = {
     mode: "how to clean this crop before OCR. none = read the raw pixels. color = keep only pixels near the taught text colour(s), everything else goes white — use for coloured/stylised game text on a busy background (e.g. a white cooldown number over ability FX). threshold = auto black/white (Otsu) — use for plain high-contrast text. invert = flip light-on-dark to dark-on-light — use for light text the recogniser reads better inverted.",
     colorlist: "the text colour(s) to keep — a pixel survives the mask if it's near ANY of these (within tolerance). Add the glyph colour (white for most HUD numbers); everything else goes to white background.",
-    pick: "sample from the image: opens a zoomed cutout of this readout's box — click the glyph colour to add it",
+    pick: "sample from the image: opens a zoomed cutout of this readout's box — click the glyph colour to add it, and keep clicking to add more (core + fringe shades); Esc closes",
     hex: "the kept colour as hex (e.g. #ffffff for white). Click the swatch for the colour picker, or type/paste a hex value.",
     add: "add a colour row",
+    colcopy: "copy this colour list — paste it into another readout/window's preprocess",
+    colpaste: "merge the copied colours into this list (colours already here are skipped)",
     tol: "how far a pixel's colour may sit from a taught colour and still be kept (BGR distance, 0-200). Too low = anti-aliased glyph edges drop out and thin strokes (a decimal point) vanish; too high = background bleeds in. Start ~60 and widen until the glyphs are solid without the background leaking.",
     scale: "enlarge the crop before OCR (INTER_CUBIC). Small HUD numbers are often too few pixels for the recogniser to resolve a thin decimal point — 2-3x gives it enough to read '4.00' instead of '400'. 1 = no upscale.",
     denoise: "kill isolated speckle: drop any near-colour blob smaller than this % of the LARGEST blob in the crop (relative, so it scales with resolution and font). Use when the mask leaves stray specks around the glyphs. The preview labels each blob's %, so set this just below the smallest part you must keep — a decimal point is tiny, so keep it low (a few %). 0 = off.",
@@ -371,6 +373,27 @@ export function markColorCollisions(inputs, colors, tolerance) {
     inputs.forEach((inp) => inp.classList.toggle("color-collide", bad.has(+inp.dataset.i)));
 }
 
+// Paste-merge for a preprocess colour list: append `incoming` to `colors`, skipping any hex the
+// list already holds (case-insensitive — the OS swatch writes lowercase, a typed hex may not).
+// MERGE, not replace: pasting colours taught on another readout adds to what's here rather than
+// throwing it away, so two readouts' glyph colours can be pooled. Blank/whitespace incoming rows
+// are dropped (they'd be dead rows); blanks already in the list are LEFT ALONE — one may be a row
+// the user just added with ＋ and is about to fill in. Near-but-not-equal duplicates are kept on
+// purpose: they extend the mask past the others (see markColorCollisions), and a truly redundant
+// one gets flagged red there rather than silently dropped here.
+export function mergeColors(colors, incoming) {
+    const out = (colors || []).slice();
+    const seen = new Set(out.map((c) => (c || "").trim().toLowerCase()).filter(Boolean));
+    for (const raw of incoming || []) {
+        const c = (raw || "").trim();
+        const key = c.toLowerCase();
+        if (!c || seen.has(key)) continue;
+        seen.add(key);
+        out.push(c);
+    }
+    return out;
+}
+
 // The match-preview canvas — FIRST element of every readout / detector node, regardless of
 // type/kind. Fixed backing size = a stable placeholder (the node never resizes when the image
 // loads); the cutout is letterboxed centre, matched pixels painted (see imaging.js mountMatchPreview).
@@ -398,9 +421,17 @@ export function preprocessControls(holder) {
         h("input", { type: "text", class: "pp-color", dataset: { i }, value: c || "", placeholder: "#rrggbb",
             style: "width:9ch", title: PP_TIP.hex }),
         trashBtn({ cls: "pp-coldel", dataset: { i }, title: "remove this colour (click twice to confirm)" })));
+    // The mode picker shares its row with a colour-list copy/paste pair (colour mode only — there
+    // is no list to copy otherwise). Icon-only, in a `.frule-btns` box so they wear the same look
+    // as the rules pipeline's copy/paste with no new selector (rule 7); handlers = wirePreprocess.
     return frag(
-        kv("preprocess", h("button", { class: "ppmode rich-dd-btn", type: "button", title: PP_MODE_DESC[pp.mode || "none"] || PP_TIP.mode },
-            `<${(PP_MODES.find(([v]) => v === (pp.mode || "none")) || [, pp.mode])[1]}>`),
+        kv("preprocess", h("div", { class: "pp-mode-row" },
+            h("button", { class: "ppmode rich-dd-btn", type: "button", title: PP_MODE_DESC[pp.mode || "none"] || PP_TIP.mode },
+                `<${(PP_MODES.find(([v]) => v === (pp.mode || "none")) || [, pp.mode])[1]}>`),
+            pp.mode === "color" && h("div", { class: "frule-btns" },
+                copyPasteBtns("ppcolcopy", "ppcolpaste", {
+                    canCopy: (pp.colors || []).some((c) => (c || "").trim()),
+                    copyTitle: PP_TIP.colcopy, pasteTitle: PP_TIP.colpaste }))),
             { title: PP_TIP.mode }),
         pp.mode === "color" && frag(
             colorPickLabel("color", PP_TIP.colorlist,

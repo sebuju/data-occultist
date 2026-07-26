@@ -63,6 +63,11 @@
 .spacing-guide { stroke: var(--muted); stroke-width: 1; opacity: .7; vector-effect: non-scaling-stroke; }
 .spacing-label rect { fill: var(--bg); stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: .92; }
 .spacing-label text { fill: var(--muted); font-family: var(--font-mono); text-anchor: middle; dominant-baseline: middle; }
+/* W×H badge over a just-resized node, anchored dead-centre of that node's box (same pill primitive
+   as .spacing-label, same inline counter-scaled font-size) — brighter, since it's the readout the
+   resize was about, and it sits on top of the node body rather than on empty canvas. */
+.size-badge rect { fill: var(--panel); stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: .95; }
+.size-badge text { fill: var(--text); font-family: var(--font-mono); text-anchor: middle; dominant-baseline: middle; }
 /* keyboard node-nav: the big directional arrow drawn while an arrow key is held (navarrow.js).
    Viewport-fixed layer above the world; pointer-events off so it never eats input. */
 #navArrowLayer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 900; overflow: visible;
@@ -683,7 +688,9 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     position: absolute; inset: 0; z-index: 1;
     background: var(--panel);
     border-radius: 6px; padding: 2px 0;
-    display: flex; flex-direction: column; gap: 8px; justify-content: center;
+    display: flex; flex-direction: column; gap: 8px;
+    justify-content: flex-start;
+    align-items: flex-start;
 }
 /* .gn-rectbtn's active tint comes free from .gn-cog.on (flow.css) -- it carries both classes */
 
@@ -721,7 +728,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
    rows, atlas cutouts, etc. — instead of a per-class copy each time a list grows a remove button. */
 .btn-trash[data-armed="1"] { background: var(--warn); color: var(--on-accent); visibility: visible !important; }
 
-/* Readout colour-pick modal: a blown-up cutout of the readout box, click a pixel to sample. */
+/* Readout colour-pick modal: a blown-up cutout of the readout box; each click samples another
+   colour (the modal stays open until ✕/Escape/backdrop). */
 .pp-pick-modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center;
     justify-content: center; background: rgba(0, 0, 0, 0.62); }
 .pp-pick-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
@@ -731,14 +739,17 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     margin-bottom: 6px; color: var(--muted); font-size: 12px; }
 .pp-pick-x { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 4px; }
 .pp-pick-x:hover { color: var(--text); }
-.pp-pick-canvas { display: block; cursor: crosshair; image-rendering: pixelated;
-    border: 1px solid var(--line); }
+.pp-pick-canvas { display: block; cursor: crosshair; image-rendering: pixelated; width: calc(92dvw - 100px);
+    max-width: 100%; height: auto; border: 1px solid var(--line); }
 
 /* Match-preview canvas (first element of every readout / detector node). Fixed intrinsic size
    (240x150) reserves a stable placeholder so the node never resizes when the image loads;
    width:100% + height:auto keeps that aspect as the node resizes. */
 .mp-canvas { display: block; width: 100%; height: auto; background: #0b0d12;
-    image-rendering: pixelated; }
+    image-rendering: pixelated; cursor: pointer; }
+/* armed: this cutout owns WASD (click it to arm — imaging.js armMpNudge), so mark which box the
+   keys are about to move. Inset outline, no layout shift. */
+.mp-canvas.mp-nudge { outline: 1px solid var(--nt, var(--accent)); outline-offset: -1px; }
 /* a colliding colour input (same colour, or within another's tolerance) — the standard danger fill.
    Selector must out-specify the .gnode de-input rule (line ~178, 0,2,1) or the fill stays transparent. */
 .gnode .color-row input.color-collide { background: var(--danger); color: var(--on-danger); }
@@ -769,14 +780,15 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .fgrp { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; }
 .fgrp:first-child { margin-top: 0; }
 .frule-btns { display: flex; gap: 4px; align-items: center; place-self: flex-end; }
-.frule-btns > button { min-height: unset; padding: 0px; background: unset; color: var(--nt, var(--accent)); width: 12px; }
+/* Keyed off the CONTAINER, not each button class nor the row it sits in: every button pair in one
+   of these boxes (rules copy/paste/add, the sound forge's pitch/shape copy/paste, the preprocess
+   colour-list copy/paste) is a `.frule-btns > button`, so a new section's buttons inherit the look
+   with no new selector (rule 7) — including the boxes that live outside a `.fgrp` sub-heading
+   (`.pp-mode-row`, `.tn-bk-ctl`). */
+.frule-btns > button { padding: 0px; background: unset; color: var(--nt, var(--accent)); width: 12px;
+    font-size: var(--fs-xs); line-height: 1; min-height: 0; text-transform: none; letter-spacing: 0; }
 .frule-btns > button.btn-trash { padding: 0; }
-/* Keyed off the CONTAINER, not each button class: every sub-heading button pair (rules copy/paste/
-   add, the sound forge's pitch/shape copy/paste) is a `.frule-btns > button`, so a new section's
-   buttons inherit the look with no new selector (rule 7). */
-.fgrp .frule-btns > button { font-size: var(--fs-xs); line-height: 1;
-    min-height: 0; text-transform: none; letter-spacing: 0; }
-.fgrp .frule-btns > button[disabled] { opacity: .4; cursor: default; }
+.frule-btns > button[disabled] { opacity: .4; cursor: default; }
 /* one pipeline rule: a head row (move + when(+arg) -> then(+operands) + trash) and, below it,
    the live in->out trace slot */
 .frule { display: flex; flex-direction: column; gap: 2px; }
@@ -989,9 +1001,15 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 /* item-tell color kind: hex input beside a native color swatch/picker (single color) */
 .aset-color { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px; min-width: 0; }
 .gnode .gn-grid .aset-color input[type="text"] { width: 100%; min-width: 0; }
+/* preprocess mode row: the rich-dd mode button plus (in colour mode) the colour-list copy/paste
+   pair on the same line. The button is width:100%/display:block by default, so as a flex item it
+   would eat the row — let it flex-shrink instead so the icons keep their 12px. */
+.pp-mode-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pp-mode-row > .rich-dd-btn { flex: 1 1 auto; width: auto; min-width: 0; }
 /* detect node color kind: a list of color rows (swatch + hex + remove); ＋ rides the subhead */
-.color-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; margin-left: 4px; }
+.color-list { display: flex; flex-direction: row; gap: 4px; min-width: 0; margin-left: 4px; flex-wrap: wrap; }
 .color-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px; min-width: 0; }
+.color-row:not(:hover) .pp-coldel { visibility: hidden; }
 .gnode .gn-grid .color-row input[type="text"] { width: 100%; min-width: 0; }
 .gnode .gn-grid .aset-color .aset-swatch,
 .gnode .gn-grid .color-row .aset-swatch { width: 22px; height: calc(100% - 4px); padding: 0; border: 1px solid var(--border, #444); border-radius: 2px; cursor: pointer; background: none; }
@@ -1179,6 +1197,15 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
 .img-layers .flab { font-size: var(--fs-sm); grid-template-columns: 1fr 2fr; }
 .img-pageind { font-size: var(--fs-sm); color: var(--muted); min-width: 28px; text-align: center; }
 .imgpg { padding: 2px 8px; }
+button.btn-icon.rect-txn-ok {
+    color: var(--ok);
+    background:  color-mix(in srgb, var(--ok), #000000);
+}
+
+button.btn-icon.rect-txn-no {
+   color: var(--danger);
+   background: color-mix(in srgb, var(--danger), #000000);
+}
 
 /* item node: frozen cutout canvas + tells/fields lists.
    The NODE is resizable; the canvas fills it (so the cutout grows with the node
