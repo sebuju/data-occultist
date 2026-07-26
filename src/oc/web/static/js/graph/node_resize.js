@@ -182,7 +182,7 @@ export function nodeResizeOpts(div, id, { widthOnly = false } = {}) {
                 else nodeSizes.delete(id);   // natural on both axes -> as if never sized
             }
             setDraggingNodes(false); flushEdges(); groups.renderGroups(); persist.layout();
-            flashGuides([id]);   // keep the resting alignment/spacing shown briefly, then fade
+            flashGuides([id], { size: true });   // resting alignment/spacing + the settled W×H at the node's centre, then fade
         },
         // Resetting a size is no longer a grip concern — the corner carets are gone. The seltoolbar's
         // "reset size" button drives resetSelectionSize() below instead.

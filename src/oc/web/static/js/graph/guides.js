@@ -4,6 +4,11 @@
 // PLUS, per side (left/right/top/bottom), a measurement line + px label to the nearest node that
 // overlaps the moving bbox on that side, so gaps can be matched by eye too. Visual only: the node
 // still moves/resizes on the 20px grid, the guides just show what it lines up / spaces against.
+// An alignment line is drawn ONLY in the empty space between the boxes it ties together (never over
+// a node body, its own or a bystander's) and only against neighbours currently on screen — see
+// lineSegments / viewWorld.
+// A RESIZE additionally stamps a W×H badge dead-centre of each resized node (showGuides/flashGuides
+// `size: true`), so the settled box size is readable for as long as its guides are up.
 // Recomputed live each drag/resize frame (showGuides), cleared on deselect/settle.
 //
 // A lazy <svg id="gguides"> lives inside #gworld (like flow.js's #gflow), so it rides the pan/zoom
@@ -33,6 +38,44 @@ const rectOf = (id, live) => {
 const xsOf = (r) => [r.x, r.x + r.w / 2, r.x + r.w];
 const ysOf = (r) => [r.y, r.y + r.h / 2, r.y + r.h];
 
+// The world rect currently on screen, padded by one viewport. Guides are only ever drawn against
+// neighbours inside it: a node thousands of world px away is not something the user is squaring up
+// against, and matching one used to stretch a single alignment line clean across the graph (an
+// 11000px line through a dozen unrelated nodes, ending nowhere near the pair it was about).
+// Same screen->world mapping as everywhere else (#gpan translate + #gworld scale).
+function viewWorld() {
+    const g = document.getElementById("graph");
+    const r = g ? g.getBoundingClientRect() : { width: window.innerWidth, height: window.innerHeight };
+    const z = view.zoom || 1;
+    const x = -view.panX / z, y = -view.panY / z, w = r.width / z, h = r.height / z;
+    return { x: x - w, y: y - h, w: w * 3, h: h * 3 };   // one viewport of slack on every side
+}
+const hits = (r, b) => r.x < b.x + b.w && r.x + r.w > b.x && r.y < b.y + b.h && r.y + r.h > b.y;
+
+// Split an alignment line into the segments that cover NO node. `spans` = the perpendicular lo..hi
+// of every box the line ties together (they set how far the line runs); `blocked` = the same for
+// every other box the line would cross on its way. The line runs from the first participant to the
+// last (plus a short overhang past each outer end, which is what keeps it visible when two boxes
+// touch and there's no gap to draw in) MINUS every box span, so it stitches the aligned boxes
+// without ever being drawn over a body — and its ends land on the box edges the guide is about.
+const OVERHANG = 14;   // world px of line past the outermost box on each side
+function lineSegments(spans, blocked) {
+    let start = Infinity, end = -Infinity;
+    for (const [lo, hi] of spans) { start = Math.min(start, lo); end = Math.max(end, hi); }
+    const cuts = [...spans, ...blocked].sort((a, b) => a[0] - b[0]);
+    const out = [];
+    let at = start - OVERHANG;
+    const tail = end + OVERHANG;
+    for (const [lo, hi] of cuts) {
+        if (hi <= at) continue;
+        if (lo > at) out.push([at, Math.min(lo, tail)]);
+        at = Math.max(at, hi);
+        if (at >= tail) break;
+    }
+    if (at < tail) out.push([at, tail]);
+    return out.filter(([a, b]) => b - a > 0.5);
+}
+
 let layer = null;
 function ensureLayer() {
     if (layer && layer.isConnected) return layer;
@@ -53,11 +96,14 @@ function cancelTimer() { if (clearTimer) { clearTimeout(clearTimer); clearTimer 
 // subject is what lets any node move re-derive the same guides at the new positions instead of
 // leaving the old lines behind — see refreshGuides.
 let subject = null;
+// Show a W×H badge over each subject node — set by the RESIZE call sites only, so a plain move/
+// select never reports a size. Rides `subject`'s lifetime: it lives exactly as long as the guides.
+let withSize = false;
 let dirty = false, _raf = 0;
 
 export function clearGuides() {
     cancelTimer();
-    subject = null; dirty = false;
+    subject = null; withSize = false; dirty = false;
     if (_raf) { cancelAnimationFrame(_raf); _raf = 0; }
     if (layer) layer.replaceChildren();
 }
@@ -96,15 +142,16 @@ function spacingLine(x1, y1, x2, y2) {
 // instead of just a halo-stroked glyph. Sized from the string WITHOUT getBBox (a live drag/resize
 // redraws every frame — getBBox forces layout and would make that expensive); monospace + a fixed
 // digit width both make that a safe estimate.
+// ONE pill primitive, two callers (rule 7): the spacing gap labels and the resize W×H badge — they
+// differ only in text + class, so the geometry/counter-scale maths lives here once.
 const LABEL_CHAR_W = 0.62;   // digit width as a fraction of font-size, for --font-mono
 const LABEL_PAD = 4;         // world px padding each side, at font-size scale (counter-scaled like the text)
-function spacingLabel(cx, cy, gap) {
-    const text = `${Math.round(gap)}`;
+function pillLabel(cx, cy, text, cls) {
     const fs = 12 / (view.zoom || 1);   // counter-scale #gworld's zoom -> constant screen size
     const pad = LABEL_PAD / (view.zoom || 1);
     const w = text.length * fs * LABEL_CHAR_W + pad * 2, h = fs + pad * 2;
     const g = document.createElementNS(SVGNS, "g");
-    g.setAttribute("class", "spacing-label");
+    g.setAttribute("class", cls);
     const rect = document.createElementNS(SVGNS, "rect");
     rect.setAttribute("x", cx - w / 2); rect.setAttribute("y", cy - h / 2);
     rect.setAttribute("width", w); rect.setAttribute("height", h);
@@ -116,6 +163,10 @@ function spacingLabel(cx, cy, gap) {
     g.append(rect, el);
     return g;
 }
+const spacingLabel = (cx, cy, gap) => pillLabel(cx, cy, `${Math.round(gap)}`, "spacing-label");
+// W×H badge for a just-resized node, pinned to the CENTRE of that node's own box (not the union
+// bbox — with several nodes resized at once each one reports its own size over itself).
+const sizeBadge = (r) => pillLabel(r.x + r.w / 2, r.y + r.h / 2, `${Math.round(r.w)} × ${Math.round(r.h)}`, "size-badge");
 // Per side (L/R/T/B), find every OTHER rect whose perpendicular span overlaps the moving bbox on
 // that side, and draw a measurement line + px label to each — but only ONE per "lane": sorted
 // nearest-first, a candidate is skipped once its overlap span is already covered by a nearer kept
@@ -157,9 +208,10 @@ function drawSpacing(frag, mbox, others) {
 // Draw guides for `ids` (the selected / dragged node set) against every OTHER node. The moving
 // reference is the UNION bounding box of `ids`, so a single drag, a shift-subtree drag and a
 // multi-select drag all align the same way (the cluster's edges + centre).
-export function showGuides(ids) {
+// `size: true` (resize call sites) additionally stamps each subject node's W×H at its centre.
+export function showGuides(ids, { size = false } = {}) {
     cancelTimer();   // a live (drag) redraw owns the layer — drop any pending flash auto-clear
-    subject = [...ids];
+    subject = [...ids]; withSize = size;
     // This draw supersedes any queued re-sync: drop it rather than leave a no-op frame callback
     // pending every frame of a drag (positionNode queues one, then this runs later in the same frame).
     dirty = false;
@@ -192,39 +244,51 @@ function draw() {
     const mbox = { x: bx, y: by, w: br - bx, h: bb - by };
     const mxs = xsOf(mbox), mys = ysOf(mbox);
 
-    // matched guides keyed by rounded coord; grow each line's perpendicular span to cover every
-    // involved rect (the moving bbox + each matched neighbour) so it visibly connects them.
-    const vlines = new Map();   // x coord -> { c, lo, hi }  (vertical line at x=c, spanning y lo..hi)
-    const hlines = new Map();   // y coord -> { c, lo, hi }  (horizontal line at y=c, spanning x lo..hi)
+    // matched guides keyed by rounded coord; each entry collects the perpendicular SPAN of every box
+    // the line ties together (the moving bbox + each matched neighbour), kept as separate spans so
+    // the line can later be drawn only in the gaps BETWEEN them (gapSegments) instead of straight
+    // over their bodies.
+    const vlines = new Map();   // x coord -> { c, spans: [[y0,y1], ...] }  (vertical line at x=c)
+    const hlines = new Map();   // y coord -> { c, spans: [[x0,x1], ...] }  (horizontal line at y=c)
     const bump = (map, coord, lo, hi) => {
         const k = Math.round(coord);
-        const g = map.get(k) || { c: coord, lo, hi };
-        g.lo = Math.min(g.lo, lo); g.hi = Math.max(g.hi, hi);
+        const g = map.get(k) || { c: coord, spans: [] };
+        g.spans.push([lo, hi]);
         map.set(k, g);
     };
-    const others = [];   // every other node's rect, reused below for the distance guides
+    const vis = viewWorld();
+    const others = [];   // every other VISIBLE node's rect, reused below for the distance guides
     for (const id of nodeEls.keys()) {
         if (moving.has(id)) continue;
         const r = rectOf(id);
-        if (!r) continue;
+        if (!r || !hits(r, vis)) continue;   // off-screen neighbours are not what's being lined up
         others.push(r);
         for (const ox of xsOf(r)) for (const mx of mxs) if (Math.abs(mx - ox) <= TOL) {
-            bump(vlines, ox, Math.min(mbox.y, r.y), Math.max(mbox.y + mbox.h, r.y + r.h));
+            bump(vlines, ox, r.y, r.y + r.h);
         }
         for (const oy of ysOf(r)) for (const my of mys) if (Math.abs(my - oy) <= TOL) {
-            bump(hlines, oy, Math.min(mbox.x, r.x), Math.max(mbox.x + mbox.w, r.x + r.w));
+            bump(hlines, oy, r.x, r.x + r.w);
         }
     }
     const frag = document.createDocumentFragment();
-    for (const g of vlines.values()) frag.appendChild(guideLine(g.c, g.lo, g.c, g.hi));
-    for (const g of hlines.values()) frag.appendChild(guideLine(g.lo, g.c, g.hi, g.c));
+    // Boxes the line merely PASSES OVER (not aligned with it) block it too — an unrelated node
+    // sitting between two aligned ones used to get a guide drawn straight across its body.
+    // `> 0.5` so a box whose own edge IS the guide coordinate doesn't count as blocking itself.
+    const crossedY = (c) => others.filter((r) => c - r.x > 0.5 && r.x + r.w - c > 0.5).map((r) => [r.y, r.y + r.h]);
+    const crossedX = (c) => others.filter((r) => c - r.y > 0.5 && r.y + r.h - c > 0.5).map((r) => [r.x, r.x + r.w]);
+    for (const g of vlines.values()) for (const [lo, hi] of lineSegments([[mbox.y, mbox.y + mbox.h], ...g.spans], crossedY(g.c)))
+        frag.appendChild(guideLine(g.c, lo, g.c, hi));
+    for (const g of hlines.values()) for (const [lo, hi] of lineSegments([[mbox.x, mbox.x + mbox.w], ...g.spans], crossedX(g.c)))
+        frag.appendChild(guideLine(lo, g.c, hi, g.c));
     drawSpacing(frag, mbox, others);
+    // last, so the badge sits over the guide lines it shares the box with
+    if (withSize) for (const r of rects) frag.appendChild(sizeBadge(r));
     svg.replaceChildren(frag);
 }
 
 // Draw guides, then auto-clear after `ms` — for a discrete WASD move/resize (no drag to end them).
 // Each nudge resets the timer, so a burst of steps keeps the guides up until ~ms after the last.
-export function flashGuides(ids, ms = 1200) {
-    showGuides(ids);          // cancels any prior timer
+export function flashGuides(ids, { ms = 1200, size = false } = {}) {
+    showGuides(ids, { size });   // cancels any prior timer
     clearTimer = setTimeout(() => { clearTimer = null; clearGuides(); }, ms);
 }
