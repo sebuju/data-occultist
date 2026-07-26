@@ -47,9 +47,143 @@ windows:
     preprocess:
       mode: color
       colors:
-      - '#eaf2fd'
-      - '#d8f3f0'
-      tolerance: 30
+      - '#fcfdff'
+      - '#f7f8fa'
+      - '#f4f4f6'
+      - '#eeeeee'
+      - '#d9dbda'
+      - '#d5d7d6'
+      - '#dcdedd'
+      - '#e2e4e3'
+      - '#f1f1f1'
+      - '#dfe1e0'
+      - '#c3c5c2'
+      - '#e8e8e8'
+      - '#cdcdcd'
+      - '#bdbfbc'
+      - '#f4fcff'
+      - '#edffff'
+      - '#f7fdf3'
+      - '#fefff8'
+      - '#e4f8f6'
+      - '#ecf9ff'
+      - '#e5ffff'
+      - '#f4fdfa'
+      - '#d5edef'
+      - '#d5e9ea'
+      - '#edfdf3'
+      - '#f2f5fe'
+      - '#ececf8'
+      - '#e8f1f8'
+      - '#e5e9f2'
+      - '#e4eef0'
+      - '#e4eff5'
+      - '#dbedf1'
+      - '#e5eeeb'
+      - '#dcf4f6'
+      - '#e6f2fe'
+      - '#eaeaf2'
+      - '#def1eb'
+      - '#deeaea'
+      - '#e5f4f1'
+      - '#d7e4ea'
+      - '#e6fafb'
+      - '#d7f4f0'
+      - '#ebf2ff'
+      - '#dffcff'
+      - '#f6f2ff'
+      - '#eeedf3'
+      - '#ede2f0'
+      - '#ebedea'
+      - '#ecf5f4'
+      - '#eef4ea'
+      - '#eff3e5'
+      - '#e4eae0'
+      - '#ebeee7'
+      - '#eaeee0'
+      - '#dfe2db'
+      - '#f7f2ef'
+      - '#f1eee7'
+      - '#e9e9e1'
+      - '#e2e6d7'
+      - '#f5f7ec'
+      - '#e5e7dc'
+      - '#dce0d2'
+      - '#f6f7f2'
+      - '#ddebf6'
+      - '#d0f2fb'
+      - '#e1eee7'
+      - '#e9f3e8'
+      - '#faeff3'
+      - '#eaf8eb'
+      - '#e4f0e2'
+      - '#ddead8'
+      - '#e6dbdf'
+      - '#d8f3e4'
+      - '#daede9'
+      - '#dcf6ed'
+      - '#fff4f2'
+      - '#faece9'
+      - '#e7dfdc'
+      - '#daf2fc'
+      - '#daf7fd'
+      - '#e4f7ff'
+      - '#c7eae6'
+      - '#d6f5fa'
+      - '#e7e8ed'
+      - '#dce3ed'
+      - '#dee5f5'
+      - '#d1ddd3'
+      - '#dee9ef'
+      - '#efe6eb'
+      - '#f0e3f4'
+      - '#cce3dd'
+      - '#d4e8f3'
+      - '#e6dfe6'
+      - '#f6ebfb'
+      - '#d2d9f5'
+      - '#d6e6e5'
+      - '#d8ebfc'
+      - '#bcd5da'
+      - '#b9d7df'
+      - '#b5d5d4'
+      - '#dff7f9'
+      - '#c5dddf'
+      - '#c6dfe6'
+      - '#ddfafe'
+      - '#d8e9df'
+      - '#b3d8e0'
+      - '#cdd5c8'
+      - '#e6ede6'
+      - '#c8cdc7'
+      - '#ddeae3'
+      - '#e8fff5'
+      - '#ebf1f1'
+      - '#c4e4d5'
+      - '#e0e0e8'
+      - '#cce7f0'
+      - '#d7fbf9'
+      - '#d3f7ff'
+      - '#badeea'
+      - '#defdee'
+      - '#e7f4e3'
+      - '#f3e6e0'
+      - '#d7e3e1'
+      - '#eee9e6'
+      - '#fcf8f7'
+      - '#e7e3e2'
+      - '#f4efec'
+      - '#f3e9e7'
+      - '#ebe1df'
+      - '#fbf0ec'
+      - '#f4ede3'
+      - '#f4f2e6'
+      - '#f1ebdf'
+      - '#f9f1e6'
+      - '#eae2d7'
+      - '#eae6db'
+      - '#fdfaf1'
+      tolerance: 5
       scale: 1.0
       min_frac: 0.02
     corroborate: false
@@ -63,9 +197,143 @@ windows:
     preprocess:
       mode: color
       colors:
-      - '#eaf2fd'
-      - '#d8f3f0'
-      tolerance: 30
+      - '#fcfdff'
+      - '#f7f8fa'
+      - '#f4f4f6'
+      - '#eeeeee'
+      - '#d9dbda'
+      - '#d5d7d6'
+      - '#dcdedd'
+      - '#e2e4e3'
+      - '#f1f1f1'
+      - '#dfe1e0'
+      - '#c3c5c2'
+      - '#e8e8e8'
+      - '#cdcdcd'
+      - '#bdbfbc'
+      - '#f4fcff'
+      - '#edffff'
+      - '#f7fdf3'
+      - '#fefff8'
+      - '#e4f8f6'
+      - '#ecf9ff'
+      - '#e5ffff'
+      - '#f4fdfa'
+      - '#d5edef'
+      - '#d5e9ea'
+      - '#edfdf3'
+      - '#f2f5fe'
+      - '#ececf8'
+      - '#e8f1f8'
+      - '#e5e9f2'
+      - '#e4eef0'
+      - '#e4eff5'
+      - '#dbedf1'
+      - '#e5eeeb'
+      - '#dcf4f6'
+      - '#e6f2fe'
+      - '#eaeaf2'
+      - '#def1eb'
+      - '#deeaea'
+      - '#e5f4f1'
+      - '#d7e4ea'
+      - '#e6fafb'
+      - '#d7f4f0'
+      - '#ebf2ff'
+      - '#dffcff'
+      - '#f6f2ff'
+      - '#eeedf3'
+      - '#ede2f0'
+      - '#ebedea'
+      - '#ecf5f4'
+      - '#eef4ea'
+      - '#eff3e5'
+      - '#e4eae0'
+      - '#ebeee7'
+      - '#eaeee0'
+      - '#dfe2db'
+      - '#f7f2ef'
+      - '#f1eee7'
+      - '#e9e9e1'
+      - '#e2e6d7'
+      - '#f5f7ec'
+      - '#e5e7dc'
+      - '#dce0d2'
+      - '#f6f7f2'
+      - '#ddebf6'
+      - '#d0f2fb'
+      - '#e1eee7'
+      - '#e9f3e8'
+      - '#faeff3'
+      - '#eaf8eb'
+      - '#e4f0e2'
+      - '#ddead8'
+      - '#e6dbdf'
+      - '#d8f3e4'
+      - '#daede9'
+      - '#dcf6ed'
+      - '#fff4f2'
+      - '#faece9'
+      - '#e7dfdc'
+      - '#daf2fc'
+      - '#daf7fd'
+      - '#e4f7ff'
+      - '#c7eae6'
+      - '#d6f5fa'
+      - '#e7e8ed'
+      - '#dce3ed'
+      - '#dee5f5'
+      - '#d1ddd3'
+      - '#dee9ef'
+      - '#efe6eb'
+      - '#f0e3f4'
+      - '#cce3dd'
+      - '#d4e8f3'
+      - '#e6dfe6'
+      - '#f6ebfb'
+      - '#d2d9f5'
+      - '#d6e6e5'
+      - '#d8ebfc'
+      - '#bcd5da'
+      - '#b9d7df'
+      - '#b5d5d4'
+      - '#dff7f9'
+      - '#c5dddf'
+      - '#c6dfe6'
+      - '#ddfafe'
+      - '#d8e9df'
+      - '#b3d8e0'
+      - '#cdd5c8'
+      - '#e6ede6'
+      - '#c8cdc7'
+      - '#ddeae3'
+      - '#e8fff5'
+      - '#ebf1f1'
+      - '#c4e4d5'
+      - '#e0e0e8'
+      - '#cce7f0'
+      - '#d7fbf9'
+      - '#d3f7ff'
+      - '#badeea'
+      - '#defdee'
+      - '#e7f4e3'
+      - '#f3e6e0'
+      - '#d7e3e1'
+      - '#eee9e6'
+      - '#fcf8f7'
+      - '#e7e3e2'
+      - '#f4efec'
+      - '#f3e9e7'
+      - '#ebe1df'
+      - '#fbf0ec'
+      - '#f4ede3'
+      - '#f4f2e6'
+      - '#f1ebdf'
+      - '#f9f1e6'
+      - '#eae2d7'
+      - '#eae6db'
+      - '#fdfaf1'
+      tolerance: 5
       scale: 1.0
       min_frac: 0.02
     corroborate: false
@@ -79,9 +347,143 @@ windows:
     preprocess:
       mode: color
       colors:
-      - '#eaf2fd'
-      - '#d8f3f0'
-      tolerance: 30
+      - '#fcfdff'
+      - '#f7f8fa'
+      - '#f4f4f6'
+      - '#eeeeee'
+      - '#d9dbda'
+      - '#d5d7d6'
+      - '#dcdedd'
+      - '#e2e4e3'
+      - '#f1f1f1'
+      - '#dfe1e0'
+      - '#c3c5c2'
+      - '#e8e8e8'
+      - '#cdcdcd'
+      - '#bdbfbc'
+      - '#f4fcff'
+      - '#edffff'
+      - '#f7fdf3'
+      - '#fefff8'
+      - '#e4f8f6'
+      - '#ecf9ff'
+      - '#e5ffff'
+      - '#f4fdfa'
+      - '#d5edef'
+      - '#d5e9ea'
+      - '#edfdf3'
+      - '#f2f5fe'
+      - '#ececf8'
+      - '#e8f1f8'
+      - '#e5e9f2'
+      - '#e4eef0'
+      - '#e4eff5'
+      - '#dbedf1'
+      - '#e5eeeb'
+      - '#dcf4f6'
+      - '#e6f2fe'
+      - '#eaeaf2'
+      - '#def1eb'
+      - '#deeaea'
+      - '#e5f4f1'
+      - '#d7e4ea'
+      - '#e6fafb'
+      - '#d7f4f0'
+      - '#ebf2ff'
+      - '#dffcff'
+      - '#f6f2ff'
+      - '#eeedf3'
+      - '#ede2f0'
+      - '#ebedea'
+      - '#ecf5f4'
+      - '#eef4ea'
+      - '#eff3e5'
+      - '#e4eae0'
+      - '#ebeee7'
+      - '#eaeee0'
+      - '#dfe2db'
+      - '#f7f2ef'
+      - '#f1eee7'
+      - '#e9e9e1'
+      - '#e2e6d7'
+      - '#f5f7ec'
+      - '#e5e7dc'
+      - '#dce0d2'
+      - '#f6f7f2'
+      - '#ddebf6'
+      - '#d0f2fb'
+      - '#e1eee7'
+      - '#e9f3e8'
+      - '#faeff3'
+      - '#eaf8eb'
+      - '#e4f0e2'
+      - '#ddead8'
+      - '#e6dbdf'
+      - '#d8f3e4'
+      - '#daede9'
+      - '#dcf6ed'
+      - '#fff4f2'
+      - '#faece9'
+      - '#e7dfdc'
+      - '#daf2fc'
+      - '#daf7fd'
+      - '#e4f7ff'
+      - '#c7eae6'
+      - '#d6f5fa'
+      - '#e7e8ed'
+      - '#dce3ed'
+      - '#dee5f5'
+      - '#d1ddd3'
+      - '#dee9ef'
+      - '#efe6eb'
+      - '#f0e3f4'
+      - '#cce3dd'
+      - '#d4e8f3'
+      - '#e6dfe6'
+      - '#f6ebfb'
+      - '#d2d9f5'
+      - '#d6e6e5'
+      - '#d8ebfc'
+      - '#bcd5da'
+      - '#b9d7df'
+      - '#b5d5d4'
+      - '#dff7f9'
+      - '#c5dddf'
+      - '#c6dfe6'
+      - '#ddfafe'
+      - '#d8e9df'
+      - '#b3d8e0'
+      - '#cdd5c8'
+      - '#e6ede6'
+      - '#c8cdc7'
+      - '#ddeae3'
+      - '#e8fff5'
+      - '#ebf1f1'
+      - '#c4e4d5'
+      - '#e0e0e8'
+      - '#cce7f0'
+      - '#d7fbf9'
+      - '#d3f7ff'
+      - '#badeea'
+      - '#defdee'
+      - '#e7f4e3'
+      - '#f3e6e0'
+      - '#d7e3e1'
+      - '#eee9e6'
+      - '#fcf8f7'
+      - '#e7e3e2'
+      - '#f4efec'
+      - '#f3e9e7'
+      - '#ebe1df'
+      - '#fbf0ec'
+      - '#f4ede3'
+      - '#f4f2e6'
+      - '#f1ebdf'
+      - '#f9f1e6'
+      - '#eae2d7'
+      - '#eae6db'
+      - '#fdfaf1'
+      tolerance: 5
       scale: 1.0
       min_frac: 0.02
     corroborate: false
@@ -95,9 +497,143 @@ windows:
     preprocess:
       mode: color
       colors:
-      - '#eaf2fd'
-      - '#d8f3f0'
-      tolerance: 30
+      - '#fcfdff'
+      - '#f7f8fa'
+      - '#f4f4f6'
+      - '#eeeeee'
+      - '#d9dbda'
+      - '#d5d7d6'
+      - '#dcdedd'
+      - '#e2e4e3'
+      - '#f1f1f1'
+      - '#dfe1e0'
+      - '#c3c5c2'
+      - '#e8e8e8'
+      - '#cdcdcd'
+      - '#bdbfbc'
+      - '#f4fcff'
+      - '#edffff'
+      - '#f7fdf3'
+      - '#fefff8'
+      - '#e4f8f6'
+      - '#ecf9ff'
+      - '#e5ffff'
+      - '#f4fdfa'
+      - '#d5edef'
+      - '#d5e9ea'
+      - '#edfdf3'
+      - '#f2f5fe'
+      - '#ececf8'
+      - '#e8f1f8'
+      - '#e5e9f2'
+      - '#e4eef0'
+      - '#e4eff5'
+      - '#dbedf1'
+      - '#e5eeeb'
+      - '#dcf4f6'
+      - '#e6f2fe'
+      - '#eaeaf2'
+      - '#def1eb'
+      - '#deeaea'
+      - '#e5f4f1'
+      - '#d7e4ea'
+      - '#e6fafb'
+      - '#d7f4f0'
+      - '#ebf2ff'
+      - '#dffcff'
+      - '#f6f2ff'
+      - '#eeedf3'
+      - '#ede2f0'
+      - '#ebedea'
+      - '#ecf5f4'
+      - '#eef4ea'
+      - '#eff3e5'
+      - '#e4eae0'
+      - '#ebeee7'
+      - '#eaeee0'
+      - '#dfe2db'
+      - '#f7f2ef'
+      - '#f1eee7'
+      - '#e9e9e1'
+      - '#e2e6d7'
+      - '#f5f7ec'
+      - '#e5e7dc'
+      - '#dce0d2'
+      - '#f6f7f2'
+      - '#ddebf6'
+      - '#d0f2fb'
+      - '#e1eee7'
+      - '#e9f3e8'
+      - '#faeff3'
+      - '#eaf8eb'
+      - '#e4f0e2'
+      - '#ddead8'
+      - '#e6dbdf'
+      - '#d8f3e4'
+      - '#daede9'
+      - '#dcf6ed'
+      - '#fff4f2'
+      - '#faece9'
+      - '#e7dfdc'
+      - '#daf2fc'
+      - '#daf7fd'
+      - '#e4f7ff'
+      - '#c7eae6'
+      - '#d6f5fa'
+      - '#e7e8ed'
+      - '#dce3ed'
+      - '#dee5f5'
+      - '#d1ddd3'
+      - '#dee9ef'
+      - '#efe6eb'
+      - '#f0e3f4'
+      - '#cce3dd'
+      - '#d4e8f3'
+      - '#e6dfe6'
+      - '#f6ebfb'
+      - '#d2d9f5'
+      - '#d6e6e5'
+      - '#d8ebfc'
+      - '#bcd5da'
+      - '#b9d7df'
+      - '#b5d5d4'
+      - '#dff7f9'
+      - '#c5dddf'
+      - '#c6dfe6'
+      - '#ddfafe'
+      - '#d8e9df'
+      - '#b3d8e0'
+      - '#cdd5c8'
+      - '#e6ede6'
+      - '#c8cdc7'
+      - '#ddeae3'
+      - '#e8fff5'
+      - '#ebf1f1'
+      - '#c4e4d5'
+      - '#e0e0e8'
+      - '#cce7f0'
+      - '#d7fbf9'
+      - '#d3f7ff'
+      - '#badeea'
+      - '#defdee'
+      - '#e7f4e3'
+      - '#f3e6e0'
+      - '#d7e3e1'
+      - '#eee9e6'
+      - '#fcf8f7'
+      - '#e7e3e2'
+      - '#f4efec'
+      - '#f3e9e7'
+      - '#ebe1df'
+      - '#fbf0ec'
+      - '#f4ede3'
+      - '#f4f2e6'
+      - '#f1ebdf'
+      - '#f9f1e6'
+      - '#eae2d7'
+      - '#eae6db'
+      - '#fdfaf1'
+      tolerance: 5
       scale: 1.0
       min_frac: 0.02
     corroborate: false
@@ -112,6 +648,11 @@ windows:
       mode: color
       colors:
       - '#e9eaee'
+      - '#fafafa'
+      - '#a2a6b1'
+      - '#d2d4d3'
+      - '#cbbbbb'
+      - '#fae6dd'
       tolerance: 30
       scale: 1.0
       min_frac: 0.0
@@ -149,10 +690,10 @@ windows:
   readouts:
   - id: value_ab_1
     box:
-      x: 0.8427847058918725
-      y: 0.8977720311289145
-      w: 0.020163108940952967
-      h: 0.014490954393679131
+      x: 0.8467858685722063
+      y: 0.8986979570548405
+      w: 0.0115
+      h: 0.0115
     field: rof_3
     enabled: true
     test:
@@ -163,10 +704,10 @@ windows:
       step: '0.25'
   - id: value_ab_2
     box:
-      x: 0.865503246867423
-      y: 0.8991874673537482
-      w: 0.021519925109674487
-      h: 0.015487808745133523
+      x: 0.8697499961081215
+      y: 0.9008777986586839
+      w: 0.0115
+      h: 0.0115
     field: rof_5
     enabled: true
     test:
@@ -177,10 +718,10 @@ windows:
       step: '0.25'
   - id: value_ab_3
     box:
-      x: 0.8888997806849647
-      y: 0.9022397317554853
-      w: 0.022002260497121257
-      h: 0.016020159180372563
+      x: 0.8936187832194381
+      y: 0.9038417902033857
+      w: 0.0115
+      h: 0.0115
     field: rof_7
     enabled: true
     test:
@@ -191,10 +732,10 @@ windows:
       step: '0.25'
   - id: value_ab_4
     box:
-      x: 0.912804923904563
-      y: 0.9044257109101534
-      w: 0.019425253559241407
-      h: 0.01585915076894294
+      x: 0.9167111739045628
+      y: 0.9058145997990424
+      w: 0.011479166666666665
+      h: 0.0115
     field: rof_9
     enabled: true
     test:
@@ -2527,6 +3068,15 @@ datasets:
   sync_mode: accumulate
   keep_batches: 0
 - id: overframe_build_mods
+  aggregate: latest
+  key_field: ''
+  key_fields: []
+  dedup: true
+  batch_mode: run
+  reopen_grace: 0
+  sync_mode: accumulate
+  keep_batches: 0
+- id: dataset_2
   aggregate: latest
   key_field: ''
   key_fields: []
@@ -5592,7 +6142,7 @@ toasts:
   app_name: data-occultist
   duration: short
   icon: ''
-  show_icon: true
+  show_icon: false
   attribution: ''
   muted: false
   enabled: true
@@ -5621,7 +6171,7 @@ toasts:
   app_name: data-occultist
   duration: short
   icon: ''
-  show_icon: true
+  show_icon: false
   attribution: ''
   muted: false
   enabled: true
@@ -5828,7 +6378,7 @@ actions:
   reg_ops: {}
   input_events:
   - token: scroll:down
-    repeat: 1
+    repeat: 3
     delay_ms: 150
   delay_ms: 0
   repeat: 1
@@ -6100,8 +6650,8 @@ atlas:
 layout:
   nodes:
     game:
-      x: -3860.0
-      y: -3120.0
+      x: -3540.0
+      y: -3440.0
       w: 260.0
       h: 320.0
       collapsed: false
@@ -6110,8 +6660,8 @@ layout:
       softW: false
       softH: true
     dict:wiki:
-      x: -3040.0
-      y: -2720.0
+      x: -2720.0
+      y: -3040.0
       w: 320.0
       h: 360.0
       collapsed: false
@@ -6119,8 +6669,8 @@ layout:
       custH: true
       softW: true
     ds:master:
-      x: -1580.0
-      y: -3120.0
+      x: -1260.0
+      y: -3440.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6128,8 +6678,8 @@ layout:
       custH: true
       softH: true
     ds:prices_live:
-      x: -500.0
-      y: -1820.0
+      x: -180.0
+      y: -2140.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6137,8 +6687,8 @@ layout:
       custH: true
       softH: true
     sub:live_prices_joined:
-      x: -80.0
-      y: -3120.0
+      x: 240.0
+      y: -3440.0
       w: 360.0
       h: 920.0
       collapsed: false
@@ -6146,8 +6696,8 @@ layout:
       custH: true
       softH: true
     producer:wf_market_live:
-      x: -500.0
-      y: -3120.0
+      x: -180.0
+      y: -3440.0
       w: 360.0
       h: 1260.0
       collapsed: false
@@ -6155,8 +6705,8 @@ layout:
       custH: true
       softH: true
     sub:relic_rewards_limit:
-      x: -100.0
-      y: -5160.0
+      x: -80.0
+      y: -5720.0
       w: 360.0
       h: 260.0
       collapsed: false
@@ -6164,8 +6714,8 @@ layout:
       custH: true
       softH: true
     ds:relics_offered:
-      x: -100.0
-      y: -3680.0
+      x: -80.0
+      y: -4120.0
       w: 360.0
       h: 180.0
       collapsed: false
@@ -6173,8 +6723,8 @@ layout:
       custH: true
       softH: true
     ds:mods:
-      x: -1580.0
-      y: -2880.0
+      x: -1260.0
+      y: -3200.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6183,8 +6733,8 @@ layout:
       softW: true
       softH: true
     ds:mod_catalog:
-      x: -2000.0
-      y: -2080.0
+      x: -1680.0
+      y: -2400.0
       w: 360.0
       h: 200.0
       collapsed: false
@@ -6193,8 +6743,8 @@ layout:
       softW: true
       softH: true
     producer:mod_catalog_producer:
-      x: -2000.0
-      y: -3120.0
+      x: -1680.0
+      y: -3440.0
       w: 360.0
       h: 1000.0
       collapsed: false
@@ -6203,16 +6753,16 @@ layout:
       softW: true
       softH: true
     win:mod_window:
-      x: 980.0
-      y: -980.0
+      x: 1300.0
+      y: -820.0
       collapsed: false
     item:mod_window:mod:
-      x: -220.0
-      y: -980.0
+      x: 100.0
+      y: -820.0
       collapsed: false
     win:equipment_window:
-      x: -2520.0
-      y: -980.0
+      x: -2200.0
+      y: -820.0
       w: 620.0
       h: 960.0
       collapsed: false
@@ -6221,8 +6771,8 @@ layout:
       softW: false
       softH: false
     sb:equipment_window:scrollbar:
-      x: -2860.0
-      y: 0.0
+      x: -2540.0
+      y: 160.0
       w: 280.0
       h: 260.0
       collapsed: false
@@ -6230,24 +6780,24 @@ layout:
       custH: true
       softW: true
     item:equipment_window:arcane:
-      x: -3860.0
-      y: 60.0
+      x: -3540.0
+      y: 220.0
       w: 540.0
       h: 1066.0
       collapsed: false
       custW: true
       custH: false
     item:equipment_window:normal:
-      x: -3860.0
-      y: -980.0
+      x: -3540.0
+      y: -820.0
       w: 540.0
       h: 957.0
       collapsed: false
       custW: true
       custH: false
     det:equipment_window:detect_1:
-      x: -2860.0
-      y: -460.0
+      x: -2540.0
+      y: -300.0
       w: 280.0
       h: 440.0
       collapsed: false
@@ -6256,24 +6806,24 @@ layout:
       softW: true
       softH: true
     item:mod_window:drop_item:
-      x: -220.0
-      y: 80.0
+      x: 100.0
+      y: 240.0
       w: 380.0
       h: 815.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:normal:name:
-      x: -3260.0
-      y: -680.0
+      x: -2940.0
+      y: -520.0
       w: 320.0
       h: 420.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:normal:count:
-      x: -3260.0
-      y: -980.0
+      x: -2940.0
+      y: -820.0
       w: 320.0
       h: 260.0
       collapsed: false
@@ -6281,16 +6831,16 @@ layout:
       custH: true
       softH: true
     fld:equipment_window:arcane:name:
-      x: -3260.0
-      y: 680.0
+      x: -2940.0
+      y: 840.0
       w: 320.0
       h: 360.0
       collapsed: false
       custW: false
       custH: false
     fld:equipment_window:arcane:arcane_level:
-      x: -3260.0
-      y: 60.0
+      x: -2940.0
+      y: 220.0
       w: 320.0
       h: 300.0
       collapsed: false
@@ -6298,8 +6848,8 @@ layout:
       custH: true
       softH: true
     fld:equipment_window:arcane:count:
-      x: -3260.0
-      y: 400.0
+      x: -2940.0
+      y: 560.0
       w: 320.0
       h: 240.0
       collapsed: false
@@ -6307,8 +6857,8 @@ layout:
       custH: true
       softH: true
     fld:mod_window:mod:mod_name:
-      x: 200.0
-      y: -320.0
+      x: 520.0
+      y: -160.0
       w: 320.0
       h: 300.0
       collapsed: false
@@ -6316,8 +6866,8 @@ layout:
       custH: true
       softH: true
     fld:mod_window:mod:mod_drain:
-      x: 200.0
-      y: -660.0
+      x: 520.0
+      y: -500.0
       w: 320.0
       h: 300.0
       collapsed: false
@@ -6325,8 +6875,8 @@ layout:
       custH: true
       softW: true
     fld:mod_window:mod:mod_count:
-      x: 200.0
-      y: -980.0
+      x: 520.0
+      y: -820.0
       w: 320.0
       h: 280.0
       collapsed: false
@@ -6334,28 +6884,28 @@ layout:
       custH: true
       softH: true
     tell:mod_window:drop_item:tell_3:
-      x: 220.0
-      y: 80.0
+      x: 540.0
+      y: 240.0
       collapsed: false
     trigger:owned_refresh:
-      x: -920.0
-      y: -3120.0
+      x: -600.0
+      y: -3440.0
       w: 360.0
       h: 363.0
       collapsed: false
       custW: true
       custH: false
     win:relic_select:
-      x: -2100.0
-      y: -8580.0
+      x: -4480.0
+      y: -5580.0
       collapsed: false
     sb:relic_select:scrollbar:
-      x: -1540.0
-      y: -8100.0
+      x: -3920.0
+      y: -5100.0
       collapsed: false
     item:relic_select:relic_item:
-      x: -860.0
-      y: -8580.0
+      x: -3240.0
+      y: -5580.0
       w: 400.0
       h: 840.0
       collapsed: false
@@ -6364,8 +6914,8 @@ layout:
       softW: false
       softH: false
     fld:relic_select:relic_item:name:
-      x: -1220.0
-      y: -8580.0
+      x: -3600.0
+      y: -5580.0
       w: 320.0
       h: 360.0
       collapsed: false
@@ -6373,8 +6923,8 @@ layout:
       custH: true
       softH: true
     fld:relic_select:relic_item:count:
-      x: -1220.0
-      y: -8160.0
+      x: -3600.0
+      y: -5160.0
       w: 320.0
       h: 400.0
       collapsed: false
@@ -6382,8 +6932,8 @@ layout:
       custH: true
       softH: true
     item:relic_select:guard:
-      x: -860.0
-      y: -7700.0
+      x: -3240.0
+      y: -4700.0
       w: 400.0
       h: 760.0
       collapsed: false
@@ -6392,8 +6942,8 @@ layout:
       softW: false
       softH: false
     tell:relic_select:guard:tell_no_relic:
-      x: -1220.0
-      y: -7700.0
+      x: -3600.0
+      y: -4700.0
       w: 320.0
       h: 282.0
       collapsed: false
@@ -6401,8 +6951,8 @@ layout:
       custH: false
       softW: true
     producer:producer:
-      x: -2420.0
-      y: -3120.0
+      x: -2100.0
+      y: -3440.0
       w: 360.0
       h: 1000.0
       collapsed: false
@@ -6410,16 +6960,16 @@ layout:
       custH: true
       softH: true
     ds:relic_contents:
-      x: -2420.0
-      y: -2080.0
+      x: -2100.0
+      y: -2400.0
       w: 360.0
       h: 160.0
       collapsed: false
       custW: false
       custH: false
     win:relic_refinement:
-      x: -260.0
-      y: -8580.0
+      x: -2640.0
+      y: -5580.0
       w: 620.0
       h: 940.0
       collapsed: false
@@ -6428,8 +6978,8 @@ layout:
       softW: false
       softH: false
     sb:relic_refinement:scrollbar:
-      x: 740.0
-      y: -8580.0
+      x: -1640.0
+      y: -5580.0
       w: 260.0
       h: 940.0
       collapsed: false
@@ -6438,8 +6988,8 @@ layout:
       softW: true
       softH: true
     item:relic_refinement:relic_item:
-      x: 1420.0
-      y: -8580.0
+      x: -960.0
+      y: -5580.0
       w: 380.0
       h: 815.0
       collapsed: false
@@ -6448,8 +6998,8 @@ layout:
       softW: false
       softH: false
     fld:relic_refinement:relic_item:name:
-      x: 1060.0
-      y: -8580.0
+      x: -1320.0
+      y: -5580.0
       w: 320.0
       h: 340.0
       collapsed: false
@@ -6458,8 +7008,8 @@ layout:
       softW: true
       softH: true
     win:relic_rewards:
-      x: -100.0
-      y: -4580.0
+      x: -80.0
+      y: -5020.0
       w: 560.0
       h: 840.0
       collapsed: false
@@ -6468,8 +7018,8 @@ layout:
       softW: false
       softH: false
     item:relic_rewards:item_1:
-      x: 1360.0
-      y: -4580.0
+      x: 1380.0
+      y: -5020.0
       w: 440.0
       h: 820.0
       collapsed: false
@@ -6478,12 +7028,12 @@ layout:
       softW: false
       softH: false
     fld:relic_rewards:item_1:name:
-      x: 1000.0
-      y: -4580.0
+      x: 1020.0
+      y: -5020.0
       collapsed: false
     det:relic_rewards:detect_h:
-      x: 500.0
-      y: -4580.0
+      x: 520.0
+      y: -5020.0
       w: 250.0
       h: 420.0
       collapsed: false
@@ -6491,8 +7041,8 @@ layout:
       custH: true
       softH: true
     det:relic_select:detect_h:
-      x: -1540.0
-      y: -8580.0
+      x: -3920.0
+      y: -5580.0
       w: 250.0
       h: 440.0
       collapsed: false
@@ -6500,8 +7050,8 @@ layout:
       custH: true
       softH: true
     det:relic_refinement:detect_h:
-      x: 420.0
-      y: -8580.0
+      x: -1960.0
+      y: -5580.0
       w: 280.0
       h: 440.0
       collapsed: false
@@ -6510,8 +7060,8 @@ layout:
       softW: true
       softH: true
     det:mod_window:detect_h:
-      x: 660.0
-      y: -980.0
+      x: 980.0
+      y: -820.0
       w: 280.0
       h: 407.0
       collapsed: false
@@ -6519,8 +7069,8 @@ layout:
       custH: false
       softW: true
     det:equipment_window:detect_h:
-      x: -2860.0
-      y: -980.0
+      x: -2540.0
+      y: -820.0
       w: 280.0
       h: 460.0
       collapsed: false
@@ -6529,8 +7079,8 @@ layout:
       softW: true
       softH: true
     item:relic_refinement:not_owned:
-      x: 1420.0
-      y: -7700.0
+      x: -960.0
+      y: -4700.0
       w: 380.0
       h: 760.0
       collapsed: false
@@ -6539,8 +7089,8 @@ layout:
       softW: false
       softH: false
     tell:relic_refinement:not_owned:tell_3:
-      x: 1060.0
-      y: -7280.0
+      x: -1320.0
+      y: -4280.0
       w: 320.0
       h: 155.0
       collapsed: false
@@ -6548,8 +7098,8 @@ layout:
       custH: false
       softW: true
     tell:relic_refinement:not_owned:tell_4:
-      x: 1060.0
-      y: -7700.0
+      x: -1320.0
+      y: -4700.0
       w: 320.0
       h: 380.0
       collapsed: false
@@ -6558,8 +7108,8 @@ layout:
       softW: true
       softH: true
     ds:relics_refinement:
-      x: -260.0
-      y: -7600.0
+      x: -2640.0
+      y: -4600.0
       w: 380.0
       h: 220.0
       collapsed: false
@@ -6568,8 +7118,8 @@ layout:
       softW: true
       softH: true
     det:relic_refinement:detect_1:
-      x: 420.0
-      y: -8100.0
+      x: -1960.0
+      y: -5100.0
       w: 280.0
       h: 460.0
       collapsed: false
@@ -6578,12 +7128,12 @@ layout:
       softW: true
       softH: true
     ds:relics_select:
-      x: -2100.0
-      y: -7660.0
+      x: -4480.0
+      y: -4660.0
       collapsed: false
     sub:master_prime_parts:
-      x: 340.0
-      y: -3120.0
+      x: 660.0
+      y: -3440.0
       w: 360.0
       h: 900.0
       collapsed: false
@@ -6591,12 +7141,12 @@ layout:
       custH: true
       softH: true
     ds:ee_log:
-      x: -3460.0
-      y: -1840.0
+      x: -3140.0
+      y: -2160.0
       collapsed: false
     src:log_ee:
-      x: -3860.0
-      y: -1840.0
+      x: -3540.0
+      y: -2160.0
       w: 360.0
       h: 560.0
       collapsed: false
@@ -6604,8 +7154,8 @@ layout:
       custH: true
       softH: true
     sound:relic_sound:
-      x: 320.0
-      y: -6320.0
+      x: 340.0
+      y: -6880.0
       w: 360.0
       h: 160.0
       collapsed: false
@@ -6614,8 +7164,8 @@ layout:
       softW: true
       softH: true
     fld:relic_refinement:relic_item:count:
-      x: 1060.0
-      y: -8200.0
+      x: -1320.0
+      y: -5200.0
       w: 320.0
       h: 320.0
       collapsed: false
@@ -6623,8 +7173,8 @@ layout:
       custH: false
       softH: true
     dict:relics:
-      x: -3040.0
-      y: -2300.0
+      x: -2720.0
+      y: -2620.0
       w: 320.0
       h: 360.0
       collapsed: false
@@ -6632,8 +7182,8 @@ layout:
       custH: false
       softW: true
     toast:toast_2:
-      x: 320.0
-      y: -6120.0
+      x: 340.0
+      y: -6680.0
       w: 700.0
       h: 1380.0
       collapsed: false
@@ -6642,8 +7192,8 @@ layout:
       softW: true
       softH: true
     sub:relic_rewards_with_price:
-      x: -100.0
-      y: -6100.0
+      x: -80.0
+      y: -6660.0
       w: 360.0
       h: 900.0
       collapsed: false
@@ -6651,8 +7201,8 @@ layout:
       custH: true
       softH: true
     win:mission_rewards:
-      x: -3360.0
-      y: -7540.0
+      x: -5040.0
+      y: -9800.0
       w: 620.0
       h: 660.0
       collapsed: false
@@ -6661,8 +7211,8 @@ layout:
       softW: false
       softH: false
     ds:mission_rewards:
-      x: -2680.0
-      y: -7540.0
+      x: -4360.0
+      y: -9800.0
       collapsed: false
     win:arsenal_warframe:
       x: 4520.0
@@ -6740,8 +7290,8 @@ layout:
       custH: true
       softH: true
     win:live_game_window:
-      x: -1460.0
-      y: -4340.0
+      x: -6020.0
+      y: -5600.0
       w: 720.0
       h: 840.0
       collapsed: false
@@ -6770,8 +7320,8 @@ layout:
       softW: true
       softH: true
     atlas:
-      x: -3860.0
-      y: -2720.0
+      x: -3540.0
+      y: -3040.0
       w: 720.0
       h: 780.0
       collapsed: false
@@ -7559,8 +8109,8 @@ layout:
       softW: true
       softH: true
     prev:relic_rewards:
-      x: 500.0
-      y: -4140.0
+      x: 520.0
+      y: -4580.0
       w: 580.0
       h: 320.0
       collapsed: false
@@ -7568,28 +8118,28 @@ layout:
       custH: false
       softW: true
     ro:live_game_window:warframe_name_live:
-      x: -2380.0
-      y: -4340.0
+      x: -6020.0
+      y: -4660.0
       w: 240.0
-      h: 440.0
+      h: 580.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
     rohist:live_game_window:warframe_name_live:
-      x: -2100.0
-      y: -4340.0
-      w: 300.0
-      h: 440.0
+      x: -5740.0
+      y: -4660.0
+      w: 600.0
+      h: 580.0
       collapsed: false
       custW: true
       custH: true
-      softW: false
+      softW: true
       softH: true
     sound:ab_sound_1:
-      x: -3400.0
-      y: -6060.0
+      x: -8520.0
+      y: -7420.0
       w: 300.0
       h: 500.0
       collapsed: false
@@ -7598,8 +8148,8 @@ layout:
       softW: true
       softH: true
     sound:ab_sound_4:
-      x: -700.0
-      y: -6060.0
+      x: -5820.0
+      y: -7420.0
       w: 300.0
       h: 500.0
       collapsed: false
@@ -7608,8 +8158,8 @@ layout:
       softW: true
       softH: true
     sound:ab_sound_3:
-      x: -1600.0
-      y: -6060.0
+      x: -6720.0
+      y: -7420.0
       w: 300.0
       h: 500.0
       collapsed: false
@@ -7617,8 +8167,8 @@ layout:
       custH: true
       softH: true
     trigger:trigger_ab_3:
-      x: -1600.0
-      y: -6320.0
+      x: -6720.0
+      y: -7680.0
       w: 300.0
       h: 200.0
       collapsed: false
@@ -7627,8 +8177,8 @@ layout:
       softW: true
       softH: true
     trigger:trigger_ab_4:
-      x: -700.0
-      y: -6320.0
+      x: -5820.0
+      y: -7680.0
       w: 300.0
       h: 200.0
       collapsed: false
@@ -7637,8 +8187,8 @@ layout:
       softW: true
       softH: true
     trigger:trigger_ab_2:
-      x: -2500.0
-      y: -6320.0
+      x: -7620.0
+      y: -7680.0
       w: 300.0
       h: 200.0
       collapsed: false
@@ -7647,8 +8197,8 @@ layout:
       softW: true
       softH: true
     sound:ab_sound_2:
-      x: -2500.0
-      y: -6060.0
+      x: -7620.0
+      y: -7420.0
       w: 300.0
       h: 500.0
       collapsed: false
@@ -7656,8 +8206,8 @@ layout:
       custH: true
       softH: true
     trigger:trigger_ab_1:
-      x: -3400.0
-      y: -6320.0
+      x: -8520.0
+      y: -7680.0
       w: 300.0
       h: 231.0
       collapsed: false
@@ -7666,8 +8216,8 @@ layout:
       softW: true
       softH: false
     gate:gate_value_ab_1:
-      x: -3840.0
-      y: -6320.0
+      x: -8960.0
+      y: -7680.0
       w: 400.0
       h: 140.0
       collapsed: false
@@ -7676,8 +8226,8 @@ layout:
       softW: true
       softH: true
     gate:gate_value_ab_2:
-      x: -2940.0
-      y: -6320.0
+      x: -8060.0
+      y: -7680.0
       w: 400.0
       h: 140.0
       collapsed: false
@@ -7686,8 +8236,8 @@ layout:
       softW: true
       softH: true
     gate:gate_value_ab_3:
-      x: -2040.0
-      y: -6320.0
+      x: -7160.0
+      y: -7680.0
       w: 400.0
       h: 140.0
       collapsed: false
@@ -7696,8 +8246,8 @@ layout:
       softW: true
       softH: true
     gate:gate_value_ab_4:
-      x: -1140.0
-      y: -6320.0
+      x: -6260.0
+      y: -7680.0
       w: 400.0
       h: 140.0
       collapsed: false
@@ -7706,8 +8256,8 @@ layout:
       softW: true
       softH: true
     gate:gate_nonblank_ab_1:
-      x: -3840.0
-      y: -6160.0
+      x: -8960.0
+      y: -7520.0
       w: 400.0
       h: 140.0
       collapsed: false
@@ -7716,8 +8266,8 @@ layout:
       softW: true
       softH: true
     gate:gate_nonblank_ab_2:
-      x: -2940.0
-      y: -6160.0
+      x: -8060.0
+      y: -7520.0
       w: 400.0
       h: 140.0
       collapsed: false
@@ -7726,8 +8276,8 @@ layout:
       softW: true
       softH: true
     gate:gate_nonblank_ab_3:
-      x: -2040.0
-      y: -6160.0
+      x: -7160.0
+      y: -7520.0
       w: 400.0
       h: 140.0
       collapsed: false
@@ -7736,8 +8286,8 @@ layout:
       softW: true
       softH: true
     gate:gate_nonblank_ab_4:
-      x: -1140.0
-      y: -6160.0
+      x: -6260.0
+      y: -7520.0
       w: 400.0
       h: 140.0
       collapsed: false
@@ -7746,8 +8296,8 @@ layout:
       softW: true
       softH: true
     gate:gate_notwf_ab_4:
-      x: -1140.0
-      y: -5980.0
+      x: -6260.0
+      y: -7340.0
       w: 400.0
       h: 420.0
       collapsed: false
@@ -7756,8 +8306,8 @@ layout:
       softW: true
       softH: true
     gate:gate_notwf_ab_3:
-      x: -2040.0
-      y: -5980.0
+      x: -7160.0
+      y: -7340.0
       w: 400.0
       h: 420.0
       collapsed: false
@@ -7766,8 +8316,8 @@ layout:
       softW: true
       softH: true
     gate:gate_notwf_ab_2:
-      x: -2940.0
-      y: -5980.0
+      x: -8060.0
+      y: -7340.0
       w: 400.0
       h: 420.0
       collapsed: false
@@ -7776,8 +8326,8 @@ layout:
       softW: true
       softH: true
     gate:gate_notwf_ab_1:
-      x: -3840.0
-      y: -5980.0
+      x: -8960.0
+      y: -7340.0
       w: 400.0
       h: 420.0
       collapsed: false
@@ -7786,88 +8336,88 @@ layout:
       softW: true
       softH: true
     ro:live_game_window:value_ab_1:
-      x: -3860.0
-      y: -4340.0
-      w: 240.0
-      h: 440.0
+      x: -8980.0
+      y: -5600.0
+      w: 660.0
+      h: 3484.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: false
     rohist:live_game_window:value_ab_1:
-      x: -3580.0
-      y: -4340.0
-      w: 420.0
-      h: 440.0
+      x: -8980.0
+      y: -4220.0
+      w: 660.0
+      h: 280.0
       collapsed: false
       custW: true
       custH: true
       softW: true
-      softH: true
+      softH: false
     ro:live_game_window:value_ab_2:
-      x: -3120.0
-      y: -4340.0
-      w: 240.0
-      h: 440.0
+      x: -8260.0
+      y: -5600.0
+      w: 660.0
+      h: 3484.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: false
     rohist:live_game_window:value_ab_2:
-      x: -2840.0
-      y: -4340.0
-      w: 420.0
-      h: 440.0
+      x: -8260.0
+      y: -4220.0
+      w: 660.0
+      h: 280.0
       collapsed: false
       custW: true
       custH: true
       softW: true
-      softH: true
+      softH: false
     ro:live_game_window:value_ab_3:
-      x: -3860.0
-      y: -3860.0
-      w: 240.0
-      h: 440.0
+      x: -7540.0
+      y: -5600.0
+      w: 660.0
+      h: 3484.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: false
     rohist:live_game_window:value_ab_3:
-      x: -3580.0
-      y: -3860.0
-      w: 420.0
-      h: 440.0
-      collapsed: false
-      custW: true
-      custH: true
-      softW: true
-      softH: true
-    ro:live_game_window:value_ab_4:
-      x: -3120.0
-      y: -3860.0
-      w: 240.0
-      h: 440.0
+      x: -7540.0
+      y: -4220.0
+      w: 660.0
+      h: 280.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: false
-    rohist:live_game_window:value_ab_4:
-      x: -2840.0
-      y: -3860.0
-      w: 420.0
-      h: 440.0
+    ro:live_game_window:value_ab_4:
+      x: -6820.0
+      y: -5600.0
+      w: 660.0
+      h: 1340.0
       collapsed: false
       custW: true
       custH: true
       softW: true
       softH: true
+    rohist:live_game_window:value_ab_4:
+      x: -6820.0
+      y: -4220.0
+      w: 660.0
+      h: 280.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: false
     det:live_game_window:detect_group_badge:
-      x: -680.0
-      y: -4340.0
+      x: -5260.0
+      y: -5600.0
       w: 280.0
       h: 435.0
       collapsed: false
@@ -7876,8 +8426,8 @@ layout:
       softW: true
       softH: true
     process:process_value_ab:
-      x: -3860.0
-      y: -5260.0
+      x: -8980.0
+      y: -6620.0
       w: 380.0
       h: 340.0
       collapsed: false
@@ -7886,8 +8436,8 @@ layout:
       softW: true
       softH: true
     process:process_warframe_name_live:
-      x: -3860.0
-      y: -4880.0
+      x: -8980.0
+      y: -6240.0
       w: 380.0
       h: 340.0
       collapsed: false
@@ -7896,8 +8446,8 @@ layout:
       softW: true
       softH: true
     register:value_ab_register:
-      x: -3420.0
-      y: -5260.0
+      x: -8540.0
+      y: -6620.0
       w: 520.0
       h: 340.0
       collapsed: false
@@ -7906,8 +8456,8 @@ layout:
       softW: true
       softH: true
     reghist:value_ab_register:
-      x: -2840.0
-      y: -5260.0
+      x: -7960.0
+      y: -6620.0
       w: 700.0
       h: 340.0
       collapsed: false
@@ -7916,8 +8466,8 @@ layout:
       softW: true
       softH: false
     register:warframe_name_live_register:
-      x: -3420.0
-      y: -4880.0
+      x: -8540.0
+      y: -6240.0
       w: 520.0
       h: 340.0
       collapsed: false
@@ -7926,16 +8476,16 @@ layout:
       softW: true
       softH: true
     sub:distinct_relic_items:
-      x: -920.0
-      y: -2900.0
+      x: -600.0
+      y: -3220.0
       collapsed: false
     vt:ds:prices_live:
-      x: -80.0
-      y: -1820.0
+      x: 240.0
+      y: -2140.0
       collapsed: false
     trigger:on_new_relics_offered:
-      x: -100.0
-      y: -6320.0
+      x: -80.0
+      y: -6880.0
       w: 360.0
       h: 192.0
       collapsed: false
@@ -7943,12 +8493,12 @@ layout:
       custH: false
       softW: true
     prev:equipment_window:
-      x: -1860.0
-      y: -980.0
+      x: -1540.0
+      y: -820.0
       collapsed: false
     register:sweep:
-      x: -2540.0
-      y: 360.0
+      x: -2220.0
+      y: 520.0
       w: 280.0
       h: 300.0
       collapsed: false
@@ -7956,8 +8506,8 @@ layout:
       custH: false
       softW: false
     gate:sweep_go:
-      x: -1560.0
-      y: 360.0
+      x: -1240.0
+      y: 520.0
       w: 300.0
       h: 140.0
       collapsed: false
@@ -7966,12 +8516,12 @@ layout:
       softW: true
       softH: true
     trigger:sweep_f1:
-      x: -1880.0
-      y: 360.0
+      x: -1560.0
+      y: 520.0
       collapsed: false
     trigger:sweep_advance:
-      x: -1880.0
-      y: 660.0
+      x: -1560.0
+      y: 820.0
       w: 280.0
       h: 220.0
       collapsed: false
@@ -7979,8 +8529,8 @@ layout:
       custH: true
       softH: true
     trigger:sweep_bottom:
-      x: -1880.0
-      y: 920.0
+      x: -1560.0
+      y: 1080.0
       w: 280.0
       h: 220.0
       collapsed: false
@@ -7988,8 +8538,8 @@ layout:
       custH: true
       softH: true
     action:sweep_arm:
-      x: -2220.0
-      y: 360.0
+      x: -1900.0
+      y: 520.0
       w: 300.0
       h: 260.0
       collapsed: false
@@ -7998,8 +8548,8 @@ layout:
       softW: true
       softH: true
     action:sweep_step:
-      x: -2220.0
-      y: 660.0
+      x: -1900.0
+      y: 820.0
       w: 300.0
       h: 220.0
       collapsed: false
@@ -8008,8 +8558,8 @@ layout:
       softW: true
       softH: true
     action:sweep_stop:
-      x: -2220.0
-      y: 920.0
+      x: -1900.0
+      y: 1080.0
       w: 300.0
       h: 220.0
       collapsed: false
@@ -8018,8 +8568,8 @@ layout:
       softW: true
       softH: true
     sub:relics_owned:
-      x: -2100.0
-      y: -9880.0
+      x: -4480.0
+      y: -6880.0
       w: 360.0
       h: 880.0
       collapsed: false
@@ -8031,8 +8581,8 @@ layout:
       y: -2380.0
       collapsed: false
     trigger:click_slot_1:
-      x: 9140.0
-      y: -1980.0
+      x: 8740.0
+      y: -5980.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8041,8 +8591,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_2:
-      x: 9540.0
-      y: -1980.0
+      x: 9140.0
+      y: -5980.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8051,8 +8601,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_3:
-      x: 9940.0
-      y: -1980.0
+      x: 9540.0
+      y: -5980.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8061,8 +8611,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_4:
-      x: 10340.0
-      y: -1980.0
+      x: 9940.0
+      y: -5980.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8071,8 +8621,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_5:
-      x: 9140.0
-      y: -1580.0
+      x: 8740.0
+      y: -5580.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8081,8 +8631,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_6:
-      x: 9540.0
-      y: -1580.0
+      x: 9140.0
+      y: -5580.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8091,8 +8641,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_7:
-      x: 9940.0
-      y: -1580.0
+      x: 9540.0
+      y: -5580.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8101,8 +8651,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_8:
-      x: 10340.0
-      y: -1580.0
+      x: 9940.0
+      y: -5580.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8111,8 +8661,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_exilus:
-      x: 9940.0
-      y: -2380.0
+      x: 9540.0
+      y: -6380.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8121,8 +8671,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_aura:
-      x: 9540.0
-      y: -2380.0
+      x: 9140.0
+      y: -6380.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8131,8 +8681,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_arcane_1:
-      x: 10900.0
-      y: -2380.0
+      x: 10500.0
+      y: -6380.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8141,8 +8691,8 @@ layout:
       softW: true
       softH: true
     trigger:click_slot_arcane_2:
-      x: 10900.0
-      y: -1980.0
+      x: 10500.0
+      y: -5980.0
       w: 360.0
       h: 360.0
       collapsed: false
@@ -8151,8 +8701,8 @@ layout:
       softW: true
       softH: true
     toast:toast_mod_general:
-      x: 9140.0
-      y: -1060.0
+      x: 8740.0
+      y: -4940.0
       w: 360.0
       h: 600.0
       collapsed: false
@@ -8161,8 +8711,8 @@ layout:
       softW: true
       softH: true
     toast:toast_mod_aura:
-      x: 9540.0
-      y: -1060.0
+      x: 9140.0
+      y: -4940.0
       w: 360.0
       h: 600.0
       collapsed: false
@@ -8171,8 +8721,8 @@ layout:
       softW: true
       softH: true
     sub:relics_owned_with_contents:
-      x: -1700.0
-      y: -9880.0
+      x: -4080.0
+      y: -6880.0
       w: 360.0
       h: 880.0
       collapsed: false
@@ -8180,12 +8730,12 @@ layout:
       custH: true
       softH: true
     inlog:click_slot_5:
-      x: 8640.0
-      y: -1580.0
+      x: 8240.0
+      y: -5580.0
       collapsed: false
     gamehist:
-      x: -3560.0
-      y: -3120.0
+      x: -3240.0
+      y: -3440.0
       w: 840.0
       h: 320.0
       collapsed: false
@@ -8194,8 +8744,8 @@ layout:
       softW: true
       softH: false
     sub:relics_owned_contents_priced:
-      x: -1300.0
-      y: -9880.0
+      x: -3680.0
+      y: -6880.0
       w: 360.0
       h: 880.0
       collapsed: false
@@ -8203,8 +8753,8 @@ layout:
       custH: true
       softH: true
     vt:sub:relics_owned_contents_priced:
-      x: -900.0
-      y: -9880.0
+      x: -3280.0
+      y: -6880.0
       w: 640.0
       h: 880.0
       collapsed: false
@@ -8213,8 +8763,8 @@ layout:
       softW: true
       softH: true
     toast:toast_best_relic:
-      x: 180.0
-      y: -9680.0
+      x: -2200.0
+      y: -6680.0
       w: 660.0
       h: 900.0
       collapsed: false
@@ -8223,12 +8773,12 @@ layout:
       softW: true
       softH: true
     sub:top_picks_for_relics:
-      x: -220.0
-      y: -9880.0
+      x: -2600.0
+      y: -6880.0
       collapsed: false
     vt:sub:top_picks_for_relics:
-      x: 180.0
-      y: -9880.0
+      x: -2200.0
+      y: -6880.0
       w: 660.0
       h: 180.0
       collapsed: false
@@ -8237,8 +8787,8 @@ layout:
       softW: true
       softH: false
     gate:gate_best_relic_change:
-      x: -220.0
-      y: -9260.0
+      x: -2600.0
+      y: -6260.0
       w: 360.0
       h: 140.0
       collapsed: false
@@ -8247,8 +8797,8 @@ layout:
       softW: true
       softH: true
     trigger:toast_when_terminator:
-      x: -220.0
-      y: -9540.0
+      x: -2600.0
+      y: -6540.0
       w: 360.0
       h: 260.0
       collapsed: false
@@ -8257,8 +8807,8 @@ layout:
       softW: true
       softH: true
     trigger:toast_when_scrolled:
-      x: -220.0
-      y: -9100.0
+      x: -2600.0
+      y: -6100.0
       w: 360.0
       h: 260.0
       collapsed: false
@@ -8267,18 +8817,28 @@ layout:
       softW: true
       softH: true
     vt:ds:master:
-      x: -1580.0
-      y: -2660.0
+      x: -1260.0
+      y: -2980.0
       collapsed: false
     vt:sub:live_prices_joined:
-      x: 740.0
-      y: -3120.0
+      x: 1060.0
+      y: -3440.0
       w: 760.0
       h: 900.0
       collapsed: false
       custW: true
       custH: true
       softW: true
+      softH: true
+    ds:dataset_2:
+      x: -2280.0
+      y: -1700.0
+      w: 340.0
+      h: 220.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: false
       softH: true
   tables:
     warframe:ds:master:
@@ -8401,30 +8961,6 @@ layout:
         price_median: 54
         name: 231
         volume: 54
-    view:statistic_prices_joined:
-      widths:
-        _seq: 36
-        count: 36
-        price_min: 36
-        price_median: 41
-        volume: 36
-        arcane_level: 36
-        _item: 48
-      order:
-      - key
-      - _seq
-      - name
-      - count
-      - _item
-      - price_min
-      - price_median
-      - volume
-      - arcane_level
-      - updated
-      - slug
-      sorts:
-      - col: _seq
-        dir: 1
     ds:relic_contents:
       sorts: []
       widths:
@@ -8485,15 +9021,6 @@ layout:
         rarity: 61
         ducats: 50
         name: 101
-    view:relics_refinement_view_view:
-      widths:
-        name: 101
-        rarity: 61
-        ducats: 50
-        price_min: 69
-      sorts:
-      - col: price_min
-        dir: -1
     view:relics_refinement_with_contents:
       widths:
         name: 61
@@ -8662,14 +9189,6 @@ layout:
         polarity: 36
         drain: 36
         name: 114
-    view:overframe_suggestions:
-      widths:
-        key: 107
-        polarity: 55
-        compat: 144
-        drain: 45
-        score: 48
-      sorts: []
     prodhist:wf_market_relic:
       widths:
         dataset: 88
@@ -8687,16 +9206,16 @@ layout:
         dir: -1
     rohist:live_game_window:warframe_name_live:
       widths:
-        when: 55
-        raw: 55
-        confidence: 55
+        when: 158
+        raw: 138
+        confidence: 47
         no_letter→drop: 37
         always→fold: 115
         always→lowercase: 115
         always→extract: 82
-        value: 55
+        value: 138
         consensus: 37
-        gap: 55
+        gap: 92
     reghist:register:
       sorts: []
       widths:
@@ -8771,32 +9290,32 @@ layout:
         overwritten: 90
     rohist:live_game_window:value_ab_1:
       widths:
-        when: 79
-        gap: 79
-        raw: 79
-        value: 79
-        confidence: 79
+        when: 206
+        gap: 140
+        raw: 95
+        value: 95
+        confidence: 95
     rohist:live_game_window:value_ab_2:
       widths:
-        when: 79
-        gap: 79
-        raw: 79
-        value: 79
-        confidence: 79
+        when: 205
+        gap: 139
+        raw: 99
+        value: 94
+        confidence: 94
     rohist:live_game_window:value_ab_4:
       widths:
-        when: 79
-        gap: 79
-        raw: 79
-        value: 79
-        confidence: 79
+        when: 206
+        gap: 140
+        raw: 95
+        value: 95
+        confidence: 95
     rohist:live_game_window:value_ab_3:
       widths:
-        when: 79
-        gap: 79
-        raw: 79
-        value: 79
-        confidence: 79
+        when: 206
+        gap: 140
+        raw: 95
+        value: 95
+        confidence: 95
     prodhist:wf_market_live:
       widths:
         dataset: 123
@@ -8954,11 +9473,8 @@ layout:
     title: 'window: relic rewards'
     members:
     - det:relic_rewards:detect_1
-    - item:relic_rewards:item_3
-    - sub:relic_rewards_view
     - win:relic_rewards
     - item:relic_rewards:item_1
-    - fld:relic_window_3:item_1:name
     - det:relic_rewards:detect_h
     - fld:relic_rewards:item_1:name
     - ds:relics_offered
@@ -8974,25 +9490,6 @@ layout:
     titleAlign: left
     titlePos: tl
     schemeId: silver
-  - id: group_12
-    title: 'window: mods'
-    members:
-    - win:mod_windowss
-    - prev:mod_windowss
-    - item:mod_windowss:item_1
-    - ds:mod_windowss
-    - det:mod_windowss:detect_2
-    - det:mod_windowss:detect_3
-    outline:
-      color: '#262c37'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#10141c'
-    titleBg: ''
-    titleColor: ''
-    titleAlign: left
-    titlePos: tl
   - id: group_16
     title: 'window: mods'
     members:
@@ -9019,9 +9516,7 @@ layout:
   - id: group_17
     title: 'price: stash'
     members:
-    - sub:statistic_prices_joined
     - producer:price
-    - vt:sub:statistic_prices_joined
     outline:
       color: '#e69a5a'
       style: none
@@ -9102,8 +9597,6 @@ layout:
     - ds:relics_select
     - item:relic_select:guard
     - tell:relic_select:guard:tell_no_relic
-    - vt:ds:dataset_4
-    - vt:sub:dataset_view
     - vt:ds:relics
     outline:
       color: '#8a91a0'
@@ -9128,7 +9621,6 @@ layout:
     - fld:relic_refinement:relic_item:name
     - det:relic_refinement:detect_h
     - ds:relics_refinement
-    - vt:sub:relics_refinement_view_view
     - det:relic_refinement:detect_1
     - fld:relic_refinement:relic_item:count
     outline:
@@ -9166,7 +9658,6 @@ layout:
   - id: group_28
     title: ability timer reads
     members:
-    - var:game:var_1
     - process:process_value_ab
     - register:value_ab_register
     - reghist:value_ab_register
@@ -9849,10 +10340,7 @@ layout:
     titleColor: '#5aa9e6'
     schemeId: blue
   satellites:
-  - vt:sub:statistic_prices_joined
-  - vt:ds:ee_log_
   - vtd:src:source
-  - vt:sub:overframe_suggestions
   - prev:relic_rewards
   - rohist:live_game_window:warframe_name_live
   - rohist:live_game_window:value_ab_1
@@ -9900,21 +10388,6 @@ layout:
     titleColor: '#e69a5a'
     titleAlign: left
     schemeId: orange
-  - id: subgroup_11
-    parent: group_25
-    title: ''
-    members:
-    - vt:sub:relics_refinement_view_view
-    outline:
-      color: '#7ddc7d'
-      style: none
-      width: 2
-      offset: 0
-    bg: '#19261f'
-    titleBg: ''
-    titleColor: '#7ddc7d'
-    titleAlign: left
-    schemeId: green
   schemes:
   - id: s_73972008-70b7-4159-add1-51fb9c3fd516
     name: loadout_groups
