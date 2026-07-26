@@ -171,7 +171,7 @@ function wireProducer(div, n) {
     div.querySelectorAll(".pr-fa-agg").forEach((btn) => btn.addEventListener("click", (e) => {
         const b = e.currentTarget, i = fieldI(b);
         const cur = ((n.ref.http || {}).fields || [])[i]?.array?.agg || "min";
-        enumBtn(b, cur, AGG_OPS, AGG_OP_DESC, (v) => { model.setHttpFieldArray(id, i, { agg: v }); save(); });
+        enumBtn(b, cur, AGG_OPS(), AGG_OP_DESC(), (v) => { model.setHttpFieldArray(id, i, { agg: v }); save(); });
     }));
     div.querySelectorAll(".pr-fa-depth").forEach((el) => el.addEventListener("change", () => { model.setHttpFieldArray(id, fieldI(el), { depth: parseInt(el.value, 10) || 1 }); save(); }));
     // a filter row/button with NO data-i belongs to the producer's row_filter (null), not a field's
@@ -186,7 +186,7 @@ function wireProducer(div, n) {
         // op and value co-normalize (in/nin take a list), so commit both together
         opBtn?.addEventListener("click", (e) => {
             const cur = opBtn.textContent.replace(/^<|>$/g, "");
-            enumBtn(e.currentTarget, cur, FILTER_OPS, FILTER_OP_DESC, (v) => { model.setHttpFilter(id, i, fi, { op: v, value: valIn.value }); save(); });
+            enumBtn(e.currentTarget, cur, FILTER_OPS(), FILTER_OP_DESC(), (v) => { model.setHttpFilter(id, i, fi, { op: v, value: valIn.value }); save(); });
         });
         valIn?.addEventListener("change", () => { model.setHttpFilter(id, i, fi, { op: opBtn.textContent.replace(/^<|>$/g, ""), value: valIn.value }); save(); });
     });
@@ -295,8 +295,8 @@ function wireTrigger(div, n) {
     div.querySelector(".tg-kind-btn")?.addEventListener("click", (e) => {
         richPickerPop({
             anchor: e.currentTarget, current: t.kind,
-            groups: KIND_GROUPS.map(([grp, opts]) =>
-                [grp, opts.map(([v, lbl]) => ({ value: v, label: lbl, meta: KIND_DESC[v] || "" }))]),
+            groups: KIND_GROUPS().map(([grp, opts]) =>
+                [grp, opts.map(([v, lbl]) => ({ value: v, label: lbl, meta: KIND_DESC()[v] || "" }))]),
             onPick: (v) => { model.setTriggerKind(t.id, v); rebuildNode(n.id); render(); autosave(null); },
         });
     });
@@ -443,7 +443,7 @@ function wireGate(div, n) {
             const btn = e.currentTarget;
             richPickerPop({
                 anchor: btn, current: g.conds[idx]?.when || "always",
-                groups: [[null, GATE_WHENS.map(([v, l]) => ({ value: v, label: l, meta: GATE_WHEN_DESC[v] || "" }))]],
+                groups: [[null, GATE_WHENS().map(([v, l]) => ({ value: v, label: l, meta: GATE_WHEN_DESC()[v] || "" }))]],
                 onPick: (v) => { model.setGateCondWhen(g.id, idx, v); rebuildNode(n.id); autosave(null); },
             });
         });
@@ -488,7 +488,7 @@ function wireRouter(div, n) {
             const btn = e.currentTarget;
             richPickerPop({
                 anchor: btn, current: r.branches?.[bi]?.conds?.[ci]?.when || "always",
-                groups: [[null, GATE_WHENS.map(([v, l]) => ({ value: v, label: l, meta: GATE_WHEN_DESC[v] || "" }))]],
+                groups: [[null, GATE_WHENS().map(([v, l]) => ({ value: v, label: l, meta: GATE_WHEN_DESC()[v] || "" }))]],
                 onPick: (v) => { model.setRouterBranchCondWhen(r.id, bi, ci, v); rebuildNode(n.id); autosave(null); },
             });
         });
@@ -540,7 +540,7 @@ function wireAction(div, n) {
         const btn = e.currentTarget;
         richPickerPop({
             anchor: btn, current: x.action || "",
-            groups: [[null, ACTIONS.map(([v, l]) => ({ value: v, label: l, meta: ACTION_DESC[v] || "" }))]],
+            groups: [[null, ACTIONS().map(([v, l]) => ({ value: v, label: l, meta: ACTION_DESC()[v] || "" }))]],
             onPick: (v) => { model.setActionKind(x.id, v); rebuildNode(n.id); rebuildNodeEdges(n.id); autosave(null); },
         });
     });
@@ -564,7 +564,7 @@ function wireAction(div, n) {
         const b = e.currentTarget, regId = b.dataset.reg;
         richPickerPop({
             anchor: b, current: model.actionRegOp(x.id, regId) || "",
-            groups: [[null, REG_OPS.map(([v, l]) => ({ value: v, label: l, meta: REG_OP_DESC[v] || "" }))]],
+            groups: [[null, REG_OPS().map(([v, l]) => ({ value: v, label: l, meta: REG_OP_DESC()[v] || "" }))]],
             onPick: (v) => { model.setActionRegOp(x.id, regId, v); rebuildNode(n.id); rebuildNodeEdges(n.id); autosave(null); },
         });
     }));

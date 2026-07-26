@@ -42,6 +42,7 @@ from .routes import (
     toasts,
     triggers,
     video,
+    wiring,
 )
 
 _STATIC = Path(__file__).parent / "static"
@@ -395,6 +396,7 @@ def create_app() -> FastAPI:
     app.include_router(toasts.router)
     app.include_router(icons.router)
     app.include_router(sources.router)
+    app.include_router(wiring.router)
     app.include_router(sounds.router)
     app.include_router(dictionaries.router)
     app.include_router(pretty.router)

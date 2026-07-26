@@ -24,6 +24,13 @@ from __future__ import annotations
 import re
 
 from ..numfmt import split_dp
+from ..profile import wiring
+
+# The {{token}} heads, read from the wiring table so this grammar and the rename sweep that
+# rewrites it (profile/pretty_repoint.py) can never name a kind differently.
+_HEAD_READOUT = wiring.BY_NAME["readout"].token_head
+_HEAD_DATASET = wiring.BY_NAME["dataset"].token_head
+_HEAD_SUBSET = wiring.BY_NAME["subset"].token_head
 
 _TOKEN = re.compile(r"\{\{(.+?)\}\}")
 _SLICE = re.compile(r"\[([^\]]*)\]\s*$")
@@ -199,11 +206,14 @@ def resolve_token(ctx: TokenContext, inner: str):
     parts = str(inner or "").split("|")
     src = parts[0].strip()
     agg = "|".join(parts[1:]).strip() or "latest"
-    if src.startswith("readout:"):
-        return ctx.readouts.get(src[8:].strip())
-    if src.startswith("dataset:") or src.startswith("subset:"):
-        is_sub = src.startswith("subset:")
-        rest, sl = _split_slice(src[7:] if is_sub else src[8:])
+    head, _, rest_raw = src.partition(":")
+    # which heads exist is the wiring table's call (Kind.token_head) — the same rows the graph
+    # renames and the checker validates, so a head can't be minted here that nothing else knows.
+    if head == _HEAD_READOUT:
+        return ctx.readouts.get(rest_raw.strip())
+    if head in (_HEAD_DATASET, _HEAD_SUBSET):
+        is_sub = head == _HEAD_SUBSET
+        rest, sl = _split_slice(rest_raw)
         seg = rest.split(".", 1)
         rid = seg[0].strip()
         field = seg[1].strip() if len(seg) > 1 else ""

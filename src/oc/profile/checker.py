@@ -2,13 +2,22 @@
 against where that id is actually declared, and flags a region/tell/readout naming a
 field that isn't in its window's schema. Pure inspection — never mutates the profile.
 A dangling reference is a config mistake (renamed/deleted node, stale merge leftover),
-never something to silently patch or guess at."""
+never something to silently patch or guess at.
+
+WHAT may point at WHAT is not decided here — it is read from :mod:`oc.profile.wiring`, the one
+table the runtime and the whole web UI also read, so a newly wireable pairing can never be legal
+in the model/UI/runtime while this checker still calls it unrecognised. This module owns only
+the semantics a table can't express: duplicate ids, a window's field schema, a register's
+exposed KEYS, window-scoped item ids, and the per-trigger-kind requirements.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import GameProfile, ProcessDef, RegisterDef, RuleThen
+from . import wiring
+from .models import GameProfile, ProcessDef, RegisterDef
+from .wiring import parse_ref as _parse_ref
 
 
 @dataclass(frozen=True)
@@ -16,24 +25,6 @@ class ProfileIssue:
     severity: str   # "error" | "warn"
     node: str       # human-readable node path, e.g. "window:equipment region:name"
     msg: str
-
-
-def _parse_ref(ref: str) -> tuple[str, str, str | None] | None:
-    """Split a prefixed ref into ``(kind, id, key)``. Handles the grammar every source
-    ref in a profile uses: ``"dataset:foo"`` -> ``("dataset", "foo", None)``,
-    ``"register:foo#bar"`` -> ``("register", "foo", "bar")``, and a gate's
-    ``"register:foo#bar@nonblank"`` modifier suffix on the key is stripped before
-    comparison (``"bar@nonblank"`` -> key ``"bar"``). ``None`` for an unprefixed/blank
-    ref — nothing to check."""
-    if not ref or ":" not in ref:
-        return None
-    kind, rest = ref.split(":", 1)
-    if "#" in rest:
-        rid, key = rest.split("#", 1)
-        key = key.split("@", 1)[0]
-    else:
-        rid, key = rest, None
-    return kind, rid, key
 
 
 def check_profile(p: GameProfile) -> list[ProfileIssue]:
@@ -55,28 +46,12 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
                 warn(node_kind, f"duplicate id '{i}' — the first definition silently wins")
             seen.add(i)
 
-    dataset_ids = {d.id for d in p.datasets}
-    subset_ids = {s.id for s in p.subsets}
-    producer_ids = {x.id for x in p.producers}
-    file_source_ids = {x.id for x in p.file_sources}
-    router_ids = {x.id for x in p.routers}
-    toast_ids = {x.id for x in p.toasts}
-    sound_ids = {x.id for x in p.sounds}
-    action_ids = {x.id for x in p.actions}
-    register_ids = {x.id for x in p.registers}
-    process_ids = {x.id for x in p.processes}
-    dictionary_ids = {x.id for x in p.dictionaries}
-    readout_ids = {r.id for w in p.windows for r in w.readouts}
-    window_ids = {w.id for w in p.windows}
+    register_ids = wiring.pool_ids(p, "registers")
+    window_ids = wiring.pool_ids(p, "windows")
     items_by_window: dict[str, set[str]] = {w.id: {it.id for it in w.items} for w in p.windows}
     scrollbar_windows = {w.id for w in p.windows if w.scroll and w.scroll.scrollbar}
     registers_by_id: dict[str, RegisterDef] = {x.id: x for x in p.registers}
     processes_by_id: dict[str, ProcessDef] = {x.id: x for x in p.processes}
-
-    trigger_ids = {t.id for t in p.triggers}
-    ds_or_sub = dataset_ids | subset_ids
-    trigger_targets = producer_ids | file_source_ids | toast_ids | sound_ids | action_ids | router_ids
-    gateable_ids = trigger_targets | trigger_ids   # every kind a GateDef.targets entry may name
 
     dup_check("window", [w.id for w in p.windows])
     dup_check("dataset", [d.id for d in p.datasets])
@@ -138,49 +113,42 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
                 keys |= register_keys(rid, seen)
         return keys
 
-    def check_rules(node: str, rules) -> None:
-        for r in rules:
-            if r.then is RuleThen.dictionary and r.dict_id and r.dict_id not in dictionary_ids:
-                err(node, f"rule references missing dictionary '{r.dict_id}'")
+    # ---- the generic pass: every wiring.LINKS row, checked the same way -----------------
+    # Adding a wireable pairing is a row in wiring.py; nothing below needs an audit. A bare ref
+    # must name a declared id of one of the row's kinds; a prefixed ref must additionally carry
+    # a prefix that row accepts (an unknown prefix is a warn, not an error — the ref may predate
+    # a kind this build doesn't have). A register-slot ref checks its KEY too, since a register
+    # only exposes the keys its wired sources actually emit.
+    for link in wiring.LINKS:
+        if not link.checked:
+            continue
+        node_label = link.label or wiring.label_for(link.kinds)
+        for owner_id, ref in wiring.refs(p, link):
+            node = f"{link.owner}:{owner_id}" if owner_id else link.owner
+            if link.grammar == "prefixed":
+                parsed = _parse_ref(ref)
+                if parsed is None:
+                    continue
+                prefix, rid, key = parsed
+                matching = wiring.kinds_for_prefix(link, prefix)
+                if not matching:
+                    warn(node, f"unrecognised source kind '{ref}'")
+                    continue
+                kind = matching[0]
+                if rid not in wiring.pool_ids(p, kind.pool):
+                    err(node, f"{link.verb} missing {kind.label} '{rid}'")
+                elif key is not None and any(k.key for k in matching):
+                    exposed = register_keys(rid, set())
+                    if exposed and key not in exposed:
+                        err(node, f"references missing key '{key}' on {kind.label} '{rid}'")
+            elif ref not in wiring.pools_for(p, link.kinds):
+                err(node, f"{link.verb} missing {node_label} '{ref}'")
 
-    def check_source_ref(node: str, ref: str) -> None:
-        """``"readout:<id>"`` / ``"register:<id>#<key>"`` / ``"dataset:<id>"`` / ``"subset:<id>"`` —
-        the grammar gates, routers, and process inputs all source live values through. When a
-        register slot is named, the KEY is checked too (not just the register id) — a register only
-        exposes the keys its wired sources actually emit."""
-        parsed = _parse_ref(ref)
-        if parsed is None:
-            return
-        kind, rid, key = parsed
-        if kind == "readout":
-            if rid not in readout_ids:
-                err(node, f"references missing readout '{rid}'")
-        elif kind == "register":
-            if rid not in register_ids:
-                err(node, f"references missing register '{rid}'")
-            elif key is not None:
-                exposed = register_keys(rid, set())
-                if exposed and key not in exposed:
-                    err(node, f"references missing key '{key}' on register '{rid}'")
-        elif kind == "dataset":
-            if rid not in dataset_ids:
-                err(node, f"references missing dataset '{rid}'")
-        elif kind == "subset":
-            if rid not in subset_ids:
-                err(node, f"references missing subset '{rid}'")
-        else:
-            warn(node, f"unrecognised source kind '{kind}:{rid}'")
-
-    # ---- windows: dataset sink, per-window field schema, rule pipelines ----
+    # ---- windows: per-window field schema (regions/items/tells/readouts) ----------------
     for w in p.windows:
         node = f"window:{w.id}"
-        if w.dataset and w.dataset not in dataset_ids:
-            err(node, f"feeds missing dataset '{w.dataset}'")
-        fields = p.fields_for(w)
-        field_ids = {f.id for f in fields}
+        field_ids = {f.id for f in p.fields_for(w)}
         dup_check(f"{node} fields", [f.id for f in w.fields])
-        for f in fields:
-            check_rules(f"{node} field:{f.id}", f.rules)
         for r in w.regions:
             if r.field not in field_ids:
                 err(f"{node} region:{r.id}", f"reads missing field '{r.field}'")
@@ -196,83 +164,14 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
             if ro.field and ro.field not in field_ids:
                 err(f"{node} readout:{ro.id}", f"reads missing field '{ro.field}'")
 
-    # ---- dictionaries: feed sources ----
-    for dic in p.dictionaries:
-        node = f"dictionary:{dic.id}"
-        for feed in dic.feeds:
-            if feed.dataset and feed.dataset not in dataset_ids:
-                err(node, f"feeds from missing dataset '{feed.dataset}'")
-
-    # ---- subsets: joined sources (dataset or upstream subset) ----
-    for s in p.subsets:
-        node = f"subset:{s.id}"
-        for src in s.sources:
-            if src.dataset and src.dataset not in ds_or_sub:
-                err(node, f"joins missing dataset/subset '{src.dataset}'")
-
-    # ---- producers: output dataset, input sources (dataset/subset) ----
-    for pr in p.producers:
-        node = f"producer:{pr.id}"
-        if pr.dataset and pr.dataset not in dataset_ids:
-            err(node, f"writes to missing dataset '{pr.dataset}'")
-        for src in pr.sources:
-            if src not in ds_or_sub:
-                err(node, f"reads missing dataset/subset '{src}'")
-
-    # ---- file sources: output dataset ----
-    for fs in p.file_sources:
-        node = f"file_source:{fs.id}"
-        if fs.dataset and fs.dataset not in dataset_ids:
-            err(node, f"writes to missing dataset '{fs.dataset}'")
-
-    # ---- gates: source value + targets (any trigger/producer/file-source/toast/sound/action/router) ----
-    for g in p.gates:
-        node = f"gate:{g.id}"
-        check_source_ref(node, g.source)
-        for tid in g.targets:
-            if tid not in gateable_ids:
-                err(node, f"targets missing/ungateable '{tid}'")
-
-    # ---- routers: source value + branch targets ----
-    for r in p.routers:
-        node = f"router:{r.id}"
-        check_source_ref(node, r.source)
-        for i, br in enumerate(r.branches):
-            for t in br.targets:
-                if t not in trigger_targets:
-                    err(f"{node} branch:{i}", f"forwards to missing target '{t}'")
-
-    # ---- triggers: watch lists, targets (gating validated above, on the owning GateDef) ----
+    # ---- triggers: the per-kind requirements a link row can't express ------------------
     for t in p.triggers:
         node = f"trigger:{t.id}"
-        # on_ready watches PRODUCER ids (fires when a sweep finishes); every other
-        # watching kind watches a dataset/subset.
-        watch_pool = producer_ids if t.kind == "on_ready" else ds_or_sub
-        watch_label = "producer" if t.kind == "on_ready" else "dataset/subset"
-        for w_id in t.watch:
-            if w_id not in watch_pool:
-                err(node, f"watches missing {watch_label} '{w_id}'")
-        for ro in t.readout_watch:
-            if ro not in readout_ids:
-                err(node, f"watches missing readout '{ro}'")
-        for reg in t.register_watch:
-            if reg not in register_ids:
-                err(node, f"watches missing register '{reg}'")
-        for tgt in t.targets:
-            if tgt not in trigger_targets:
-                err(node, f"fires missing target '{tgt}'")
         if t.kind == "on_input":
-            if t.input_window and t.input_window not in window_ids:
-                err(node, f"binds missing window '{t.input_window}'")
             if t.input_rect and not t.input_window:
                 err(node, "sets a rect but no bound window — a rect needs a window's client area")
             if t.input_rect and len(t.input_rect) != 4:
                 err(node, "rect must be [x, y, w, h]")
-        # on_item/on_window_detected/undetected/on_window_data_start/stop/on_scroll_top/bottom
-        # all watch windows.
-        for win_id in t.window_watch:
-            if win_id not in window_ids:
-                err(node, f"watches missing window '{win_id}'")
         if t.kind == "on_item" and t.item_watch:
             win_id = t.window_watch[0] if t.window_watch else None
             if win_id is None:
@@ -285,68 +184,27 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
                 if win_id in window_ids and win_id not in scrollbar_windows:
                     err(node, f"watches window '{win_id}' for scroll but it has no scrollbar configured")
 
-    # ---- toasts: wired sources (readout/dataset/subset) ----
-    for to in p.toasts:
-        node = f"toast:{to.id}"
-        for src in to.sources:
-            parsed = _parse_ref(src)
-            if parsed is None:
-                continue
-            kind, rid, _key = parsed
-            if kind == "readout" and rid not in readout_ids:
-                err(node, f"references missing readout '{rid}'")
-            elif kind == "dataset" and rid not in dataset_ids:
-                err(node, f"references missing dataset '{rid}'")
-            elif kind == "subset" and rid not in subset_ids:
-                err(node, f"references missing subset '{rid}'")
-            elif kind not in ("readout", "dataset", "subset"):
-                warn(node, f"unrecognised source kind '{src}'")
-
-    # ---- actions: sources (dataset/register/sound/action), dest, slots ----
+    # ---- actions: register KEYS (the ids themselves are LINKS rows) --------------------
     for a in p.actions:
         node = f"action:{a.id}"
-        for src in a.sources:
-            parsed = _parse_ref(src)
-            if parsed is None:
-                continue
-            kind, rid, _key = parsed
-            if kind == "dataset" and rid not in dataset_ids:
-                err(node, f"references missing dataset '{rid}'")
-            elif kind == "register" and rid not in register_ids:
-                err(node, f"references missing register '{rid}'")
-            elif kind == "sound" and rid not in sound_ids:
-                err(node, f"references missing sound '{rid}'")
-            elif kind == "action" and rid not in action_ids:
-                err(node, f"chains to missing action '{rid}'")
-            elif kind not in ("dataset", "register", "sound", "action"):
-                warn(node, f"unrecognised source kind '{src}'")
-        if a.dest and a.dest not in dataset_ids:
-            err(node, f"writes to missing destination dataset '{a.dest}'")
         for reg_id, slot_keys in a.slots.items():
             if reg_id not in register_ids:
-                err(node, f"slots reference missing register '{reg_id}'")
-                continue
+                continue          # dangling register already reported by the slots LINKS row
             exposed = register_keys(reg_id, set())
             for key in slot_keys:
                 if exposed and key not in exposed:
                     err(node, f"slots reference missing key '{key}' on register '{reg_id}'")
         for reg_id, op in a.reg_ops.items():
             if reg_id not in register_ids:
-                err(node, f"reg_ops reference missing register '{reg_id}'")
-                continue
+                continue          # ditto, via the reg_ops LINKS row
             # dest is a prefixed ref ("dataset:<id>" / "register:<id>") -- _migrate_reg_ops
-            # (models.py) guarantees every non-empty dest already carries one of those two prefixes
-            # (it coerces a bare/unrecognised one to "dataset:" on load), so there's no third kind
-            # to guard against here.
+            # (models.py) guarantees every non-empty dest already carries one of those two
+            # prefixes, and the LINKS row checks the id exists; only the self-target (which
+            # needs the OWNING register's id, so no table can see it) is decided here.
             if op.dest:
                 dest_kind, dest_id, _ = _parse_ref(op.dest) or ("dataset", op.dest, None)
-                if dest_kind == "register":
-                    if dest_id == reg_id:
-                        err(node, f"reg_ops on register '{reg_id}' clones/moves into itself")
-                    elif dest_id not in register_ids:
-                        err(node, f"reg_ops on register '{reg_id}' writes to missing destination register '{dest_id}'")
-                elif dest_id not in dataset_ids:
-                    err(node, f"reg_ops on register '{reg_id}' writes to missing destination dataset '{dest_id}'")
+                if dest_kind == "register" and dest_id == reg_id:
+                    err(node, f"reg_ops on register '{reg_id}' clones/moves into itself")
             # advisory only (warn, not err): unlike `slots` above, a clone/move key here is hand-
             # typed by design (keyRows, reg_slots.js) — register keys are runtime-created, so a key
             # not currently wired may still be legitimate (fed by another action's "set", or wired
@@ -355,31 +213,5 @@ def check_profile(p: GameProfile) -> list[ProfileIssue]:
             for key in op.keys:
                 if exposed and key not in exposed:
                     warn(node, f"reg_ops on register '{reg_id}' targets key '{key}' not currently wired to it")
-
-    # ---- registers: wired sources (readout/process/register), persist sink ----
-    for r in p.registers:
-        node = f"register:{r.id}"
-        for src in r.sources:
-            parsed = _parse_ref(src)
-            if parsed is None:
-                continue
-            kind, rid, _key = parsed
-            if kind == "readout" and rid not in readout_ids:
-                err(node, f"references missing readout '{rid}'")
-            elif kind == "process" and rid not in process_ids:
-                err(node, f"references missing process '{rid}'")
-            elif kind == "register" and rid not in register_ids:
-                err(node, f"references missing register '{rid}'")
-            elif kind not in ("readout", "process", "register"):
-                warn(node, f"unrecognised source kind '{src}'")
-        if r.persist and r.persist not in dataset_ids:
-            err(node, f"persists to missing dataset '{r.persist}'")
-
-    # ---- processes: wired inputs + rule pipeline dictionary refs ----
-    for pc in p.processes:
-        node = f"process:{pc.id}"
-        for src in pc.sources:
-            check_source_ref(node, src.ref)
-        check_rules(node, pc.rules)
 
     return issues

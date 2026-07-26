@@ -68,6 +68,7 @@ from pathlib import Path
 
 from ..enrich.price_runner import start_sweep, sweep_status
 from ..eventlog import publish as logev
+from ..profile import wiring
 from ..eventlog import slog
 from ..store.fire_events import publish_fire
 from ..store.flow_events import publish_flow
@@ -1018,16 +1019,12 @@ class TriggerRunner:
         if not source:
             return None
         kind, _, rest = source.partition(":")
-        if kind == "readout":
+        if kind == "readout":   # the one two-segment node id: a readout is scoped to its window
             win = self._readout_window(rest)
             return f"ro:{win}:{rest}" if win else None
-        if kind == "register":
-            return f"register:{rest.split('#')[0]}"
-        if kind == "dataset":
-            return f"ds:{rest}"
-        if kind == "subset":
-            return f"sub:{rest}"
-        return None
+        # every other kind's node id is "<node_prefix>:<id>", straight off the wiring table
+        pfx = next((k.node_prefix for k in wiring.KINDS if k.prefix == kind), "")
+        return f"{pfx}:{rest.split('#')[0]}" if pfx else None
 
     def emit_gate_flow(self) -> None:
         """Animate the value that flips a gate's decision: a ``data`` blob source -> gate on the tick
@@ -1109,22 +1106,14 @@ class TriggerRunner:
         (a disabled node is never 'firing', so it's never usefully shown as 'gated off' either).
         Mirrors the front-end model.refNode's bare-id fallback chain, so the server can hand the
         client a ready-to-use node id (the client stays dumb — see :meth:`gated_ids`)."""
-        def find(items):
-            return next((x for x in items if x.id == tid), None)
-        if (n := find(self._profile.triggers)) is not None:
-            return f"trigger:{tid}" if n.enabled else None
-        if (n := find(self._profile.producers)) is not None:
-            return f"producer:{tid}" if getattr(n, "enabled", True) else None
-        if (n := find(getattr(self._profile, "file_sources", []))) is not None:
-            return f"src:{tid}" if getattr(n, "enabled", True) else None
-        if (n := find(getattr(self._profile, "toasts", []))) is not None:
-            return f"toast:{tid}" if getattr(n, "enabled", True) else None
-        if (n := find(getattr(self._profile, "sounds", []))) is not None:
-            return f"sound:{tid}" if getattr(n, "enabled", True) else None
-        if (n := find(getattr(self._profile, "actions", []))) is not None:
-            return f"action:{tid}" if getattr(n, "enabled", True) else None
-        if (n := find(getattr(self._profile, "routers", []))) is not None:
-            return f"router:{tid}" if getattr(n, "enabled", True) else None
+        # the gateable kinds, their id pools and their node prefixes all come from the wiring
+        # table (gate.targets), in its declared precedence order — a new gateable kind is a row
+        # there, not another branch here.
+        for name in wiring.link_for("gate", "targets").kinds:
+            kind = wiring.BY_NAME[name]
+            node = next((x for x in getattr(self._profile, kind.pool, []) if x.id == tid), None)
+            if node is not None:
+                return f"{kind.node_prefix}:{tid}" if getattr(node, "enabled", True) else None
         return None
 
     def gated_ids(self) -> list[str]:

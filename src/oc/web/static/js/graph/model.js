@@ -4,6 +4,7 @@
 // on the canvas — so saving preserves it.
 
 import { DEFAULT_DETECT_THRESHOLD, SYNTH_DEFAULTS } from "../defaults.js";
+import * as wiring from "./wiring.js";
 
 let _fieldSeq = 1;
 
@@ -124,7 +125,7 @@ export class GraphModel {
             // to a prefixed "dataset:<id>"/"register:<id>" ref (twin of the server _migrate_reg_ops):
             // before a register's dest could be another register too, EVERY dest was a bare dataset id.
             for (const op of Object.values(x.reg_ops)) {
-                if (GraphModel.REG_OP_ALIAS[op.op]) op.op = GraphModel.REG_OP_ALIAS[op.op];
+                if (GraphModel.REG_OP_ALIAS()[op.op]) op.op = GraphModel.REG_OP_ALIAS()[op.op];
                 if (op.dest && !/^(dataset|register):/.test(op.dest)) op.dest = `dataset:${op.dest}`;
             }
             // twin of the server _migrate_reg_ops: fold the legacy SHARED action/slots/dest into a
@@ -144,7 +145,7 @@ export class GraphModel {
                             ? { op: "set", dest: "", keys: [], writes: narrowed.map((k) => ({ key: k, value: "", remove: true })) }
                             : { op: "remove_all", dest: "", keys: [], writes: [] };
                     } else {
-                        x.reg_ops[rid] = { op: GraphModel.REG_OP_ALIAS[x.action] || x.action,
+                        x.reg_ops[rid] = { op: GraphModel.REG_OP_ALIAS()[x.action] || x.action,
                             dest: x.dest ? `dataset:${x.dest}` : "", keys: narrowed, writes: [] };
                     }
                 }
@@ -302,85 +303,27 @@ export class GraphModel {
     //   - `decl:true` sites DECLARE an entity (a node literally IS this id); ref sites point at one.
     //   - `kinds` gates matching by entity kind instead of by prefix string, so a shared dataset/
     //     subset ref lists both, and a trigger target lists every node kind — no prefix filtering.
-    //   - a prefixed-ref list ("dataset:x"/"register:y" in ONE array) is decoded ONCE below, so a
-    //     NEW prefix — or a whole new sources[] holder — is covered by rename+delete for free (rule 7).
-    // Adding a node type that references ids = adding ONE line here; nothing else needs an audit.
+    //
+    // WHICH fields hold refs is not listed here: it's the server's wiring table (wiring.js), the
+    // same rows the boot checker validates and the pickers offer. Each row names a storage PATH
+    // ("sources", "sources[].ref", "reg_ops{}.dest", "branches[].targets"), and the four shapes
+    // below turn that path into sites. So a new node type that references ids is ONE row in
+    // wiring.py — no audit here, and no way for rename to miss a holder the checker knows about.
     _refModel() {
         const sites = [], lists = [];
         const scalar = (kinds, decl, get, set) => sites.push({ kinds, decl, get, set });
+        const jsKinds = (names) => names.map(wiring.nodeType);
+        // register an array for post-delete compaction ONCE — a path like `sources[].ref` reaches
+        // the same array from every entry, and re-registering it would re-filter it per entry.
+        const seenLists = new Set();
+        const pruneList = (arr, empty) => { if (!seenLists.has(arr)) { seenLists.add(arr); lists.push({ arr: () => arr, empty }); } };
 
-        // def rows: each entity's own id declares its kind
-        const defs = [
-            ["dataset", this.profile.datasets], ["subset", this.profile.subsets],
-            ["producer", this.profile.producers], ["action", this.profile.actions],
-            ["toast", this.profile.toasts], ["sound", this.profile.sounds],
-            ["filesource", this.profile.file_sources], ["trigger", this.profile.triggers],
-            ["register", this.profile.registers], ["dictionary", this.profile.dictionaries],
-            ["process", this.profile.processes], ["window", this.profile.windows],
-            ["gate", this.profile.gates], ["router", this.profile.routers],
-        ];
-        for (const [kind, arr] of defs)
-            for (const o of arr || []) scalar([kind], true, () => o.id, (v) => { o.id = v; });
+        // def rows: each entity's own id declares its kind. Every kind with an id pool has one.
+        for (const k of wiring.kinds()) {
+            if (k.label !== k.name || k.pool === "readouts") continue;   // one row per pool
+            for (const o of this.profile[k.pool] || []) scalar([k.node_type], true, () => o.id, (v) => { o.id = v; });
+        }
 
-        // dataset FEEDER decls: another node asserts "I output this dataset"
-        for (const w of this.profile.windows || [])
-            if (this._windowHasDataset(w)) scalar(["dataset"], true, () => this.datasetOf(w), (v) => { w.dataset = v; });
-        for (const p of this.profile.producers || []) scalar(["dataset"], true, () => p.dataset, (v) => { p.dataset = v; });
-        for (const s of this.profile.file_sources || []) scalar(["dataset"], true, () => s.dataset, (v) => { s.dataset = v; });
-
-        // scalar bare-id refs
-        for (const r of this.profile.registers || []) scalar(["dataset"], false, () => r.persist || "", (v) => { r.persist = v; });
-        for (const x of this.profile.actions || []) scalar(["dataset"], false, () => x.dest || "", (v) => { x.dest = v; });   // clone/move dest
-        for (const r of this._dictRules()) scalar(["dictionary"], false, () => r.dict_id || "", (v) => { r.dict_id = v; });
-
-        // bare-id LIST refs (registered once => enumerated AND pruned on delete)
-        const bareList = (kinds, owners, pick, empty = (e) => !e) => {
-            for (const o of owners || []) {
-                const a = pick(o); if (!a) continue;
-                a.forEach((_, i) => scalar(kinds, false, () => a[i], (v) => { a[i] = v; }));
-                lists.push({ arr: () => pick(o), empty });
-            }
-        };
-        bareList(["dataset"], this.profile.producers, (p) => p.sources);                                   // priced-item sources
-        bareList(["dataset", "subset"], this.profile.triggers, (t) => t.watch);                            // on_change watch
-        bareList(["producer", "action", "toast", "sound", "filesource", "router"], this.profile.triggers, (t) => t.targets);
-        bareList(["trigger", "producer", "filesource", "toast", "sound", "action", "router"], this.profile.gates, (g) => g.targets);
-        bareList(["register"], this.profile.triggers, (t) => t.register_watch);
-        bareList(["readout"], this.profile.triggers, (t) => t.readout_watch);
-        bareList(["window"], this.profile.triggers, (t) => t.window_watch);                                 // on_item/on_window_*/on_scroll_* watch
-        bareList(["window"], [this.profile], () => this.profile.window_priority);                          // recognition order
-
-        // object-field LIST refs (id lives in entry.dataset)
-        const fieldList = (kinds, owners, pick) => {
-            for (const o of owners || []) {
-                const a = pick(o); if (!a) continue;
-                a.forEach((e) => scalar(kinds, false, () => e.dataset, (v) => { e.dataset = v; }));
-                lists.push({ arr: () => pick(o), empty: (e) => !e.dataset });
-            }
-        };
-        fieldList(["dataset", "subset"], this.profile.subsets, (s) => s.sources);
-        fieldList(["dataset"], this.profile.dictionaries, (d) => d.feeds);
-
-        // prefixed-ref LISTS ("kind:id" in one array) — decode the kind ONCE, no per-kind filtering
-        const prefixedList = (owners, pick) => {
-            for (const o of owners || []) {
-                const a = pick(o); if (!a) continue;
-                a.forEach((ref, i) => {
-                    const c = ref.indexOf(":"), kind = c < 0 ? "" : ref.slice(0, c);
-                    if (!kind) return;
-                    scalar([kind], false, () => a[i].slice(a[i].indexOf(":") + 1), (v) => { a[i] = `${kind}:${v}`; });
-                });
-                lists.push({ arr: () => pick(o), empty: (r) => !r.slice(r.indexOf(":") + 1) });
-            }
-        };
-        prefixedList(this.profile.actions, (x) => x.sources);      // dataset: | register: | sound: | action:
-        prefixedList(this.profile.toasts, (x) => x.sources);       // dataset: | subset: | readout:
-        prefixedList(this.profile.registers, (x) => x.sources);    // readout:
-        // process inputs (ProcessInput {ref,out}) — like prefixedList but the id lives in `.ref`, and a
-        // register-slot ref carries a "#<key>" suffix (register:<id>#<key>); decode the kind, and for
-        // register refs match/repoint the id BEFORE the "#" while preserving the suffix, so a register
-        // rename moves "register:old#k" -> "register:new#k" and a register delete prunes it (blank id).
-        const procRegId = (r) => { const rest = r.slice(r.indexOf(":") + 1), h = rest.indexOf("#"); return h < 0 ? rest : rest.slice(0, h); };
         // A register-slot ref ("register:<id>#<key>[@facet]") stored via get/set: BOTH parts repoint —
         // the <id> on a REGISTER rename, AND the <key> on a READOUT rename. A register key IS the id of
         // the readout that feeds the slot (a readout->process->register slot carries the readout id
@@ -404,43 +347,16 @@ export class GraphModel {
                     // dead slot, same as a register delete blanking its refs), never a malformed "#".
                     (v) => { const p = parse(); set(v ? build(p.id, v, p.facet, true) : ""); });
         };
-        for (const p of this.profile.processes || []) {
-            const a = p.sources; if (!a) continue;
-            a.forEach((inp, i) => {
-                const ref = inp.ref || ""; const c = ref.indexOf(":"); if (c < 0) return;
-                const kind = ref.slice(0, c);
-                if (kind === "register") {
-                    regRefSites(() => a[i].ref, (v) => { a[i].ref = v; });
-                } else {
-                    scalar([kind], false, () => a[i].ref.slice(a[i].ref.indexOf(":") + 1), (v) => { a[i].ref = `${kind}:${v}`; });
-                }
-            });
-            lists.push({ arr: () => p.sources, empty: (o) => !procRegId(o.ref || "") });
-        }
 
-        // gate/router SOURCE: one prefixed ref ("readout:<id>" | "register:<id>#<key>[@facet]"). A
-        // register ref repoints BOTH id and key (regRefSites, same as the process input above); a
-        // readout ref repoints the bare id. A router also holds per-branch bare-id target lists.
-        const refField = (owner, get, set) => {
+        // ONE prefixed ref ("dataset:x" | "register:y#k@f"): the kind comes from the prefix itself,
+        // so a new prefix is covered without a per-kind branch. A register ref repoints id AND key.
+        const refSite = (get, set) => {
             const ref = get(); if (!ref) return;
             const c = ref.indexOf(":"); if (c < 0) return;
             const kind = ref.slice(0, c);
-            if (kind === "register") {
-                regRefSites(get, set);
-            } else {
-                scalar([kind], false, () => get().slice(get().indexOf(":") + 1), (v) => set(v ? `${kind}:${v}` : ""));
-            }
+            if (kind === "register") regRefSites(get, set);
+            else scalar([kind], false, () => get().slice(get().indexOf(":") + 1), (v) => set(v ? `${kind}:${v}` : ""));
         };
-        for (const g of this.profile.gates || []) refField(g, () => g.source, (v) => { g.source = v; });
-        for (const r of this.profile.routers || []) {
-            refField(r, () => r.source, (v) => { r.source = v; });
-            bareList(["producer", "action", "toast", "sound", "filesource"], r.branches, (b) => b.targets);
-        }
-        // register clone/move DEST: a prefixed ref too ("dataset:<id>" | "register:<id>", never a
-        // "#key" register-slot form) — same refField dispatcher, no new per-kind code needed.
-        for (const x of this.profile.actions || [])
-            for (const rid of Object.keys(x.reg_ops || {}))
-                refField(x, () => x.reg_ops[rid].dest, (v) => { x.reg_ops[rid].dest = v; });
 
         // dict-key sites (register slots) — re-key on rename, drop on delete
         const dictSite = (kinds, owner, key) => sites.push({
@@ -449,9 +365,57 @@ export class GraphModel {
             rekey: (o, n) => { const mp = owner[key] || (owner[key] = {}); if (o in mp) { mp[n] = mp[o]; delete mp[o]; } },
             drop: (id) => { if (owner[key]) delete owner[key][id]; },
         });
-        for (const x of this.profile.actions || []) dictSite(["register"], x, "slots");   // legacy, load-migrated only
-        for (const x of this.profile.actions || []) dictSite(["register"], x, "reg_ops");
 
+        // Walk one wiring row's storage path to the objects that actually HOLD the ref, carrying
+        // the nearest enclosing array so a blanked entry can be pruned from the right list.
+        const holders = (link) => {
+            let owners = link.owner === "profile" ? [this.profile] : (this.profile[wiring.kind(link.owner).pool] || []);
+            // `when` scopes a row to owners in one mode — a trigger's `watch` names producers for
+            // `on_ready` and datasets for every other kind, so the two rows must not both apply.
+            if (link.when) {
+                const [f, want] = link.when;
+                owners = owners.filter((o) => (want.startsWith("!") ? o[f] !== want.slice(1) : o[f] === want));
+            }
+            const segs = link.field.split(".");
+            const out = [];
+            const walk = (obj, i, list) => {
+                if (!obj) return;
+                if (i === segs.length - 1) { out.push({ obj, key: segs[i], list }); return; }
+                const seg = segs[i], name = seg.replace(/(\[\]|\{\})$/, ""), v = obj[name];
+                if (seg.endsWith("[]")) for (const e of v || []) walk(e, i + 1, v);
+                else if (seg.endsWith("{}")) for (const e of Object.values(v || {})) walk(e, i + 1, null);
+                else walk(v, i + 1, list);
+            };
+            for (const o of owners) walk(o, 0, null);
+            return out;
+        };
+
+        for (const link of wiring.links()) {
+            const kinds = jsKinds(link.kinds);
+            for (const { obj, key, list } of holders(link)) {
+                if (link.grammar === "dictkey") { dictSite(kinds, obj, key); continue; }
+                const held = obj[key];
+                if (Array.isArray(held)) {
+                    // a LIST of refs: every entry is its own site, and the array is registered so
+                    // entries blanked by a delete get compacted away rather than left as holes
+                    held.forEach((_, i) => (link.grammar === "prefixed"
+                        ? refSite(() => held[i], (v) => { held[i] = v; })
+                        : scalar(kinds, link.decl, () => held[i], (v) => { held[i] = v; })));
+                    pruneList(held, link.grammar === "prefixed"
+                        ? (r) => !String(r).split(":").slice(1).join(":") : (e) => !e);
+                } else if (link.grammar === "prefixed") {
+                    refSite(() => obj[key] || "", (v) => { obj[key] = v; });
+                    // `prune`: this entry exists ONLY to hold the ref (a process input, a join
+                    // source), so a delete that blanks it must drop the entry too. Without the
+                    // flag the entry stays — a rule row keeps its other settings when the
+                    // dictionary it named goes away.
+                    if (list && link.prune) pruneList(list, (e) => !String(e[key] || "").split(":").slice(1).join(":"));
+                } else {
+                    scalar(kinds, link.decl, () => obj[key] || "", (v) => { obj[key] = v; });
+                    if (list && link.prune) pruneList(list, (e) => !e[key]);
+                }
+            }
+        }
         return { sites, lists };
     }
 
@@ -874,9 +838,7 @@ export class GraphModel {
             // on_item/on_window_detected/undetected/on_window_data_start/stop/on_scroll_top/bottom
             // all WATCH window(s) — dashed line(s) to each watched window node, mirroring
             // on_input's window bind above.
-            if (["on_item", "on_window_detected", "on_window_undetected", "on_window_tick",
-                 "on_window_data_start", "on_window_data_stop",
-                 "on_scroll_top", "on_scroll_bottom"].includes(t.kind))
+            if (wiring.opsInGroup("trigger_kinds", "window").includes(t.kind))
                 for (const wid of t.window_watch || [])
                     if (this.window(wid)) es.push({ from: `trigger:${t.id}`, to: `win:${wid}`, kind: "watch" });
             // on_item ALSO watches one specific item template within that window — a second dashed
@@ -1186,7 +1148,8 @@ export class GraphModel {
         this._emitRename("trigger", oldId, newId);
         return true;
     }
-    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && ["interval", "true_interval", "on_change", "on_any_change", "on_new_batch", "on_app_start", "on_capture", "on_live_start", "on_live_stop", "on_readout", "on_register", "on_ready", "on_input", "on_item", "on_window_detected", "on_window_undetected", "on_window_tick", "on_window_data_start", "on_window_data_stop", "on_scroll_top", "on_scroll_bottom", "manual"].includes(kind)) t.kind = kind; }
+    // the roster is the wiring table's (the same one the picker lists and the runner dispatches on)
+    setTriggerKind(id, kind) { const t = this.trigger(id); if (t && wiring.opIds("trigger_kinds").includes(kind)) t.kind = kind; }
     setTriggerInterval(id, s) { const t = this.trigger(id); const v = parseFloat(s); if (t && v > 0) t.interval_s = v; }
     // minimum ms between fires — empty/invalid clears it (null = no throttle).
     setTriggerThrottle(id, v) { const t = this.trigger(id); if (!t) return; const n = parseFloat(v); t.throttle_ms = (v === "" || v == null || Number.isNaN(n) || n <= 0) ? null : n; }
@@ -1296,11 +1259,11 @@ export class GraphModel {
     gates() { return (this.profile.gates || []).map((g) => g.id); }
     routers() { return (this.profile.routers || []).map((r) => r.id); }
     routerTriggers(rid) { return (this.profile.triggers || []).filter((t) => (t.targets || []).includes(rid)).map((t) => t.id); }
-    // Does `ref` name a node kind a gate may target? (trigger/producer/filesource/toast/sound/
-    // action/router — mirrors checker.py's gateable_ids). Used to validate addGateTarget picks.
+    // Does `ref` name a node kind a gate may target? Read from the wiring table's gate.targets row
+    // — the same row checker.py validates against — so this can't fall behind a new gateable kind.
     _gateable(ref) {
-        return !!(this.trigger(ref) || this.producerNode(ref) || this.fileSource(ref) ||
-            this.toastNode(ref) || this.soundNode(ref) || this.actionNode(ref) || this.routerNode(ref));
+        return (wiring.linkFor("gate", "targets")?.kinds || [])
+            .some((k) => this._declIds(wiring.nodeType(k)).has(ref));
     }
     gateTargets(gid) { const g = this.gateNode(gid); return (g && g.targets) || []; }
     addGateTarget(gid, ref) {
@@ -1372,15 +1335,18 @@ export class GraphModel {
     removeRouterTarget(id, bi, targetId) { const b = this._branch(id, bi); if (b) b.targets = (b.targets || []).filter((p) => p !== targetId); }
 
     // ---- action nodes: clear / clone / move a dataset's data when fired (a trigger target) ----
-    static ACTION_KINDS = ["", "clear", "compact", "clone_batches", "clone_resolved", "move_batches", "move_resolved"];
+    // The two op vocabularies an action node stores, read from the server's wiring table — the
+    // same rosters oc.store.dataset_ops / oc.collect.register_ops dispatch on, so a value can't be
+    // written here that nothing implements.
+    static ACTION_KINDS() { return wiring.opIds("dataset_actions"); }
     // Per-REGISTER op (independent of the shared dataset ACTION_KINDS above). "set" writes/removes
     // individual keys (regWriteRows); "remove_all" drops every held key; "clone" copies keys into
     // dest keeping the register's own values, "move" also drops them — a register has no batch
     // grouping, so there's no separate batches/resolved variant like the dataset ops have.
-    static REGISTER_OPS = ["", "set", "remove_all", "clone", "move"];
+    static REGISTER_OPS() { return wiring.opIds("register_ops"); }
     // old dataset-shaped op values a register op can still be carrying (pre-collapse save, or the
     // legacy shared-action fold below) — always normalized on load, see REG_OP_ALIAS below.
-    static REG_OP_ALIAS = { clone_batches: "clone", clone_resolved: "clone", move_batches: "move", move_resolved: "move" };
+    static REG_OP_ALIAS() { return wiring.aliases("register_ops"); }
     actionNode(id) { return (this.profile.actions || []).find((x) => x.id === id) || null; }
     addAction() {
         this.profile.actions = this.profile.actions || [];
@@ -1397,7 +1363,7 @@ export class GraphModel {
         this._repoint("action", oldId, newId, { decl: true });   // def id + any trigger target
         return true;
     }
-    setActionKind(id, v) { const x = this.actionNode(id); if (x && GraphModel.ACTION_KINDS.includes(v)) x.action = v; }
+    setActionKind(id, v) { const x = this.actionNode(id); if (x && GraphModel.ACTION_KINDS().includes(v)) x.action = v; }
     // Wired sources as prefixed refs "dataset:<id>" / "register:<id>" (mirrors registerSources). -> {kind,id,ref}.
     actionSources(id) {
         const x = this.actionNode(id);
@@ -1445,7 +1411,7 @@ export class GraphModel {
     // having had an op) — any other value creates/updates it.
     setActionRegOp(id, regId, op) {
         const x = this.actionNode(id);
-        if (!x || !GraphModel.REGISTER_OPS.includes(op)) return;
+        if (!x || !GraphModel.REGISTER_OPS().includes(op)) return;
         if (!op) { if (x.reg_ops) delete x.reg_ops[regId]; return; }
         this._regOp(x, regId).op = op;
     }
@@ -1578,48 +1544,64 @@ export class GraphModel {
             return i < 0 ? { kind: "", id: ref, ref } : { kind: ref.slice(0, i), id: ref.slice(i + 1), ref };
         }).filter((s) => s.kind && s.id);
     }
-    // The source KINDS each consumer node type accepts — the ONE truth every "+ add source" picker
-    // reads (and the port-drop targets agree with). Declaring a new wireable pairing = one edit here,
-    // not a hand-rolled candidate list per node (rule 7). `register_key` = a single register slot
-    // (register:<id>#<key>), the process key-mangler's single-key unit.
-    static SOURCE_KINDS = {
-        register: ["readout", "process"],
-        process: ["readout", "register_key"],
-        toast: ["readout", "dataset", "subset"],
-        gate: ["readout", "register_key", "register_count", "dataset", "subset"],
-        router: ["readout", "register_key", "register_count", "dataset", "subset"],
-    };
-    // The count-facet suffixes a `register_count` source offers per key: each counts over the key's
-    // ring of recent values (register:<id>#<key>@<facet>) so a numeric gate op tests HOW MANY values
-    // the key holds, not its single exposed value. count = held depth; nonblank = the actual (non-
-    // blank) values; distinct = unique values. Backend: TriggerRunner._facet_count.
-    static REGISTER_COUNT_FACETS = [["count", "count"], ["nonblank", "actual"], ["distinct", "distinct"]];
-    // Addable source candidates for a consumer node, derived from SOURCE_KINDS + the consumer's
-    // already-wired refs. -> [{ref,label,kind}]. Every picker calls this so the listings can't drift
-    // from what's actually wireable (e.g. a register's "+" now lists processes, not only readouts).
-    sourceCandidates(consumerType, consumerId) {
-        const kinds = GraphModel.SOURCE_KINDS[consumerType] || [];
-        const wired = new Set(this._wiredRefs(consumerType, consumerId));
+    // Addable candidates for one of a node's ref fields, derived from the server's wiring table
+    // (wiring.js) + the refs already wired. -> [{ref, value, label, kind}] (`value` is an alias so
+    // the result drops straight into sourcesInput's `free`). EVERY "+ add" list calls this, so no
+    // picker can drift from what the boot checker accepts — the hand-rolled per-node lists this
+    // replaced each restated a slice of the same table (rule 7).
+    //
+    // `field` picks which of the node's ref fields is being filled ("sources" for the usual
+    // prefixed-source list, "targets" for a trigger's/gate's fire list, ...). A BARE-grammar field
+    // yields plain ids; a PREFIXED one yields `kind:id` refs (with `#key` / `@facet` tails for the
+    // register slot forms).
+    sourceCandidates(consumerType, consumerId, field = "sources") {
+        const link = wiring.linkFor(consumerType, field);
+        if (!link) return [];
+        const bare = link.grammar === "bare" || link.grammar === "dictkey";
+        const wired = new Set(bare ? this._wiredIds(consumerType, consumerId, field)
+            : this._wiredRefs(consumerType, consumerId, field));
         const out = [];
-        const add = (ref, label, kind) => { if (!wired.has(ref)) out.push({ ref, label, kind }); };
-        for (const kind of kinds) {
-            if (kind === "readout") for (const v of this.readouts()) add(`readout:${v.id}`, `readout: ${v.id}`, kind);
-            else if (kind === "process") for (const pid of this.processes()) { if (pid !== consumerId) add(`process:${pid}`, `process: ${pid}`, kind); }
-            else if (kind === "register_key") for (const rg of this.registers()) for (const k of this.registerKeys(rg)) add(`register:${rg}#${k}`, `register: ${rg} · ${k}`, kind);
-            else if (kind === "register_count") for (const rg of this.registers()) for (const k of this.registerKeys(rg)) for (const [f, lbl] of GraphModel.REGISTER_COUNT_FACETS) add(`register:${rg}#${k}@${f}`, `register: ${rg} · ${k} · #${lbl}`, kind);
-            else if (kind === "register") for (const rg of this.registers()) add(`register:${rg}`, `register: ${rg}`, kind);
-            else if (kind === "dataset") for (const ds of this.datasets()) add(`dataset:${ds}`, `dataset: ${ds}`, kind);
-            else if (kind === "subset") for (const s of (this.profile.subsets || [])) add(`subset:${s.id}`, `subset: ${s.id}`, kind);
+        const add = (ref, label, kind) => { if (!wired.has(ref)) out.push({ ref, value: ref, label, kind }); };
+        // a bare-id field stores (and shows) the id alone; a prefixed one carries `kind:id` and
+        // shows the kind, so a list mixing datasets, registers and sounds stays readable.
+        const one = (kind, id, tail = "", label = id) => (bare
+            ? add(id, id, kind)
+            : add(`${wiring.kind(kind).prefix}:${id}${tail}`, `${wiring.kind(kind).label}: ${label}`, kind));
+        for (const kind of link.picker) {
+            if (kind === "register_key") {
+                for (const rg of this.registers()) for (const k of this.registerKeys(rg)) one(kind, rg, `#${k}`, `${rg} · ${k}`);
+            } else if (kind === "register_count") {
+                for (const rg of this.registers()) for (const k of this.registerKeys(rg))
+                    for (const f of wiring.facets()) one(kind, rg, `#${k}@${f.id}`, `${rg} · ${k} · #${f.label}`);
+            } else {
+                // a node may never source ITSELF (a self-chained action would cascade forever, a
+                // process input reading its own output is a cycle)
+                const type = wiring.nodeType(kind);
+                // readouts are the one pool declared per WINDOW, not as a top-level node list
+                const ids = type === "readout" ? this.readouts().map((v) => v.id) : [...this._declIds(type)];
+                for (const id of ids) if (!(type === consumerType && id === consumerId)) one(kind, id);
+            }
         }
         return out;
     }
-    // The refs a consumer already has wired (excluded from candidates) — reads each consumer's own
-    // parsed sources, so it tracks whatever shape that node stores (strings vs ProcessInput objects).
-    _wiredRefs(consumerType, id) {
-        if (consumerType === "register") return this.registerSources(id).map((s) => s.ref);
-        if (consumerType === "process") return this.processSources(id).map((s) => s.ref);
-        if (consumerType === "toast") return this.toastSources(id).map((s) => s.ref);
-        return [];
+    // The ids a bare-id list field already holds (excluded from candidates).
+    _wiredIds(consumerType, id, field) {
+        const node = this._nodeOf(consumerType, id);
+        const held = node ? node[field] : null;
+        return Array.isArray(held) ? held : (held ? [held] : []);
+    }
+    // One node of any kind by type + id — the lookup the generic field helpers above need.
+    _nodeOf(type, id) {
+        const pool = wiring.kind(type)?.pool;
+        return pool ? (this.profile[pool] || []).find((x) => x.id === id) || null : null;
+    }
+    // The refs a consumer already has wired (excluded from candidates) — reads the field itself,
+    // so it tracks whatever shape that node stores (a plain "kind:id" string, a ProcessInput
+    // {ref,out} object, or a single scalar ref like a gate's source).
+    _wiredRefs(consumerType, id, field = "sources") {
+        const held = this._nodeOf(consumerType, id)?.[field];
+        const list = Array.isArray(held) ? held : (held ? [held] : []);
+        return list.map((e) => (typeof e === "string" ? e : e?.ref || "")).filter(Boolean);
     }
     // Wired readout feeders as prefixed refs "readout:<id>" (mirrors toastSources). -> {kind,id,ref}.
     registerSources(id) { return GraphModel._parseRefs(this.registerNode(id)?.sources); }

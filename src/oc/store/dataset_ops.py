@@ -22,13 +22,16 @@ from __future__ import annotations
 
 import time
 
+from ..profile import wiring
 from . import store_for
 from .dataset_store import _PLUMBING
 from .db_backup import snapshot_db
 from .flow_events import publish_flow
 
-_ACTIONS = frozenset({"clear", "compact", "clone_batches", "clone_resolved",
-                      "move_batches", "move_resolved"})
+# the ops this module implements, read from the one vocabulary the UI's picker is built from
+# (oc.profile.wiring) — an op can't be offered that lands here unhandled, or handled here and
+# never offered
+_ACTIONS = wiring.op_ids("dataset_actions")
 
 # min seconds between dataset-op snapshots per game, so a fast interval trigger can't snapshot the
 # whole store on every fire (the consistent copy is synchronous — see snapshot_db).

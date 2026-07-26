@@ -11,6 +11,7 @@ import { log, setLogOpen } from "../log.js";
 import { ocrBusyCount } from "./imaging.js";
 import { routesSettled } from "./routing.js";
 import { setPrettyView } from "./pretty_switch.js";
+import { setWiring } from "./wiring.js";
 import { refreshGames, loadGame, initKillGpu, finishBoot } from "./main.js";
 
 // ---- debug launch: ?debug=1 skips the slow/heavy boot ceremony ----------------
@@ -157,6 +158,23 @@ async function killStrayOcrThenBoot() {
         }
         haltStartup(`Could not confirm background OCR was stopped: ${e.message || e}`);
         return;   // can't verify -> don't proceed
+    }
+    // The wiring table (what may connect to what) backs every picker, port-drop target and
+    // node-id prefix, so it must land BEFORE the first node is built. A failure is fatal on
+    // purpose: an empty table renders every "+ source" list blank and every port inert, which
+    // reads as "the graph is broken" rather than "a request failed".
+    try {
+        setWiring(await api.wiring.get());
+    } catch (e) {
+        veil.drop();
+        if (!conn.isOnline()) return;   // offline overlay handles it; reconnect reloads
+        blockOverlay({
+            title: "Could not load the wiring table",
+            lines: [{ text: String(e.message || e) },
+                { text: "Nothing was loaded — without it no node can be wired.", muted: true }],
+            actions: [{ label: "retry", primary: true, run: () => location.reload() }],
+        });
+        return;
     }
     try {
         log("loading profile…");

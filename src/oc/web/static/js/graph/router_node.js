@@ -17,15 +17,9 @@ export function routerParts(r, model) {
             free: () => model.sourceCandidates("router", r.id).map((c) => c.ref),
             addLabel: "+ source", addinCls: "sv-addin router-addsource", rmCls: "sv-rmin router-rmsource" }));
 
-    // every id a branch could target (same set a trigger fires): producers / file sources / toasts /
-    // sounds / actions. Filtered per-branch against what that branch already holds.
-    const allTargets = () => [
-        ...(model.profile.producers || []).map((p) => p.id),
-        ...(model.profile.file_sources || []).map((s) => s.id),
-        ...(model.profile.toasts || []).map((x) => x.id),
-        ...(model.profile.sounds || []).map((x) => x.id),
-        ...(model.profile.actions || []).map((x) => x.id),
-    ];
+    // every id a branch could target (same set a trigger fires) — from the wiring table's
+    // router.branches[].targets row. Filtered per-branch against what that branch already holds.
+    const allTargets = () => model.sourceCandidates("router", r.id, "branches[].targets").map((c) => c.ref);
 
     const branches = (r.branches || []).map((b, bi) => {
         const conds = b.conds || [];

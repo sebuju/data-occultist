@@ -40,11 +40,16 @@ no-op.
 
 from __future__ import annotations
 
+from ..profile import wiring
 from ..profile.models import RegisterWrite
 from ..store import store_for
 from ..store.flow_events import publish_flow
 
-_ACTIONS = frozenset({"set", "remove_all", "clone", "move"})
+# The kinds a reg_ops `dest` may name, read from the wiring table (the same row the boot checker
+# validates against) so this can't drift from what the UI offers or the checker accepts.
+_DEST_KINDS = wiring.prefixes(wiring.link_for("action", "reg_ops{}.dest").kinds)
+
+_ACTIONS = wiring.op_ids("register_ops")
 
 
 def _targeted_keys(session, reg_id: str, slots) -> list[str]:
@@ -81,7 +86,8 @@ def run_register_action(data_dir, game: str, profile, session, *, action: str, r
 
     # clone / move — a register has no batches, so this always resolves one value per key.
     dest_kind, _, dest_id = (dest or "").partition(":")
-    if dest_kind not in ("dataset", "register") or not dest_id:
+    # which kinds a reg_ops dest may name is the wiring table's call, not a literal repeated here
+    if dest_kind not in _DEST_KINDS or not dest_id:
         return {}
     keys = _targeted_keys(session, reg_id, slots)
     if not keys or (dest_kind == "register" and dest_id == reg_id):

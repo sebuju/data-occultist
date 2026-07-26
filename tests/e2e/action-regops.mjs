@@ -19,6 +19,9 @@
 //
 // Run:  node tests/e2e/action-regops.mjs
 import { GraphModel } from "../../src/oc/web/static/js/graph/model.js";
+import { loadWiring } from "./_wiring.mjs";
+
+loadWiring();   // the real /api/wiring table (see _wiring.mjs) — no browser, no server
 
 const fails = [];
 const ok = (cond, msg) => { if (!cond) fails.push(msg); console.log(`   ${cond ? "✓" : "✗"} ${msg}`); };

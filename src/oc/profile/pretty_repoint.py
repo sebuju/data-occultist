@@ -19,28 +19,32 @@ from __future__ import annotations
 
 import re
 
+from . import wiring
+
 # right boundary of a ``kind:id`` head — the id ends at a token delimiter or string end.
 _HEAD_END = r"(?=$|[.\[|\s}])"
 
 
 def _pairs(kind: str, old: str, new: str, win: str | None):
     """The ``(compiled_regex, replacement)`` list that turns OLD into NEW for one rename
-    ``kind``. ``win`` scopes field/item ids to their window (ids are window-unique, not global)."""
+    ``kind``. ``win`` scopes field/item ids to their window (ids are window-unique, not global).
+
+    Which kinds appear in which token form is the wiring table's call (``Kind.token_head`` for a
+    ``dataset:<id>`` head, ``Kind.pretty_path`` for a ``datasets[<id>]`` path) — the same table the
+    graph and the boot checker read, so a kind can't gain a token form the rename sweep misses."""
     o = re.escape(old)
-    if kind == "dataset":
-        return [(re.compile(rf"\bdataset:{o}{_HEAD_END}"), f"dataset:{new}"),
-                (re.compile(rf"\bdatasets\[{o}\]"), f"datasets[{new}]")]
-    if kind == "subset":
-        return [(re.compile(rf"\bsubset:{o}{_HEAD_END}"), f"subset:{new}"),
-                (re.compile(rf"\bsubsets\[{o}\]"), f"subsets[{new}]")]
+    k = wiring.BY_NAME.get(kind)
+    if k is not None and (k.token_head or k.pretty_path):
+        out = []
+        if k.token_head:
+            out.append((re.compile(rf"\b{k.token_head}:{o}{_HEAD_END}"), f"{k.token_head}:{new}"))
+        if k.pretty_path:
+            out.append((re.compile(rf"\b{k.pretty_path}\[{o}\]"), f"{k.pretty_path}[{new}]"))
+        return out
+    # `widget` is pretty-only — it names a widget in the Pretty doc, not a profile node, so it has
+    # no wiring row to carry it.
     if kind == "widget":
         return [(re.compile(rf"\bwidget:{o}{_HEAD_END}"), f"widget:{new}")]
-    if kind == "window":
-        return [(re.compile(rf"\bwindows\[{o}\]"), f"windows[{new}]")]
-    if kind == "trigger":
-        return [(re.compile(rf"\btriggers\[{o}\]"), f"triggers[{new}]")]
-    if kind == "producer":
-        return [(re.compile(rf"\bproducers\[{o}\]"), f"producers[{new}]")]
     if kind in ("field", "item") and win:
         w = re.escape(win)
         seg = "fields" if kind == "field" else "items"
@@ -61,14 +65,16 @@ def _compile(rewrites) -> list:
 
 
 def _bind_map(rewrites) -> dict:
-    """``{(src, old): new}`` for dataset/subset renames — a widget ``binding``'s ``src`` value
-    ("dataset"/"subset") equals the rename ``kind``, so a binding to the OLD id repoints too."""
+    """``{(src, old): new}`` for every bindable rename — a widget ``binding``'s ``src`` value is
+    the rename ``kind``, so a binding to the OLD id repoints too. Bindable = a kind with a
+    ``token_head`` AND a ``pretty_path`` (dataset/subset): row data a widget can render."""
+    bindable = {k.name for k in wiring.KINDS if k.token_head and k.pretty_path}
     m: dict = {}
     for r in rewrites or []:
         if not isinstance(r, dict):
             continue
         kind, old, new = r.get("kind"), r.get("old"), r.get("new")
-        if kind in ("dataset", "subset") and old and new and old != new:
+        if kind in bindable and old and new and old != new:
             m[(kind, str(old))] = str(new)
     return m
 

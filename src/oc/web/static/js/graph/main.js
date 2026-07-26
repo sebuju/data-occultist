@@ -87,6 +87,7 @@ import { syncKillGpu, wireSettingsButton } from "./settings_modal.js";
 import { bootGraph } from "./graph_boot.js";
 import { refreshDirtyUI } from "./pretty_switch.js";
 import { wireOutPort, targetIdOf } from "./port_wire.js";
+import * as wiring from "./wiring.js";
 import {
     setDetectKind, wireWindowControls, wireGamePriority, wireReadout, wireScrollbar,
 } from "./window_wire.js";
@@ -303,9 +304,16 @@ const rulesEdit = (nodeId, aftermath) => (mutate, { rebuild = false } = {}) =>
 initGameLifecycle();   // table-store + persist funnel (incl. save-conflict modal) + game-select wiring
 
 // ---- groups (titled boxes around nodes; pure layout) -----------------------
-// Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles.
-const _TYPE_BY_PREFIX = { win: "window", prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", prodhist: "vttable", hist: "vttable", rohist: "vttable", reghist: "vttable", prochist: "vttable", reg: "region", register: "register", process: "process", ro: "readout", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ds: "dataset", sub: "subset", producer: "producer", trigger: "trigger", gate: "gate", router: "router", action: "action", dict: "dictionary", src: "filesource", toast: "toast", sound: "sound" };
-export function nodeTypeOf(id) { return id === "game" ? "game" : id === "atlas" ? "atlas" : (_TYPE_BY_PREFIX[id.split(":")[0]] || null); }
+// Node type from its id prefix (game | win:… | reg:… | ds:… | …) for default titles. Every prefix
+// of a node the PROFILE declares comes from the wiring table (a new node kind registers its
+// prefix there, once); the view-only ones below have no profile row — previews, history tables,
+// and the parts of a window (region/detect/scrollbar/item/field/tell) that aren't graph nodes.
+// The merge is LAZY (built on first use, after boot's fetch) — the table isn't loaded yet at
+// module-eval time, and this map is read on every node-id parse.
+const _VIEW_ONLY_PREFIX = { prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", prodhist: "vttable", hist: "vttable", rohist: "vttable", reghist: "vttable", prochist: "vttable", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell" };
+let _prefixTypes = null;
+const _TYPE_BY_PREFIX = () => (_prefixTypes ||= { ..._VIEW_ONLY_PREFIX, ...wiring.prefixTypes() });
+export function nodeTypeOf(id) { return id === "game" ? "game" : id === "atlas" ? "atlas" : (_TYPE_BY_PREFIX()[id.split(":")[0]] || null); }
 // Strip a node id's KNOWN type-prefix -> the bare id the model keys on. Same master map as
 // nodeTypeOf (one source of truth), so a new node type that registers its prefix above is wired
 // end-to-end. Strips only the leading segment (readout ro:win:vid -> win:vid); leaves unknown/
@@ -313,7 +321,7 @@ export function nodeTypeOf(id) { return id === "game" ? "game" : id === "atlas" 
 export function bareNodeId(id) {
     const s = String(id || "");
     const pfx = s.split(":")[0];
-    return (pfx in _TYPE_BY_PREFIX) ? s.slice(pfx.length + 1) : s;
+    return (pfx in _TYPE_BY_PREFIX()) ? s.slice(pfx.length + 1) : s;
 }
 groups.initGroups({
     world: () => $("ggroups"),

@@ -342,12 +342,7 @@ export function toastParts(x, model) {
     const titleDefault = (model && model.profile && model.profile.window_title_hint) || "Warframe";
     // sources row (FIRST): the data feeders wired to this toast — removable pills + an add-select.
     const wired = model ? model.toastSources(x.id) : [];
-    const wiredRefs = new Set(wired.map((s) => s.ref));
-    const avail = () => model ? [
-        ...model.readouts().map((v) => `readout:${v.id}`),
-        ...model.datasets().map((d) => `dataset:${d}`),
-        ...(model.profile.subsets || []).map((s) => `subset:${s.id}`),
-    ].filter((r) => !wiredRefs.has(r)) : [];
+    const avail = () => (model ? model.sourceCandidates("toast", x.id).map((c) => c.ref) : []);
     const sourcesRow = srcRow("sources", "wired data feeders — a readout, dataset, or subset whose live value the text below can interpolate as a {{token}}. Add here, or drag a node's out-port onto this toast.",
         sourcesInput({
             chips: wired.map((s) => ({ value: s.ref, node: model && model.refNode(s.ref) })),

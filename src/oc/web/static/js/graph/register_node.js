@@ -316,7 +316,7 @@ function renderBank(id, host, rows) {
 export function registerParts(x, model) {
     // sources input (FIRST): the readouts + processes wired into this register — removable chips +
     // an add-select. The ONE sources widget (rule 7); candidates come from the shared source truth
-    // (SOURCE_KINDS.register = readouts + processes, already-wired excluded).
+    // (the wiring table's register.sources row: readouts + processes, already-wired excluded).
     const wired = model ? model.registerSources(x.id) : [];
     const free = () => model ? model.sourceCandidates("register", x.id).map((c) => ({ value: c.ref, label: c.label })) : [];
     const sourcesRow = srcRow("sources", "readouts and processes wired into this register — remove here, or drag a node's out-port onto it",

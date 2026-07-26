@@ -8,6 +8,7 @@
 import * as api from "../api.js";
 import * as nodeTxn from "./node_txn.js";
 import { model, nodeEls } from "./state.js";
+import * as wiring from "./wiring.js";
 import { h, frag, labCell, labAdd, srcRow } from "../dom.js";
 import { renameNode, movePos } from "./node_lifecycle.js";
 import { persist } from "./persist.js";
@@ -24,20 +25,10 @@ import {
 
 // ---- subset node: join one or more datasets, then filter/derive/sort ----------
 
-const SUB_OPS = ["contains", "icontains", "eq", "ne", "nonempty", "empty", "gt", "lt", "gte", "lte", "regex"];
-const SUB_OP_DESC = {
-    contains: "value contains the given text (case-sensitive)",
-    icontains: "value contains the given text (case-insensitive)",
-    eq: "value equals the given text/number exactly",
-    ne: "value does not equal the given text/number",
-    nonempty: "value is present/non-blank",
-    empty: "value is empty/blank",
-    gt: "value, read as a number, is greater than the given number",
-    lt: "value, read as a number, is less than the given number",
-    gte: "value, read as a number, is >= the given number",
-    lte: "value, read as a number, is <= the given number",
-    regex: "value matches the given regular expression",
-};
+// Row-filter ops, from the server's wiring table — the same roster enrich/subset.match_rule
+// evaluates, so the picker and the evaluator can't disagree about what exists.
+const SUB_OPS = () => wiring.opIds("subset_ops");
+const SUB_OP_DESC = () => wiring.opDesc("subset_ops");
 
 // how a source combines beyond a plain key-matched join (matches JoinSource.mode in models.py)
 const SOURCE_MODES = ["join", "exclude", "mark", "broadcast"];
@@ -359,7 +350,7 @@ function subConfigNode(s) {
     const filters = listBlock({ items: s.filters, rowClass: "sub-row", del: { cls: "sf-del", title: "remove filter" },
         render: (f, i) => [
             colBtn("sf-field", f.field, i),
-            richBtn(f.op || "contains", null, SUB_OP_DESC, "sf-op", { i }),
+            richBtn(f.op || "contains", null, SUB_OP_DESC(), "sf-op", { i }),
             h("input", { class: "sf-val", dataset: { i }, value: f.value || "", placeholder: "value" })] });
     const derived = listBlock({ items: s.derived, rowClass: "sub-row", del: { cls: "sd-del", title: "remove column" },
         render: (d, i) => [
@@ -701,7 +692,7 @@ function wireSubset(div, s) {
         const b = e.currentTarget, i = +b.dataset.i;
         richPickerPop({
             anchor: b, current: s.filters[i].op || "contains",
-            groups: [[null, SUB_OPS.map((o) => ({ value: o, label: o, meta: SUB_OP_DESC[o] || "" }))]],
+            groups: [[null, SUB_OPS().map((o) => ({ value: o, label: o, meta: SUB_OP_DESC()[o] || "" }))]],
             onPick: (v) => restructure(() => { s.filters[i].op = v; }),
         });
     }));

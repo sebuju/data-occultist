@@ -18,6 +18,7 @@ from pydantic import (
 
 from ..store.keys import KeyMap, KeySpec
 from ..types import FractionBox
+from . import wiring
 
 # Single source of truth for a detector's match-score floor. The UI seeds new
 # detect nodes with this so the value lives in exactly one place per layer (web
@@ -1026,41 +1027,23 @@ class ProducerDef(BaseModel):
     key: KeyDef | None = None
 
 
-class GateWhen(str, Enum):
-    """How a :class:`GateCond` tests its source's current value. The op union that lets a gate
-    express every predicate a trigger used to carry inline, plus the shape/text ops from the field
-    pipeline. Three families (see :func:`oc.collect.triggers.TriggerRunner._cond_holds`):
-
-    * shape/text (evaluated by :func:`oc.collect.fields._matches`): ``always`` / ``empty`` /
-      ``no_digit`` / ``all_digit`` / ``has_digit`` / ``no_letter`` / ``all_letter`` / ``has_letter``
-      / ``equal`` / ``not_equal`` / ``contains`` / ``in`` (comma-list membership) — ``arg`` is text;
-    * numeric level: ``gte`` / ``lte`` / ``gt`` / ``lt`` / ``eq`` / ``ne`` — ``arg`` is a number;
-    * numeric window / edge: ``between`` (``arg`` = ``"lo,hi"``), ``crosses_up`` / ``crosses_down``
-      (compare against the previous reading), ``changed`` (source moved this tick).
-    """
-
-    always = "always"
-    empty = "empty"
-    no_digit = "no_digit"
-    all_digit = "all_digit"
-    has_digit = "has_digit"
-    no_letter = "no_letter"
-    all_letter = "all_letter"
-    has_letter = "has_letter"
-    equal = "equal"
-    not_equal = "not_equal"
-    contains = "contains"
-    in_list = "in"
-    gte = "gte"
-    lte = "lte"
-    gt = "gt"
-    lt = "lt"
-    eq = "eq"
-    ne = "ne"
-    between = "between"
-    crosses_up = "crosses_up"
-    crosses_down = "crosses_down"
-    changed = "changed"
+# How a :class:`GateCond` tests its source's current value. The op union that lets a gate express
+# every predicate a trigger used to carry inline, plus the shape/text ops from the field pipeline.
+# GENERATED from wiring.VOCAB["gate_ops"] — the one roster the picker is built from and
+# :meth:`oc.collect.triggers.TriggerRunner._cond_holds` dispatches on, so an op can't exist on one
+# side only (it used to: `no_digit`/`no_letter` were evaluated server-side but never offered).
+# Three families, tagged by each op's `group` (see :func:`~oc.collect.triggers.TriggerRunner._cond_holds`):
+#   * shape/text (via :func:`oc.collect.fields._matches`) — `arg` is text, or unused for the
+#     predicates flagged `no_arg`;
+#   * numeric level (gte/lte/gt/lt/eq/ne) — `arg` is a number;
+#   * numeric window / edge — `between` ("lo,hi"), `crosses_up`/`crosses_down` (vs the previous
+#     reading), `changed` (the source moved this tick).
+# `in` is a Python keyword, so its MEMBER is `in_list` while its value stays "in".
+GateWhen = Enum(
+    "GateWhen",
+    {("in_list" if o.id == "in" else o.id): o.id for o in wiring.ops("gate_ops")},
+    type=str, module=__name__,
+)
 
 
 class GateCond(BaseModel):
@@ -1211,10 +1194,9 @@ class TriggerDef(BaseModel):
     """
 
     id: str
-    # interval | true_interval | on_change | on_any_change | on_new_batch | on_app_start |
-    # on_capture | on_live_start | on_live_stop | on_readout | on_register | on_ready | on_input |
-    # on_item | on_window_detected | on_window_undetected | on_window_data_start |
-    # on_window_data_stop | on_scroll_top | on_scroll_bottom | manual
+    # one of wiring.VOCAB["trigger_kinds"] — the roster the picker is built from and every
+    # `t.kind ==` site in oc.collect.triggers dispatches on (deliberately a plain str, not an
+    # Enum: an unknown kind from a newer profile must load, not raise)
     kind: str = "interval"
     interval_s: float = 300.0               # for kind="interval"/"true_interval": seconds between fires
     watch: list[str] = Field(default_factory=list)    # for kind="on_change"/"on_any_change"/"on_new_batch": datasets to watch
@@ -1630,7 +1612,7 @@ class ActionDef(BaseModel):
     """
 
     id: str
-    action: str = ""                        # "" | clear | clone_batches | clone_resolved | move_batches | move_resolved — DATASET sources only
+    action: str = ""                        # one of wiring.VOCAB["dataset_actions"] — DATASET sources only
     # prefixed refs "dataset:<id>" / "register:<id>" / "sound:<id>" / "action:<id>" / "window:<id>" —
     # everything this node operates on when fired (dataset ops, register ops, sound cues, chained
     # actions, a window it sends input_events to)
@@ -1685,7 +1667,7 @@ class ActionDef(BaseModel):
         # (likewise move_*) always behaved identically for it — collapsed to plain clone/move.
         # Runs unconditionally (not gated on the legacy-fold guard below) so an existing reg_ops
         # entry already carrying the old value gets fixed too, not just a freshly-folded one.
-        op_alias = {"clone_batches": "clone", "clone_resolved": "clone", "move_batches": "move", "move_resolved": "move"}
+        op_alias = wiring.ALIASES["register_ops"]
         for op_data in (data.get("reg_ops") or {}).values():
             if not isinstance(op_data, dict):
                 continue

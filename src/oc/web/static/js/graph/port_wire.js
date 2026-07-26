@@ -4,6 +4,7 @@
 // out of main.js; placeAt/startWire stay in main and are imported back.
 import { model } from "./state.js";
 import { placeAt, startWire, bareNodeId } from "./main.js";
+import * as wiring from "./wiring.js";
 
 // Drag a node's out-port to wire its data somewhere. ONE mechanism for every source type;
 // each type contributes a `spec` describing what kind of node it drops onto (`target`),
@@ -15,12 +16,12 @@ import { placeAt, startWire, bareNodeId } from "./main.js";
 function outPortSpec(n) {
     switch (n.type) {
         case "window": return {
-            target: "dataset",
+            target: wiring.dropTargets("window"),
             onDrop: (ds) => model.setDataset(n.ref.id, ds),
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setDataset(n.ref.id, ds); return `ds:${ds}`; },
         };
         case "producer": return {
-            target: "dataset",
+            target: wiring.dropTargets("producer"),
             onDrop: (ds) => model.setProducerDataset(n.ref.id, ds),
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setProducerDataset(n.ref.id, ds); return `ds:${ds}`; },
         };
@@ -29,7 +30,7 @@ function outPortSpec(n) {
             // DICTIONARY (push its column values in as terms), a TOAST ({{dataset:id}} tokens), or a
             // GATE / ROUTER that tests its content-hash signature (meant for the `changed` op) as
             // their tested source
-            target: ["subset", "producer", "dictionary", "toast", "gate", "router"],
+            target: wiring.dropTargets("dataset"),
             onDrop: (id, ttype) => {
                 if (ttype === "producer") model.addProducerSource(id, n.ref);
                 else if (ttype === "dictionary") model.addDictFeed(id, n.ref);
@@ -44,7 +45,7 @@ function outPortSpec(n) {
             // a subset feeds another SUBSET, a PRODUCER node (price the rows it returns), a TOAST
             // ({{subset:id}} tokens), or a GATE / ROUTER that tests its visible-output content-hash
             // signature (meant for the `changed` op) as their tested source
-            target: ["subset", "producer", "toast", "gate", "router"],
+            target: wiring.dropTargets("subset"),
             selfId: n.ref.id,
             onDrop: (id, ttype) => {
                 if (ttype === "producer") model.addProducerSource(id, n.ref.id);
@@ -59,7 +60,7 @@ function outPortSpec(n) {
             // a readout feeds a TOAST its live value as a {{readout:id}} token, a REGISTER that holds
             // its latest value in an in-memory keyed map, a PROCESS that runs it through a rules
             // pipeline, or a GATE / ROUTER that tests its value as their tested source
-            target: ["toast", "register", "process", "gate", "router"],
+            target: wiring.dropTargets("readout"),
             onDrop: (id, ttype) => {
                 const ref = `readout:${n.ref.id}`;
                 if (ttype === "register") model.addRegisterSource(id, ref);
@@ -77,7 +78,7 @@ function outPortSpec(n) {
             // process's "+ input" picker (a whole-register drag has no single key), so no process target here.
             // Dropping on a GATE / ROUTER wires the register (bare, no #key) as their tested source —
             // the body picker sets a specific #key; a bare `register:<id>` source is acceptable.
-            target: ["dataset", "gate", "router"],
+            target: wiring.dropTargets("register"),
             onDrop: (id, ttype) => {
                 if (ttype === "gate") model.setGateSource(id, `register:${n.ref.id}`);
                 else if (ttype === "router") model.setRouterSource(id, `register:${n.ref.id}`);
@@ -89,12 +90,12 @@ function outPortSpec(n) {
             // a process feeds a REGISTER (hold its re-keyed output). Its inputs are single-key
             // (readout / register slot), so nothing takes a process AS input -> no process target.
             // Empty-canvas drop mints a register holding it, mirroring readout->register.
-            target: "register",
+            target: wiring.dropTargets("process"),
             onDrop: (id) => model.addRegisterSource(id, `process:${n.ref.id}`),
             onEmpty: (pt) => { const id = model.addRegister(); model.addRegisterSource(id, `process:${n.ref.id}`); placeAt(`register:${id}`, pt); return `register:${id}`; },
         };
         case "filesource": return {
-            target: "dataset",
+            target: wiring.dropTargets("filesource"),
             onDrop: (ds) => model.setSourceDataset(n.ref.id, ds),
             onEmpty: (pt) => { const ds = model.addDataset(); placeAt(`ds:${ds}`, pt); model.setSourceDataset(n.ref.id, ds); return `ds:${ds}`; },
         };
@@ -102,19 +103,19 @@ function outPortSpec(n) {
             // a trigger fires a PRODUCER (sweep), FILE SOURCE (read), TOAST (notify), SOUND (play),
             // ACTION (dataset op), or ROUTER (branch). Whether a gate must be satisfied first is
             // wired from the GATE's own out-port (model.addGateTarget), not from here.
-            target: ["producer", "filesource", "toast", "sound", "action", "router"],
+            target: wiring.dropTargets("trigger"),
             onDrop: (pid) => model.addTriggerTarget(n.ref.id, pid),
         };
         case "gate": return {
             // a gate gates whatever's wired to its out-port — trigger or any other gated kind — it
             // permits/blocks, never fires anything itself. The gate owns the link (model.gateTargets).
-            target: ["trigger", "producer", "filesource", "toast", "sound", "action", "router"],
+            target: wiring.dropTargets("gate"),
             onDrop: (tid) => model.addGateTarget(n.ref.id, tid),
         };
         case "router": return {
             // a router fires its matching branch's targets. A body drop adds to the LAST branch (a
             // reasonable default; the body editor manages branches precisely).
-            target: ["producer", "filesource", "toast", "sound", "action"],
+            target: wiring.dropTargets("router"),
             onDrop: (pid) => model.addRouterTarget(n.ref.id, Math.max(0, (n.ref.branches || []).length - 1), pid),
         };
         case "action": return {
@@ -123,7 +124,7 @@ function outPortSpec(n) {
             // sent to it, and another ACTION is fired downstream (chaining, each link with its own
             // delay). selfId blocks the self-drop; addActionSource refuses a chain that would close a
             // cycle.
-            target: ["dataset", "register", "sound", "window", "action"],
+            target: wiring.dropTargets("action"),
             selfId: n.ref.id,
             onDrop: (id, ttype) => model.addActionSource(n.ref.id, `${ttype}:${id}`),
         };
@@ -133,45 +134,29 @@ function outPortSpec(n) {
 
 // The trigger's SECOND out-port (`.port.pwatch`, left face): drag to a dataset/view to make an
 // on_change trigger watch it. Separate from the fires port so the two control lines never share a dot.
+// Which field a watch drop writes into — a trigger stores each watched KIND in its own list
+// (`watch` for datasets/producers, `readout_watch`, `register_watch`, `window_watch`), so the
+// table names the field and this maps that field to the model call that appends to it. The
+// per-trigger-kind question ("does this kind even HAVE a watch port, and of what?") is the
+// table's `port_when`, not a list repeated here.
+const WATCH_DROP = {
+    watch: (t, id) => model.addTriggerWatch(t, id),
+    // the dropped id is the readout NODE id (ro:<win>:<vid>) — the watch stores the bare vid
+    readout_watch: (t, id) => model.addTriggerReadoutWatch(t, String(id).split(":").pop()),
+    register_watch: (t, id) => model.addTriggerRegisterWatch(t, id),   // a key sub-select narrows which keys fire
+    window_watch: (t, id) => model.addTriggerWindowWatch(t, id),
+};
+
 function watchPortSpec(n) {
     if (n.type !== "trigger") return null;
-    if (n.ref.kind === "on_change" || n.ref.kind === "on_any_change") return {
+    const link = wiring.watchLink(n.ref.kind);
+    const drop = link && WATCH_DROP[link.field];
+    if (!drop) return null;
+    return {
         side: "L",
-        target: ["dataset", "subset"],
-        onDrop: (id) => model.addTriggerWatch(n.ref.id, id),
+        target: link.ports.map(wiring.nodeType),
+        onDrop: (id) => drop(n.ref.id, id),
     };
-    if (n.ref.kind === "on_new_batch") return {
-        side: "L",
-        target: ["dataset", "subset"],   // a subset watch fires on its underlying dataset's batch
-        onDrop: (id) => model.addTriggerWatch(n.ref.id, id),
-    };
-    if (n.ref.kind === "on_ready") return {
-        side: "L",
-        target: ["producer"],   // on_ready fires when the watched producer's sweep finishes
-        onDrop: (id) => model.addTriggerWatch(n.ref.id, id),
-    };
-    if (n.ref.kind === "on_readout") return {
-        side: "L",
-        target: ["readout"],
-        // the dropped id is the readout NODE id (ro:<win>:<vid>) — the watch stores the bare vid
-        onDrop: (id) => model.addTriggerReadoutWatch(n.ref.id, String(id).split(":").pop()),
-    };
-    if (n.ref.kind === "on_register") return {
-        side: "L",
-        target: ["register"],   // watch a register; a key sub-select narrows which keys fire
-        onDrop: (id) => model.addTriggerRegisterWatch(n.ref.id, id),
-    };
-    // on_item/on_window_detected/undetected/on_window_data_start/stop/on_scroll_top/bottom all
-    // watch a WINDOW; on_item's item sub-picker (which template within it) lives in the body, not
-    // on this port.
-    if (["on_item", "on_window_detected", "on_window_undetected",
-         "on_window_data_start", "on_window_data_stop",
-         "on_scroll_top", "on_scroll_bottom"].includes(n.ref.kind)) return {
-        side: "L",
-        target: ["window"],
-        onDrop: (id) => model.addTriggerWindowWatch(n.ref.id, id),
-    };
-    return null;
 }
 
 export function wireOutPort(div, n) {

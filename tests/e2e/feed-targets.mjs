@@ -8,6 +8,9 @@
 //
 // Run:  node tests/e2e/feed-targets.mjs
 import { GraphModel } from "../../src/oc/web/static/js/graph/model.js";
+import { loadWiring } from "./_wiring.mjs";
+
+loadWiring();   // the real /api/wiring table (see _wiring.mjs) — no browser, no server
 import { resolveFeeds } from "../../src/oc/web/static/js/graph/feed_targets.js";
 
 const fails = [];

@@ -805,6 +805,14 @@ export const sounds = {
     list: () => tfetch("/api/sounds").then((r) => (r.ok ? r.json() : [])),
 };
 
+// Wiring: the server's ONE table of what may connect to what (oc/profile/wiring.py) — the same
+// rows the boot checker validates against. Every picker, port-drop target, rename site and
+// node-id prefix in the graph derives from it, so the UI can't offer a pairing the checker would
+// reject. Fetched once at boot (graph_boot.js); a failure is fatal, not a silent empty table.
+export const wiring = {
+    get: () => tfetch("/api/wiring").then((r) => ok(r, "wiring").then((x) => x.json())),
+};
+
 // Views: outer-join the source datasets on the shared key, then filter/derive/sort.
 // Returns { subset, datasets, columns, rows }.
 export async function getSubset(game, subset) {

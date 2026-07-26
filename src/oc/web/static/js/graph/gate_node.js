@@ -8,54 +8,24 @@
 import { h, frag, labAdd, labCell, srcRow, trashBtn } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
 import { slideToggle } from "./node_parts.js";
+import * as wiring from "./wiring.js";
 
-// Condition operators (GateCond.when) as [value, label]. EXPORTED + reused by router_node.js so the
-// cond-row markup lives in ONE place (rule 7 — router imports GATE_WHENS + condRow, never re-inlines).
-export const GATE_WHENS = [
-    ["always", "always"], ["empty", "empty"], ["has_digit", "has digit"], ["all_digit", "is a number"],
-    ["has_letter", "has letter"], ["all_letter", "is text"], ["equal", "equals"], ["not_equal", "not equal"],
-    ["contains", "contains"], ["in", "in list"], ["gte", "gte num"], ["lte", "lte num"], ["gt", "gt num"],
-    ["lt", "lt num"], ["eq", "eq num"], ["ne", "not eq"], ["between", "between"],
-    ["crosses_up", "crosses up"], ["crosses_down", "crosses down"], ["changed", "changed"],
-];
-// ops that take NO argument — the arg input is hidden for these.
-const NO_ARG = new Set(["always", "empty", "has_digit", "all_digit", "has_letter", "all_letter", "changed"]);
+// Condition operators (GateCond.when), from the server's wiring table — the same roster
+// models.GateWhen is generated from and TriggerRunner._cond_holds evaluates, so the picker can't
+// omit an op the server implements (it used to omit `no_digit`/`no_letter`). EXPORTED + reused by
+// router_node.js so the cond-row markup lives in ONE place (rule 7 — router imports GATE_WHENS +
+// condRow, never re-inlines). Thunks: the table lands at boot, after module eval.
+export const GATE_WHENS = () => wiring.opPairs("gate_ops");
+export const GATE_WHEN_DESC = () => wiring.opDesc("gate_ops");
+// ops that take NO argument — the arg input is hidden for these (a per-op flag in the table).
+const NO_ARG = () => new Set(wiring.ops("gate_ops").filter((o) => o.no_arg).map((o) => o.id));
 
-// per-op meta line for the rich picker (handover-rich-dropdowns recipe A) — mined from the old
-// single `-condwhen` tooltip, split per option since a native <option title> never renders.
-export const GATE_WHEN_DESC = {
-    always: "holds unconditionally — every tick",
-    empty: "the value is empty/blank",
-    has_digit: "the value contains at least one digit",
-    all_digit: "the value is all digits (a whole number)",
-    has_letter: "the value contains at least one letter",
-    all_letter: "the value is all letters (no digits)",
-    equal: "the value equals the given text/number exactly",
-    not_equal: "the value does not equal the given text/number",
-    contains: "the value contains the given substring",
-    in: "the value matches one of a comma-separated list",
-    gte: "the value, read as a number, is >= the given number",
-    lte: "the value, read as a number, is <= the given number",
-    gt: "the value, read as a number, is > the given number",
-    lt: "the value, read as a number, is < the given number",
-    eq: "the value, read as a number, equals the given number",
-    ne: "the value, read as a number, does not equal the given number",
-    between: "the value, read as a number, falls between lo,hi (inclusive)",
-    crosses_up: "the value just crossed UP through the given number this tick (was below, now at/above)",
-    crosses_down: "the value just crossed DOWN through the given number this tick (was above, now at/below)",
-    changed: "the value (or dataset/subset content signature) changed since the last tick",
-};
-
-// One condition row: [when rich-picker button] [arg input, unless a no-arg op] [remove]. `cls`
-// scopes the wiring classes ("gate" / "routerb") so the two callers' handlers don't cross-fire;
-// `ci` tags the row's index (data-idx). Shared by gate + router (rule 7). The picker itself opens
-// from the wiring side (io_wire.js), which has model access this pure builder doesn't.
 export function condRow(cls, ci, c) {
-    const label = (GATE_WHENS.find(([v]) => v === c.when) || [, c.when])[1];
+    const label = (GATE_WHENS().find(([v]) => v === c.when) || [, c.when])[1];
     return h("div", { class: `${cls}-condrow`, dataset: { idx: String(ci) } },
         h("button", { class: `${cls}-condwhen rich-dd-btn`, type: "button",
-            title: GATE_WHEN_DESC[c.when] || "how the tested value must behave for this condition to hold" }, `<${label}>`),
-        NO_ARG.has(c.when) ? null
+            title: GATE_WHEN_DESC()[c.when] || "how the tested value must behave for this condition to hold" }, `<${label}>`),
+        NO_ARG().has(c.when) ? null
             : h("input", { class: `${cls}-condarg`, value: c.arg ?? "", type: "text", placeholder: "value",
                 title: "value the condition compares against — a number, text, a comma list for 'in list', or lo,hi for 'between'" }),
         trashBtn({ cls: `${cls}-condrm`, title: "remove condition" }));
@@ -89,19 +59,10 @@ export function gateParts(g, model) {
     // gate permits/blocks. The gate owns the link (model.gateTargets), so this is the single place
     // it's edited — no per-kind picker, one uniform list.
     const wired = model.gateTargets(g.id);
-    const allGateable = () => [
-        ...(model.profile.triggers || []).map((t) => t.id),
-        ...(model.profile.producers || []).map((p) => p.id),
-        ...(model.profile.file_sources || []).map((s) => s.id),
-        ...(model.profile.toasts || []).map((x) => x.id),
-        ...(model.profile.sounds || []).map((x) => x.id),
-        ...(model.profile.actions || []).map((x) => x.id),
-        ...(model.profile.routers || []).map((r) => r.id),
-    ];
     const dest = srcRow("targets", "nodes this gate applies to — it permits or blocks each one",
         sourcesInput({
             chips: wired.map((ref) => ({ value: ref, node: model.refNode(ref) })),
-            free: () => allGateable().filter((ref) => !wired.includes(ref)),
+            free: () => model.sourceCandidates("gate", g.id, "targets").map((c) => c.ref),
             addLabel: "+ target", addinCls: "sv-addin gate-adddest", rmCls: "sv-rmin gate-rmdest" }));
     return {
         title: h("input", { class: "gi gi-id gate-rename", value: g.id, title: "rename gate" }),

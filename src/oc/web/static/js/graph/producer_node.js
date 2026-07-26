@@ -8,6 +8,7 @@ import * as api from "../api.js";
 import { isOnline } from "../conn.js";
 import { h, frag, TRASH, labCell, labAdd, srcRow, kv, subhead, gspan, trashBtn } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
+import * as wiring from "./wiring.js";
 import { model } from "./state.js";
 import * as hub from "../hub.js";
 import { log } from "../log.js";
@@ -17,21 +18,14 @@ import { log } from "../log.js";
 export const PRODUCER_TYPES = ["http"];
 export const PRODUCER_TYPE_DESC = { http: "generic fetch+map backend (URL/headers/mapping, per-item or list mode)" };
 
-export const AGG_OPS = ["min", "max", "sum", "count", "median", "median_low", "first"];
-export const AGG_OP_DESC = {
-    min: "smallest of the kept values", max: "largest of the kept values",
-    sum: "add every kept value", count: "how many values were kept",
-    median: "middle value of the kept set", median_low: "median of the lowest N (see depth)",
-    first: "the first kept value, in element order",
-};
-export const FILTER_OPS = ["eq", "ne", "in", "nin", "gt", "ge", "lt", "le", "contains", "ncontains"];
-export const FILTER_OP_DESC = {
-    eq: "equals the value", ne: "does not equal the value",
-    in: "is one of a comma-separated list", nin: "is not one of a comma-separated list",
-    gt: "greater than the value", ge: "greater than or equal to the value",
-    lt: "less than the value", le: "less than or equal to the value",
-    contains: "contains the value as a substring", ncontains: "does not contain the value as a substring",
-};
+// Response-mapping ops, from the server's wiring table — the same rosters enrich/http_producer
+// evaluates. These compare TYPED json values (an `in` filter takes a list), unlike the subset
+// row filters that stringify, so they are their own vocabularies despite the shared names.
+// Thunks: the table lands at boot, after module eval.
+export const AGG_OPS = () => wiring.opIds("producer_aggs");
+export const AGG_OP_DESC = () => wiring.opDesc("producer_aggs");
+export const FILTER_OPS = () => wiring.opIds("producer_filters");
+export const FILTER_OP_DESC = () => wiring.opDesc("producer_filters");
 export const KEY_TRANSFORMS = ["none", "lowercase", "slugify", "catalogue"];
 export const KEY_TRANSFORM_DESC = {
     none: "use the item name as-is", lowercase: "fold the item name to lowercase",
@@ -132,7 +126,7 @@ const filterList = (filters, i = null, withAdd = true) => {
     return frag(
         ...(filters || []).map((flt, fi) => h("div", { class: "pr-row pr-ffilt", dataset: at(fi) },
             h("input", { class: "pr-ff-path", value: flt.path || "", placeholder: "field", title: "path within each element to test" }),
-            sel("pr-ff-op", FILTER_OPS, flt.op || "eq", "comparison (in/nin take a comma list)"),
+            sel("pr-ff-op", FILTER_OPS(), flt.op || "eq", "comparison (in/nin take a comma list)"),
             h("input", { class: "pr-ff-val", value: Array.isArray(flt.value) ? flt.value.join(", ") : (flt.value ?? ""), placeholder: "value", title: "value to compare against" }),
             trashBtn({ cls: "sv-rmin pr-ff-del", dataset: at(fi), title: "remove filter" }))),
         withAdd ? h("button", { class: "pr-ff-add", dataset: i == null ? {} : { i } }, "+ filter") : null);
@@ -155,7 +149,7 @@ const fieldsBlock = (fields) => {
                     title: "compose the column from several fields, e.g. '{tier} {relicName}' -> 'Axi A1'. Overrides path/array." })),
             arr ? h("div", { class: "pr-arr" },
                 h("input", { class: "pr-fa-pluck", value: arr.pluck || "", placeholder: "pluck path", title: "dotted path within each kept element to the value" }),
-                sel("pr-fa-agg", AGG_OPS, arr.agg || "min", "how the plucked values fold to one"),
+                sel("pr-fa-agg", AGG_OPS(), arr.agg || "min", "how the plucked values fold to one"),
                 h("input", { class: "pr-fa-depth", type: "number", value: arr.depth ?? 5, title: "depth (median_low): median of the lowest N" }),
                 filterList(arr.filter, i),
             ) : null);

@@ -15,14 +15,24 @@
 
 import { pathGet } from "./path.js";
 import { nodeInputs } from "./constraints.js";
+import { kind as wiringKind } from "../graph/wiring.js";
+
+// The heads that name a PROFILE node come from the wiring table (Kind.token_head) — the same rows
+// templating.py resolves server-side and pretty_repoint.py rewrites on rename, so this grammar
+// can't drift from them. `node:`/`widget:`/`status`/`activity`/`page` are pretty-only and stay
+// literal: they name nothing in the profile.
+// Resolved LAZILY (on first use, after boot's fetch) — the table isn't installed at module-eval.
+let _heads = null;
+const H = () => (_heads ||= { ds: wiringKind("dataset").token_head, sub: wiringKind("subset").token_head });
+const isRows = (src) => src.startsWith(`${H().ds}:`) || src.startsWith(`${H().sub}:`);
 
 // Every bindable source as {value: token, label} — datasets (+fields), subsets (+columns),
 // node inputs, pretty widgets, status. Drives the conditions builder's source dropdown.
 export function sourceTokenList(model, widgets = []) {
     const out = [];
     const add = (v, l) => out.push({ value: v, label: l });
-    for (const d of model.datasets()) { add(`dataset:${d}`, `rows · ${d}`); for (const f of model.datasetFields(d)) add(`dataset:${d}.${f}`, `${d} · ${f}`); }
-    for (const s of model.profile.subsets || []) { add(`subset:${s.id}`, `rows · ${s.id}`); for (const c of model.subsetColumns(s.id)) add(`subset:${s.id}.${c}`, `${s.id} · ${c}`); }
+    for (const d of model.datasets()) { add(`${H().ds}:${d}`, `rows · ${d}`); for (const f of model.datasetFields(d)) add(`${H().ds}:${d}.${f}`, `${d} · ${f}`); }
+    for (const s of model.profile.subsets || []) { add(`${H().sub}:${s.id}`, `rows · ${s.id}`); for (const c of model.subsetColumns(s.id)) add(`${H().sub}:${s.id}.${c}`, `${s.id} · ${c}`); }
     for (const i of nodeInputs(model)) add(`node:${i.path}`, `node · ${i.nodeLabel} · ${i.label}`);
     for (const w of widgets) add(`widget:${w.id}`, `widget · ${w.id} (${w.type})`);
     add("page", "current page");
@@ -46,7 +56,7 @@ const tokenKey = (inner) => `token:${splitFormat(splitDefault(String(inner || ""
 // The subscribe key a token/binding depends on (what the data layer notifies on).
 export function subKeyForToken(inner) {
     const src = splitDefault(String(inner || "").trim())[0].split("|")[0].trim();
-    if (src.startsWith("dataset:") || src.startsWith("subset:")) return tokenKey(inner);
+    if (isRows(src)) return tokenKey(inner);
     if (src.startsWith("node:")) return `node:${src.slice(5).trim()}`;
     if (src.startsWith("widget:")) return `widget:${src.slice(7).trim()}`;
     if (src === "page") return "page";
@@ -57,7 +67,7 @@ export function subKeyForToken(inner) {
 
 export function dataKeyForBinding(b) {
     if (!b || !b.id) return null;
-    return b.src === "subset" ? `subset:${b.id}` : `dataset:${b.id}`;
+    return b.src === H().sub ? `${H().sub}:${b.id}` : `${H().ds}:${b.id}`;
 }
 
 // Resolve one {{token}} inner string to a scalar (for dynamic text / conditions). dataset:/subset:
@@ -91,7 +101,7 @@ export function resolveToken(ctx, inner) {
             default: return "";
         }
     }
-    if (src.startsWith("dataset:") || src.startsWith("subset:")) {
+    if (isRows(src)) {
         // Resolved server-side (templating.py: count/sum/mean/min/max/first/latest, python slices
         // incl. negative index, join) and cached under the token key — the browser no longer folds
         // whole row tables for a scalar. `undefined`/`null` (not yet resolved, or an empty

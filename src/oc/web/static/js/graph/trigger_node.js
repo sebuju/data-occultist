@@ -21,62 +21,42 @@
 // Rendering only — wiring is in main.js.
 import { h, frag, labCell, srcRow, labBtns, REC } from "../dom.js";
 import { sourcesInput } from "./sources_input.js";
+import { watchLink } from "./wiring.js";
+import * as wiring from "./wiring.js";
 
-// The kind roster, grouped for the picker's headers (mirrors REG_AGGREGATES/register_node.js —
-// same grouped-with-meta rich_picker.js pattern, so a native <select> isn't the only way to browse
-// a long, node-specific vocabulary). Kinds that watch the SAME node type sit in one group.
-export const KIND_GROUPS = [
-    ["timed", [["interval", "interval"], ["true_interval", "true interval"]]],
-    ["dataset", [["on_change", "on change"], ["on_any_change", "on any change"], ["on_new_batch", "on new batch"]]],
-    ["readout", [["on_readout", "on readout"]]],
-    ["register", [["on_register", "on register"]]],
-    ["producer", [["on_ready", "on ready"]]],
-    ["window", [["on_item", "on item"], ["on_window_detected", "on window detected"],
-                ["on_window_undetected", "on window undetected"],
-                ["on_window_tick", "on window tick"],
-                ["on_window_data_start", "on window data start"],
-                ["on_window_data_stop", "on window data stop"],
-                ["on_scroll_top", "on scroll top"], ["on_scroll_bottom", "on scroll bottom"]]],
-    ["session", [["on_app_start", "on app start"], ["on_capture", "on capture start"],
-                 ["on_live_start", "on live start"], ["on_live_stop", "on live stop"]]],
-    ["input", [["on_input", "on input (live only)"]]],
-    ["manual", [["manual", "manual only"]]],
-];
-
-// One-line explanation per kind (mirrors AGG_DESC/register_node.js) — the picker's meta line, so a
-// kind's behaviour reads while browsing, not only after picking.
-export const KIND_DESC = {
-    interval: "fire every N seconds; the clock reseeds to a fresh wait on restart/config edit",
-    true_interval: "fire every N seconds of REAL time, anchored to the persisted last fire — cadence survives restarts/config edits",
-    on_change: "fire when a watched dataset/subset gains new/changed rows; a watched subset fires only when its computed output actually changes",
-    on_any_change: "same watch as on change, but fires on EVERY write reaching it, even when a watched subset's visible output is unchanged",
-    on_new_batch: "fire once per NEW batch of a watched dataset/subset, even when the row values are identical to the last batch (a re-pushed screen)",
-    on_readout: "pulse when a watched live readout is read this tick — wire a gate for the value condition",
-    on_register: "pulse when a watched register's exposed key moves this tick — wire a gate for the per-key condition",
-    on_ready: "fire once when a watched producer's sweep/fetch finishes — deterministic, can't precede the data",
-    on_item: "pulse when a specific item template (or any item) of a watched window is detected/kept this tick (e.g. a \"terminator\" placeholder)",
-    on_window_detected: "fire when a watched window becomes the currently-recognized one",
-    on_window_undetected: "fire when a watched window stops being the currently-recognized one",
-    on_window_tick: "fire every tick a watched window's grid was actually OCR'd — content-independent, won't stall on a duplicate-content re-read (unlike on change)",
-    on_window_data_start: "fire the first time a watched window produces data again after a quiet spell",
-    on_window_data_stop: "fire once a watched window has gone quiet (see settle below) after producing data",
-    on_scroll_top: "fire when a watched window's scrollbar thumb arrives at the TOP of its track",
-    on_scroll_bottom: "fire when a watched window's scrollbar thumb arrives at the BOTTOM of its track",
-    on_app_start: "fire once when the web app boots",
-    on_capture: "fire when a capture session starts, live or precapture",
-    on_live_start: "fire when the server live-collection session starts",
-    on_live_stop: "fire when the server live-collection session stops",
-    on_input: "pulse on a keyboard/mouse chord — LIVE ONLY, optionally bound to a window and rect",
-    manual: "never auto-fires; the fire button drives it",
+// Hover copy for the watch port, per kind — COPY ONLY: whether the port exists at all, and what
+// it may be dropped on, both come from the wiring table (watchLink). A kind with no entry gets a
+// generic "drag to a <what it watches> to watch".
+const WATCH_TITLE = {
+    on_change: "drag to a dataset or subset to watch for new rows",
+    on_any_change: "drag to a dataset or subset to watch for new rows",
+    on_new_batch: "drag to a dataset or subset to fire once per new batch (a re-pushed screen)",
+    on_ready: "drag to a producer to fire when its sweep finishes",
+    on_readout: "drag to a readout node to watch its value",
+    on_register: "drag to a register to watch its keys",
+    on_item: "drag to a window to watch — then pick the item template below",
+    on_window_detected: "drag to a window to watch its recognition state",
+    on_window_undetected: "drag to a window to watch its recognition state",
+    on_window_data_start: "drag to a window to watch its dataset's activity",
+    on_window_data_stop: "drag to a window to watch its dataset's activity",
+    on_scroll_top: "drag to a window to watch its scrollbar",
+    on_scroll_bottom: "drag to a window to watch its scrollbar",
 };
 
+// The kind roster comes from the server's wiring table (wiring.VOCAB["trigger_kinds"]) — the same
+// roster every `t.kind ==` site in oc.collect.triggers dispatches on, grouped by the node kind each
+// kind watches (the picker's headers; mirrors REG_AGGREGATES/register_node.js — the grouped
+// rich_picker.js pattern, so a native <select> isn't the only way to browse a long vocabulary).
+// Each entry carries its own one-line meta for the picker, so a kind's behaviour reads while
+// browsing rather than only after picking. Thunks: the table lands at boot, after module eval.
+export const KIND_GROUPS = () => wiring.opGroups("trigger_kinds");
+export const KIND_DESC = () => wiring.opDesc("trigger_kinds");
+
 // window-scoped kinds: all watch window_watch (a window node); on_item ALSO sub-picks item_watch.
-const WINDOW_KINDS = ["on_item", "on_window_detected", "on_window_undetected", "on_window_tick",
-                       "on_window_data_start", "on_window_data_stop",
-                       "on_scroll_top", "on_scroll_bottom"];
+const WINDOW_KINDS = () => wiring.opsInGroup("trigger_kinds", "window");
 
 export function kindLabel(v) {
-    for (const [, opts] of KIND_GROUPS) for (const [ov, lbl] of opts) if (ov === v) return lbl;
+    for (const [, opts] of KIND_GROUPS()) for (const [ov, lbl] of opts) if (ov === v) return lbl;
     return v;
 }
 
@@ -104,22 +84,15 @@ const rectField = (lbl, cls, val) =>
 // the WATCH picker (which value(s) to wake on); the gate does the comparison. See gate_node.js.
 
 export function triggerParts(t, model) {
-    const allKinds = KIND_GROUPS.flatMap(([, opts]) => opts.map(([v]) => v));
+    const allKinds = KIND_GROUPS().flatMap(([, opts]) => opts.map(([v]) => v));
     const kind = allKinds.includes(t.kind) ? t.kind : "interval";
     const timed = kind === "interval" || kind === "true_interval";
 
     // targets: drag the out-port to a producer / file source / toast / sound / action OR pick one here.
-    const haveT = new Set(t.targets || []);
-    const tgtIds = () => [...(model.profile.producers || []).map((p) => p.id),
-                    ...(model.profile.file_sources || []).map((s) => s.id),
-                    ...(model.profile.toasts || []).map((x) => x.id),
-                    ...(model.profile.sounds || []).map((x) => x.id),
-                    ...(model.profile.actions || []).map((x) => x.id),
-                    ...(model.profile.routers || []).map((x) => x.id)];
     const targets = srcRow("fires", "producers (sweep), file sources (read), toasts (notify), sounds (play), or actions (dataset op) this trigger fires",
         sourcesInput({
             chips: (t.targets || []).map((p) => ({ value: p, node: model.refNode(p) })),
-            free: () => tgtIds().filter((p) => !haveT.has(p)),
+            free: () => model.sourceCandidates("trigger", t.id, "targets").map((c) => c.ref),
             addLabel: "+ fire target", addinCls: "sv-addin tg-addfire", rmCls: "sv-rmin tg-rmtarget" }));
 
     const interval = timed
@@ -178,7 +151,7 @@ export function triggerParts(t, model) {
     // watches exactly one (model.addTriggerWindowWatch enforces that on the model side) and then
     // sub-picks which item template within it pulses the trigger.
     let winWatch = null, itemWatch = null;
-    if (WINDOW_KINDS.includes(kind)) {
+    if (WINDOW_KINDS().includes(kind)) {
         const have = new Set(t.window_watch || []);
         const hint = kind === "on_item" ? "the window the watched item template lives in"
             : kind === "on_window_detected" ? "windows to watch for becoming the recognized one"
@@ -268,7 +241,7 @@ export function triggerParts(t, model) {
     // kind: a grouped rich popover (rich_picker.js), same shape as the register aggregate fold —
     // native <option title> tooltips don't render cross-browser, so each kind's meaning is shown
     // as a meta line while browsing (io_wire.js wires the click -> KIND_GROUPS/KIND_DESC -> pick).
-    const kindBtn = h("button", { class: "gi tg-kind-btn rich-dd-btn rich-dd-block", type: "button", title: KIND_DESC[kind] || "" },
+    const kindBtn = h("button", { class: "gi tg-kind-btn rich-dd-btn rich-dd-block", type: "button", title: KIND_DESC()[kind] || "" },
         `<${kindLabel(kind)}>`);
 
     return {
@@ -282,14 +255,10 @@ export function triggerParts(t, model) {
         foot: h("button", { class: "tg-fire" }, "↻ fire"),
         ports: frag(
             h("span", { class: "port out", title: "drag to a node this trigger should fire" }),
-            (kind === "on_change" || kind === "on_any_change") && h("span", { class: "port pwatch", title: "drag to a dataset or subset to watch for new rows" }),
-            kind === "on_new_batch" && h("span", { class: "port pwatch", title: "drag to a dataset or subset to fire once per new batch (a re-pushed screen)" }),
-            kind === "on_ready" && h("span", { class: "port pwatch", title: "drag to a producer to fire when its sweep finishes" }),
-            kind === "on_readout" && h("span", { class: "port pwatch", title: "drag to a readout node to watch its value" }),
-            kind === "on_register" && h("span", { class: "port pwatch", title: "drag to a register to watch its keys" }),
-            kind === "on_item" && h("span", { class: "port pwatch", title: "drag to a window to watch — then pick the item template below" }),
-            (kind === "on_window_detected" || kind === "on_window_undetected") && h("span", { class: "port pwatch", title: "drag to a window to watch its recognition state" }),
-            (kind === "on_window_data_start" || kind === "on_window_data_stop") && h("span", { class: "port pwatch", title: "drag to a window to watch its dataset's activity" }),
-            (kind === "on_scroll_top" || kind === "on_scroll_bottom") && h("span", { class: "port pwatch", title: "drag to a window to watch its scrollbar" })),
+            // WHETHER this kind has a watch port (and what it accepts) is the wiring table's call
+            // — watchLink(kind) — so a new watching kind needs no edit here. Only the hover copy
+            // is per-kind, and it falls back to the link's own label.
+            !!watchLink(kind) && h("span", { class: "port pwatch",
+                title: WATCH_TITLE[kind] || `drag to a ${watchLink(kind).label} to watch` })),
     };
 }
