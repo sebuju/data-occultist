@@ -19,7 +19,7 @@ import { registerKey, SCOPE } from "../inputbus.js";
 import { clearTools } from "./drawtool.js";
 import { undo, redo } from "./history.js";
 import { persist } from "./persist.js";
-import { nodeIdOf, editBox, rectEditCanvasSync } from "./imaging.js";
+import { nodeIdOf, editBox, rectEditCanvasSync, nudgeMatchPreviewBox, clearMpNudge } from "./imaging.js";
 import { WIDTH_ONLY_NODES, resetSelectionSize, nudgeAxisToGrid, quantizeWidthOnlyHeight } from "./node_resize.js";
 import {
     activeOverlayKey, selectedNodeId, nodeTypeOf, NUDGE,
@@ -184,7 +184,7 @@ registerKey({
         const now = performance.now();
         if (now - _lastEsc < 400) { _lastEsc = 0; navAnchor = null; fitAllZoom(); ev.preventDefault(); return; }
         _lastEsc = now;
-        if (selected.size || selectedNodeId || overlays.get(activeOverlayKey)) { deselectAll(); ev.preventDefault(); return; }
+        if (selected.size || selectedNodeId || overlays.get(activeOverlayKey)) { clearMpNudge(); deselectAll(); ev.preventDefault(); return; }
         return;
     }
     const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey;   // leave modified combos to the browser
@@ -246,6 +246,10 @@ registerKey({
     }
     const dir = NUDGE[ev.key.toLowerCase()];
     if (!dir) return;
+    // A clicked match-preview cutout owns WASD first: arming it takes an explicit click on that
+    // canvas, and any press outside its node disarms — so it can never quietly outrank the overlay
+    // or the node-move below. Moves the node's own box, repainting the cutout under the keys.
+    if (nudgeMatchPreviewBox(dir, ev.shiftKey)) { ev.preventDefault(); return; }
     // No active box but a node is selected → WASD moves the NODE one grid step;
     // Shift+WASD resizes it one grid step (A/D width, W/S height) — same grip the drag
     // handle drives, so it persists + redraws edges identically.
@@ -299,7 +303,7 @@ registerKey({
                     flushEdges();
                     groups.renderGroups();
                     persist.layout({ coalesce: true });
-                    flashGuides(selIds);   // show what the resized node(s) now line up with, then fade
+                    flashGuides(selIds, { size: true });   // what the resized node(s) line up with + each one's W×H, then fade
                 }
                 ev.preventDefault();
             }

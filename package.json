@@ -9,7 +9,8 @@
     "test:corners": "node tests/e2e/straight-shot-corners.mjs",
     "test:action-targets": "node tests/e2e/action-targets.mjs",
     "test:feed-targets": "node tests/e2e/feed-targets.mjs",
-    "test:feed-values": "node tests/e2e/feed-values.mjs"
+    "test:feed-values": "node tests/e2e/feed-values.mjs",
+    "test:mp-nudge": "node tests/e2e/mp-nudge.mjs"
   },
   "devDependencies": {
     "playwright": "^1.61.1"

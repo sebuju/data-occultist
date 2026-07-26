@@ -2,7 +2,7 @@
 // Extracted from main.js verbatim.
 import * as api from "../api.js";
 import { h, frag, TRASH, trashBtn, subhead, kv } from "../dom.js";
-import { onOutside } from "../inputbus.js";
+import { onOutside, registerKey, SCOPE } from "../inputbus.js";
 import { openCaptureModal } from "./panels/precap.js";
 import { timed, log } from "../log.js";
 import { Overlay, MIN_FRAC } from "../overlay.js";
@@ -11,7 +11,7 @@ import * as groups from "./groups.js";
 import { singleFlight, pendingCount } from "../singleflight.js";
 import { confClass } from "./conf.js";
 import {
-    setStatus, model, nodeEls, openImages, winPage, imageCanvases, itemCanvases, overlays,
+    setStatus, model, nodeEls, busy, openImages, winPage, imageCanvases, itemCanvases, overlays,
     gridPreviews, gridReads, gridCellBoxes, gridGuards, gridOccluded, gridDetections, itemReads, clearGrid, view, boot,
     readoutPreview,
 } from "./state.js";
@@ -517,23 +517,28 @@ async function _imageForWindow(winId) {
 }
 
 // Open the zoomed-cutout picker for a box (window fractions) on ``winId``'s image; ``onSample(hex)``
-// receives the clicked colour. Shared by the readout and colour-detector pickers.
-export async function openBoxColorPick(winId, box, onSample, cfg) {
+// receives each clicked colour (the modal stays open — sample as many as you like, close with
+// ✕/Escape/backdrop). ``getCfg()`` is re-read after every pick so the pink overlay grows with them
+// — a live getter, not a snapshot, exactly like mountMatchPreview's (rule 7): the sinks below may
+// REPLACE the colours array, so a captured reference would go stale after the first click.
+export async function openBoxColorPick(winId, box, onSample, getCfg) {
     const img = await _imageForWindow(winId);
-    if (img) _openColorPickModal(img, box, onSample, cfg);
+    if (img) _openColorPickModal(img, box, onSample, getCfg);
 }
 
 export function openReadoutColorPick(winId, roId) {
     const ro = (model.window(winId)?.readouts || []).find((r) => r.id === roId);
     if (!ro) return;
     const fd = model.readoutFieldOf(winId, roId);
-    const p = fd?.preprocess;                            // paint the picker like the readout's match-preview
-    const cfg = p?.mode === "color" ? { colors: p.colors, tolerance: p.tolerance, mask: true, minFrac: p.min_frac || 0 } : {};
+    const getCfg = () => {                               // paint the picker like the readout's match-preview
+        const p = fd?.preprocess;
+        return p?.mode === "color" ? { colors: p.colors, tolerance: p.tolerance, mask: true, minFrac: p.min_frac || 0 } : {};
+    };
     openBoxColorPick(winId, ro.box, (hex) => {
         nodeEdit(`ro:${winId}:${roId}`, "read",
             () => { const pp = model._ppOf(fd); if (pp && !pp.colors.includes(hex)) pp.colors.push(hex); rebuildNode(`ro:${winId}:${roId}`); },
             () => autosave(winId));                      // preprocess changes OCR input -> re-read
-    }, cfg);
+    }, getCfg);
 }
 
 // Same zoomed-cutout picker for a colour DETECTOR: sample from the detector's own box and drop the
@@ -541,8 +546,10 @@ export function openReadoutColorPick(winId, roId) {
 export function openDetectColorPick(winId, detId) {
     const d = model.detect(winId, detId);
     if (!d || !d.search) return;
-    const dc = d.colors;                           // paint the picker like the detector's match-preview
-    const cfg = (dc && dc.length && d.text == null) ? { colors: dc, tolerance: d.tolerance, border: d.width != null, width: d.width } : {};
+    const getCfg = () => {                         // paint the picker like the detector's match-preview
+        const dc = d.colors;
+        return (dc && dc.length && d.text == null) ? { colors: dc, tolerance: d.tolerance, border: d.width != null, width: d.width } : {};
+    };
     openBoxColorPick(winId, d.search, (hex) => {   // a detector's box lives on `.search`, not `.box`
         nodeEdit(`det:${winId}:${detId}`, "read", () => {
             const cols = d.colors && d.colors.length ? d.colors : [""];
@@ -552,21 +559,24 @@ export function openDetectColorPick(winId, detId) {
             rebuildNode(`det:${winId}:${detId}`);
             refreshImageBoxes(winId);
         }, () => { autosave(winId === "game" ? null : winId); refreshDetect(winId); });
-    }, cfg);
+    }, getCfg);
 }
 
-// box is in window fractions; draw its crop from `img` blown up, click a pixel to sample.
-// `cfg` is the SAME shape mountMatchPreview's getCfg builds ({ colors, tolerance, mask, minFrac,
-// border, width }); it drives the pink match overlay so the picker SHOWS what the current colours
-// hit (existing picks on open) + a live preview of the pixel under the cursor.
-function _openColorPickModal(img, box, onSample, cfg = {}) {
+// box is in window fractions; draw its crop from `img` blown up, click a pixel to sample. Clicking
+// does NOT close: a stylised glyph often needs several colours (core + a fringe shade), so keep
+// sampling and watch the pink overlay swallow more of the text with each pick; close with
+// ✕/Escape/backdrop when it covers what you want.
+// `getCfg()` returns the SAME shape mountMatchPreview's getCfg does ({ colors, tolerance, mask,
+// minFrac, border, width }) and is re-read on every repaint, so the overlay reflects the colours
+// picked so far (and any tolerance edit made behind the modal), not a snapshot from open time.
+function _openColorPickModal(img, box, onSample, getCfg = () => ({})) {
     const natW = img.naturalWidth, natH = img.naturalHeight;
     const sx = Math.round(box.x * natW), sy = Math.round(box.y * natH);
     const sw = Math.max(1, Math.round(box.w * natW)), sh = Math.max(1, Math.round(box.h * natH));
     const zoom = Math.max(2, Math.min(720 / sw, 460 / sh));   // fill the modal, min 2x, keep aspect
     const dw = Math.round(sw * zoom), dh = Math.round(sh * zoom);
-    const canvas = h("canvas", { class: "pp-pick-canvas", width: String(dw), height: String(dh),
-        style: `width:${dw}px;height:${dh}px` });
+    // intrinsic size only — the displayed size is CSS's job (.pp-pick-canvas), never an inline style.
+    const canvas = h("canvas", { class: "pp-pick-canvas", width: String(dw), height: String(dh) });
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     ctx.imageSmoothingEnabled = false;                        // crisp pixels -> canvas pixel == source pixel
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, dw, dh);
@@ -574,12 +584,14 @@ function _openColorPickModal(img, box, onSample, cfg = {}) {
     // snapshot the clean cutout: the reset source before each repaint AND the true-colour source
     // for sampling (painting mutates the canvas, so read colours off `base`, never the live ctx).
     const base = ctx.getImageData(0, 0, dw, dh);
-    const baseCols = (cfg.colors || []).filter(_isHex6).map(_mpHexToRgb);
-    // repaint the cutout with the pink match overlay for the existing picks (+ the hovered colour
-    // when previewing). Same _mpPaint the node match-preview uses (rule 7) + same arg order as _mpRender.
+    // repaint the cutout with the pink match overlay for the picks so far (+ the hovered colour when
+    // previewing). Same _mpPaint the node match-preview uses (rule 7) + same arg order as _mpRender.
+    // Colours/tolerance come from getCfg() each time — that's what makes an extra pick show up.
     const repaint = (hoverRgb) => {
+        const cfg = getCfg() || {};
         ctx.putImageData(base, 0, 0);
-        const cols = hoverRgb ? [...baseCols, hoverRgb] : baseCols;
+        const picked = (cfg.colors || []).filter(_isHex6).map(_mpHexToRgb);
+        const cols = hoverRgb ? [...picked, hoverRgb] : picked;
         if (cols.length) _mpPaint(ctx, 0, 0, dw, dh, cols, cfg.tolerance ?? 60,
             cfg.border ? (cfg.width ?? 0.1) : 0, !!cfg.mask, cfg.minFrac || 0);
     };
@@ -592,14 +604,13 @@ function _openColorPickModal(img, box, onSample, cfg = {}) {
     };
     repaint(null);                                           // paint the existing picks on open
 
-    let closed = false;
+    let closed = false, offKey = null;
     const close = () => {
         if (closed) return;
         closed = true;
-        document.removeEventListener("keydown", onKey);
+        offKey?.();
         backdrop.remove();
     };
-    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
 
     // live hover: preview what the pixel under the cursor would match (coalesced on a rAF).
     let hoverRaf = 0, pending = null;
@@ -614,22 +625,40 @@ function _openColorPickModal(img, box, onSample, cfg = {}) {
         repaint(null);                                       // drop the hover, keep existing picks
     });
 
+    // Every click ADDS a colour and the modal stays open — pick the glyph core, then its fringe
+    // shades, until the pink overlay covers the text. The sink dedups, so re-clicking the same
+    // pixel is a no-op. Repaint after the pick so the new colour's reach shows immediately.
+    const HEAD_HINT = "click each colour to keep — Esc when done";
+    const head = h("span", {}, HEAD_HINT);
+    let picks = 0;
     canvas.addEventListener("click", (e) => {
         const { i } = ptOf(e);                              // sample off `base` so the pink overlay can't tint the hex
         const hx = (n) => n.toString(16).padStart(2, "0");
         onSample(`#${hx(base.data[i])}${hx(base.data[i + 1])}${hx(base.data[i + 2])}`);
-        close();
+        picks++;
+        // report the list's true size where the caller exposes one (the sink dedups, so a repeat
+        // click must not inflate the count); fall back to clicks when there's no colour list yet.
+        const kept = (getCfg()?.colors || []).filter(_isHex6).length || picks;
+        head.textContent = `${kept} colour${kept === 1 ? "" : "s"} kept — ${HEAD_HINT}`;
+        repaint(null);
     });
 
     const panel = h("div", { class: "pp-pick-panel" },
         h("div", { class: "pp-pick-head" },
-            h("span", {}, "click the digit colour to keep"),
+            head,
             h("button", { class: "pp-pick-x", title: "close" }, "✕")),
         canvas);
     const backdrop = h("div", { class: "pp-pick-modal" }, panel);
     backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) close(); });
     panel.querySelector(".pp-pick-x").addEventListener("click", close);
-    document.addEventListener("keydown", onKey);
+    // Escape closes the picker — through the ONE key registry (rule 7), ABOVE edit_txn's 90 and the
+    // generic modal's 100: every pick opens a node edit batch, so a plain document listener never
+    // saw the key (edit_txn consumed it as "revert"). While this picker is up Escape means "done
+    // picking"; the batch stays pending behind it for its own ✓/Enter/click-outside.
+    offKey = registerKey({
+        combo: "Escape", scope: SCOPE.ANY, priority: 110, allowInField: true,
+        run: (e) => { e.preventDefault(); close(); return true; },   // consume: nothing behind us acts
+    });
     document.body.appendChild(backdrop);
 }
 
@@ -656,7 +685,85 @@ const _isHex6 = (c) => /^#[0-9a-fA-F]{6}$/.test(c || "");
 // leave the live one blank (the boot / image-change blank). _mpRender re-queries it by node id.
 export function mountMatchPreview(nodeId, winId, canvas, getBox, getCfg) {
     _mpReg.set(nodeId, { winId, getBox, getCfg });
+    // click the cutout to hand WASD to this box (see armMpNudge). The listener rides the canvas, so
+    // it dies with it on the next rebuild; the ARM survives, and is re-applied to the new canvas here.
+    canvas?.addEventListener("click", () => armMpNudge(nodeId));
+    if (_mpNudge === nodeId) armMpNudge(nodeId, true);
     _mpRender(nodeId);
+}
+
+// ---- WASD-nudge the box straight from its match preview ------------------------------------
+// A readout/detector box normally moves on the window's own image canvas — which means opening that
+// panel and hunting for the right rect. The node already shows a blown-up cutout of exactly that
+// box, so: click the cutout to hand it the keyboard, then WASD moves it (shift+WASD resizes) one
+// image-native pixel a press, with the cutout repainting under the keys. Same model writer
+// (persistWinBox) and same step as the overlay's WASD nudge (shortcuts.js), so a box lands in the
+// same place whichever surface drove it (rule 7).
+//
+// The edit joins the node's OWN transaction (nodeEdit) rather than the rect batch the overlay uses:
+// there may be no overlay at all (the panel can be shut), and the node card is the surface the user
+// is working on. So a burst of presses = one save, one re-OCR, one undo step, with the ✓/✕ bar on
+// the card — Enter/click-outside keeps it, Escape puts the box back.
+let _mpNudge = null;      // node id whose box currently owns WASD
+let _mpNudgeOff = null;   // outside-press dispose for the armed canvas
+
+const _mpCanvasOf = (nodeId) =>
+    document.querySelector(`#gnodes [data-id="${nodeId.replace(/"/g, '\\"')}"] canvas.mp-canvas`);
+
+export function mpNudgeArmed() { return _mpNudge; }
+
+export function clearMpNudge() {
+    if (!_mpNudge) return;
+    _mpCanvasOf(_mpNudge)?.classList.remove("mp-nudge");
+    _mpNudgeOff?.(); _mpNudgeOff = null;
+    _mpNudge = null;
+}
+
+// `quiet` = re-arming the same node after a rebuild replaced its canvas: keep the arm, don't
+// re-announce it. Any press outside the OWNING NODE disarms (clicking the node's own controls, or
+// its cutout again, must not) — so arming another node's preview simply moves the arm there.
+function armMpNudge(nodeId, quiet = false) {
+    const canvas = _mpCanvasOf(nodeId);
+    if (!canvas) return;
+    if (_mpNudge && _mpNudge !== nodeId) clearMpNudge();
+    _mpNudge = nodeId;
+    canvas.classList.add("mp-nudge");
+    _mpNudgeOff?.();
+    _mpNudgeOff = onOutside(canvas, () => clearMpNudge(), { also: () => nodeEls.get(nodeId) });
+    if (!quiet) setStatus("WASD moves this box, shift+WASD resizes — Enter keeps it, Esc puts it back");
+}
+
+// One WASD step on the armed preview's box. `dir` is the shared NUDGE vector, `resize` = shift.
+// Returns false when nothing is armed (or the box can't move), so the caller falls through to the
+// normal node-move handling.
+export function nudgeMatchPreviewBox(dir, resize) {
+    const nodeId = _mpNudge;
+    if (!nodeId || !_mpReg.has(nodeId)) return false;
+    if (busy.get(nodeId)) return false;         // node mid-read: same guard the overlay nudge applies
+    const n = model.nodes().find((x) => x.id === nodeId);
+    if (!n || !RECT_TYPES.has(n.type)) return false;
+    const desc = rectDescriptor(n);
+    const cur = desc.get();
+    if (!cur || desc.locked) return false;
+    // step exactly ONE image-native pixel — same reasoning as the overlay nudge: key off the IMAGE,
+    // never the canvas backing (which is a fixed 240x150 letterbox here).
+    const img = _mpImageFor(n.win.id);
+    const sx = 1 / (img?.naturalWidth || 1000), sy = 1 / (img?.naturalHeight || 1000);
+    const b = { x: cur.x, y: cur.y, w: cur.w, h: cur.h };
+    if (resize) {
+        b.w = Math.min(Math.max(MIN_FRAC, b.w + dir[0] * sx), 1 - b.x);
+        b.h = Math.min(Math.max(MIN_FRAC, b.h + dir[1] * sy), 1 - b.y);
+    } else {
+        b.x = Math.min(Math.max(0, b.x + dir[0] * sx), 1 - b.w);
+        b.y = Math.min(Math.max(0, b.y + dir[1] * sy), 1 - b.h);
+    }
+    nodeEdit(nodeId, "read", () => {
+        persistWinBox(n.win.id, { id: desc.boxId, role: desc.role, ...b });
+        refreshImageBoxes(n.win.id);          // the window's image canvas (if open) follows the move
+        _mpRender(nodeId);                    // ...and the cutout under the keys repaints
+        rectEditCanvasSync(desc.canvasKey);   // ...as does a typed rect panel bound to this box
+    }, () => { autosave(n.win.id); drawEdges(); });
+    return true;
 }
 
 export function refreshMatchPreviews(winId) {
