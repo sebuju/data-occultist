@@ -16,6 +16,7 @@ import time
 from fastapi import APIRouter, Request
 
 from ...eventlog import recent as log_recent, subscribe as subscribe_log
+from ...overlay.events import subscribe as subscribe_overlay
 from ...store.changes import subscribe
 from ...store.fire_events import subscribe as subscribe_fire
 from ...store.flow_events import subscribe as subscribe_flow
@@ -122,6 +123,12 @@ async def events(game: str, request: Request, after: int = 0, cid: str = ""):
             # so echoing it over SSE would double it up.
             if ev.get("game") in (None, game) and not ev.get("file_only"):
                 push(("log", ev))
+        def on_overlay(g: str, overlay_ids: list) -> None:
+            # The FULL visible set, not a delta — a subscriber that missed one converges on the
+            # next. The overlay page shows/hides in the DOM off this; the host window itself is
+            # driven server-side (oc.overlay.manager).
+            if g == game:
+                push(("overlay", {"overlays": overlay_ids}))
         def on_fire(g: str, trigger_id: str, sounds: list) -> None:
             # a live, un-backfilled cue -> the browser plays these sound nodes at once. ``sounds`` is
             # the router-selected / direct sound ids; empty -> the client plays the trigger's own.
@@ -166,7 +173,7 @@ async def events(game: str, request: Request, after: int = 0, cid: str = ""):
 
         task = asyncio.ensure_future(pump_activity())
         offs = [subscribe(on_change), subscribe_flow(on_flow), subscribe_log(on_log),
-                subscribe_fire(on_fire)]
+                subscribe_fire(on_fire), subscribe_overlay(on_overlay)]
         return lambda: (gpu_watch.client_disconnected(), task.cancel(), [off() for off in offs],
                         _hidden_viewers.discard(cid))   # this viewer is gone -> don't leak its cid
 
@@ -178,6 +185,8 @@ async def events(game: str, request: Request, after: int = 0, cid: str = ""):
             return f"event: log\ndata: {json.dumps(payload)}\n\n"
         if tag == "fire":
             return f"event: fire\ndata: {json.dumps(payload)}\n\n"
+        if tag == "overlay":
+            return f"event: overlay\ndata: {json.dumps(payload)}\n\n"
         if tag == "activity":
             return f"event: activity\ndata: {json.dumps(payload, default=str)}\n\n"
         # dataset: coalesce a ~1s burst, but DON'T swallow flow/log items sharing the queue —

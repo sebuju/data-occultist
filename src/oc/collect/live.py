@@ -473,6 +473,36 @@ class LiveSession:
             runner = self._trigger_runner()
             if runner is not None:
                 runner.set_input_context(self._cur[0], win.client)
+        self._resolve_overlays(result, win)
+
+    def _resolve_overlays(self, result, win) -> None:
+        """Re-resolve which overlays should be on screen, every tick.
+
+        Cheap by construction: the visibility set is compared before anything is published
+        (:func:`oc.overlay.events.publish_overlays` no-ops when unchanged) and the host window is
+        only touched when show/hide actually flips. A profile with no overlays never spawns a child.
+        Best-effort — an overlay must never be able to break the collector loop.
+        """
+        # getattr rather than a direct read: this runs off the hot tick path and must tolerate a
+        # partially-built session (tests drive _on_tick on a bare instance). No overlays -> nothing
+        # to resolve, and no child process is ever spawned.
+        profile = getattr(self, "_profile", None)
+        if not (getattr(profile, "overlays", None) or []):
+            return
+        try:
+            from ..overlay import visibility
+            runner = self._trigger_runner()
+            visibility.apply(
+                profile, profile.name,
+                window_id=getattr(result, "window_id", "") or "",
+                state_id=getattr(result, "state_id", "") or "",
+                gate_states=runner.gate_states() if runner is not None else {},
+                hwnd=int(getattr(win, "handle", 0) or 0),
+                # Never pin an overlay over whatever the user alt-tabbed to.
+                foreground=bool(win is not None and self._engine.window.is_foreground(win)),
+            )
+        except Exception:  # noqa: BLE001 - the overlay is cosmetic; the loop is not
+            pass
 
     def _dispatch_register_events(self, reg_events: list[dict], reg_snapshot: dict, reg_rings: dict) -> None:
         """Push a register feed's outcome to the trigger runner — OUTSIDE the caller's lock (a fired

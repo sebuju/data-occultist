@@ -1488,6 +1488,7 @@ class TriggerRunner:
         by_source = {s.id: s for s in self._profile.file_sources}
         by_toast = {x.id: x for x in getattr(self._profile, "toasts", [])}
         by_action = {x.id: x for x in getattr(self._profile, "actions", [])}
+        by_overlay = {x.id: x for x in getattr(self._profile, "overlays", [])}
         for tid in target_ids:
             if tid in by_producer:
                 # items == [] means an on_change fire with nothing to price (a clear / removal):
@@ -1506,6 +1507,16 @@ class TriggerRunner:
             elif tid in by_action:
                 fire_action(self._profile.name, by_action[tid], self._data_dir,
                             profile=self._profile, trigger_id=trigger.id)
+            elif tid in by_overlay:
+                # An overlay fire is a PULSE, not a draw: it records "show this until now+pulse_ms"
+                # and the next visibility resolve picks it up. Nothing here touches a window — the
+                # server stays out of the drawing path exactly as it does for sounds.
+                ov = by_overlay[tid]
+                if getattr(ov, "enabled", True):
+                    from ..overlay import visibility
+                    visibility.pulse(self._profile.name, tid, int(getattr(ov, "pulse_ms", 0) or 0))
+                    publish_flow(self._profile.name, "trigger", f"trigger:{trigger.id}",
+                                 f"overlay:{tid}", 1)
 
     def _read_source(self, source, trigger_id: str) -> None:
         """Fire a file-source target via the shared funnel (see :func:`read_source_target`)."""
