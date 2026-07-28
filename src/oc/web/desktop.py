@@ -41,6 +41,9 @@ def serve_in_thread(host: str = "127.0.0.1", port: int = 8000, *, timeout: float
     """
     import uvicorn
 
+    from . import server_url
+    server_url.set_base_url(host, port)   # the overlay child loads its page from this server
+
     config = uvicorn.Config("oc.web.app:app", host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     threading.Thread(target=server.run, daemon=True).start()

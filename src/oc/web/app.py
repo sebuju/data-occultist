@@ -29,6 +29,7 @@ from .routes import (
     live,
     logbar,
     ocr,
+    overlays,
     precapture,
     pretty,
     preview,
@@ -325,6 +326,14 @@ async def lifespan(_app: FastAPI):
         kill_live()
     except Exception:  # noqa: BLE001 - best-effort
         pass
+    try:
+        # The overlay child is already covered by a kill-on-close Job Object and an atexit hook,
+        # but take it down explicitly on a clean stop too: it is click-through and
+        # WS_EX_TOOLWINDOW, so a survivor is not in alt-tab and the user cannot click it away.
+        from ..overlay import manager as overlay_manager
+        overlay_manager.stop()
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
 
 
 def _is_loopback(host: str | None) -> bool:
@@ -401,6 +410,7 @@ def create_app() -> FastAPI:
     app.include_router(dictionaries.router)
     app.include_router(pretty.router)
     app.include_router(events.router)
+    app.include_router(overlays.router)
     app.include_router(video.router)
     app.include_router(testfeed.router)
     app.include_router(bench.router)

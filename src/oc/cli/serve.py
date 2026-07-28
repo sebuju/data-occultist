@@ -33,6 +33,10 @@ def run(args) -> int:
     # --reload worker restarted again" so it can rotate the logbar file only on the former.
     import uuid
     os.environ["OCC_BOOT_ID"] = uuid.uuid4().hex
+    # Where this server is reachable, for anything that must hand out a URL — the overlay child is
+    # a browser and loads its page from here. Env-stored so a --reload worker inherits it.
+    from ..web import server_url
+    server_url.set_base_url(args.host, args.port)
     # Shutdown is clean WITHOUT a graceful-shutdown timeout: the app's lifespan chains the
     # SIGINT/SIGTERM handlers to flip a shutdown flag that every long-lived SSE stream watches
     # (see oc.web.shutdown / oc.web.sse), so the streams self-close and uvicorn's connection
