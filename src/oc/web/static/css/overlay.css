@@ -1,0 +1,57 @@
+/* In-game overlay page. Loaded ONLY by the transparent host window (oc.overlay._overlay_child),
+   never by the SPA.
+
+   The host gets its transparency from a colour key, which is BINARY: a pixel is either fully
+   opaque or fully gone. So the page background must be exactly the key colour and nothing may
+   paint a translucent layer over the game — a half-alpha panel blends to a non-key shade and
+   renders as a solid slab instead of showing the game through it. Keep every widget background
+   either fully opaque or absent. */
+
+:root {
+    /* Must match KEY_RGB in oc/overlay/_overlay_child.py. Every pixel of this colour becomes a
+       hole in the window, which is what lets the game show through. */
+    --occ-key: rgb(1, 2, 3);
+}
+
+html, body.occ-overlay {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--occ-key);
+    /* The window is click-through at the OS level (WS_EX_TRANSPARENT), so nothing here can be
+       interacted with anyway — make that explicit rather than implied. */
+    cursor: none;
+    user-select: none;
+}
+
+#layers {
+    position: absolute;
+    inset: 0;
+}
+
+/* One overlay node = one layer. Hidden by default; the SSE `overlay` event adds .on.
+   `display` rather than opacity/visibility: a hidden layer must cost no compositing and its
+   widgets must not keep repainting. */
+.occ-layer {
+    position: absolute;
+    inset: 0;
+    display: none;
+}
+
+.occ-layer.on {
+    display: block;
+}
+
+/* Widget frames are positioned in FRACTIONS of the game's client rect, converted to percentages
+   here, so a resolution change (or DLSS output change) moves nothing. */
+.occ-layer .pw {
+    position: absolute;
+}
+
+/* No focus rings / edit affordances: this page is display-only. */
+.occ-layer .pw:focus,
+.occ-layer .pw *:focus {
+    outline: none;
+}

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>occ overlay</title>
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/pretty.css">
+<link rel="stylesheet" href="/css/overlay.css">
+</head>
+<!-- spellcheck off everywhere (rule 2). Nothing here is editable, but the page shares widget code
+     with the pretty canvas, so the same guarantee has to hold. -->
+<body spellcheck="false" class="occ-overlay">
+  <!-- One layer per overlay node; only the visible ones carry .on. The host WINDOW stays up while
+       anything is visible, so showing/hiding is a class flip here, not a window operation. -->
+  <div id="layers"></div>
+  <script type="module" src="/js/overlaywin/main.js"></script>
+</body>
+</html>
