@@ -233,5 +233,53 @@ const trgItem = (m) => P(m).triggers[1];
     eq(toast(m).texts[0].content, "", "toast token stripped");
 }
 
+// ---- overlay: sources + widget-config {{tokens}} repoint on rename, strip on delete ----
+// Overlay widgets hold their bindings as {{tokens}} inside front-end-owned config, NOT as ref
+// fields, so the wiring table cannot cover them -- they ride the shared token rewriter next to
+// toast text. Missing that is the dataset-doubling bug in a new costume.
+{
+    const m = build();
+    const id = m.addOverlay();
+    const ov = m.overlayNode(id);
+    ov.window = "win1";
+    m.addOverlaySource(id, "dataset:ds_a");
+    m.addOverlaySource(id, "readout:ro_x");
+    ov.widgets = [
+        { id: "w1", type: "label", x: 0, y: 0, w: 0.2, h: 0.05,
+          config: { text: "{{dataset:ds_a.f1|sum}} / {{readout:ro_x}}" } },
+        { id: "w2", type: "label", x: 0, y: 0.1, w: 0.2, h: 0.05,
+          config: { nested: { deep: "{{dataset:ds_a.f1}}" } } },
+    ];
+
+    m.renameDataset("ds_a", "ds_z");
+    eq(m.overlayNode(id).widgets[0].config.text, "{{dataset:ds_z.f1|sum}} / {{readout:ro_x}}",
+        "overlay widget token repointed on dataset rename");
+    eq(m.overlayNode(id).widgets[1].config.nested.deep, "{{dataset:ds_z.f1}}",
+        "overlay widget token repointed at any config depth");
+    eq(m.overlaySources(id).map((s) => s.ref), ["dataset:ds_z", "readout:ro_x"],
+        "overlay source ref repointed on dataset rename");
+    ok(m.datasets().filter((d) => d === "ds_z").length === 1, "dataset did not double on rename");
+
+    m.renameReadout("win1", "ro_x", "ro_y");
+    eq(m.overlayNode(id).widgets[0].config.text, "{{dataset:ds_z.f1|sum}} / {{readout:ro_y}}",
+        "overlay widget token repointed on readout rename");
+
+    m.removeDataset("ds_z");
+    eq(m.overlayNode(id).widgets[0].config.text, " / {{readout:ro_y}}",
+        "overlay widget dataset token stripped on delete");
+    eq(m.overlaySources(id).map((s) => s.ref), ["readout:ro_y"],
+        "overlay dataset source pruned on delete");
+}
+
+// ---- overlay is a legal trigger/gate target, and delete unwires it ----
+{
+    const m = build();
+    const id = m.addOverlay();
+    ok(m.addTriggerTarget("trg1", id), "overlay accepted as a trigger target");
+    m.removeOverlay(id);
+    ok(!(P(m).triggers.find((t) => t.id === "trg1").targets || []).includes(id),
+        "overlay target unwired from the trigger on delete");
+}
+
 if (fails.length) { console.error(`\n${fails.length} FAILED:\n - ${fails.join("\n - ")}`); process.exit(1); }
 console.log("\nall good");

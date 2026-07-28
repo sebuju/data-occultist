@@ -14,6 +14,8 @@ mirrorConsole();   // surface uncaught errors + console.error/warn in the log ba
 import { snap, addResizeGrips, suppressNextClick } from "./dragresize.js";
 import { wireSound } from "./sound_wire.js";
 import { wireToast } from "./toast_wire.js";
+import { wireOverlayNode, wireOverlayControls, wireOverlayWidgetNode } from "./overlay_wire.js";
+import { overlayControls } from "./overlay_node.js";
 import {
     syncCellSize, itemChanged, wireItemControls, wireItemField, wireItemTell,
     addFieldToItemGroup, addTellToItemGroup, refreshItemTemplateRefs,
@@ -310,7 +312,7 @@ initGameLifecycle();   // table-store + persist funnel (incl. save-conflict moda
 // and the parts of a window (region/detect/scrollbar/item/field/tell) that aren't graph nodes.
 // The merge is LAZY (built on first use, after boot's fetch) — the table isn't loaded yet at
 // module-eval time, and this map is read on every node-id parse.
-const _VIEW_ONLY_PREFIX = { prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", prodhist: "vttable", hist: "vttable", rohist: "vttable", reghist: "vttable", prochist: "vttable", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell" };
+const _VIEW_ONLY_PREFIX = { prev: "preview", vt: "vttable", vtd: "vttable", prod: "vttable", prodhist: "vttable", hist: "vttable", rohist: "vttable", reghist: "vttable", prochist: "vttable", reg: "region", det: "detect", sb: "scrollbar", item: "item", fld: "itemfield", tell: "itemtell", ovw: "overlaywidget" };
 let _prefixTypes = null;
 const _TYPE_BY_PREFIX = () => (_prefixTypes ||= { ..._VIEW_ONLY_PREFIX, ...wiring.prefixTypes() });
 export function nodeTypeOf(id) { return id === "game" ? "game" : id === "atlas" ? "atlas" : (_TYPE_BY_PREFIX()[id.split(":")[0]] || null); }
@@ -529,6 +531,9 @@ const _LIVE_SECTIONS = {
     item:   { sel: ".item-lists", build: (n) => itemLists(n.ref, n.win), wire: wireItemControls },
     // game node: rebuild only the window-priority list, leaving the name/process/title inputs put
     game:   { sel: ".game-priority", build: () => gamePriority(), wire: wireGamePriority },
+    // overlay: the widget layout surface (bound capture + placed widgets) is live DOM a full
+    // rebuild would throw away, so only the config half rebuilds.
+    overlay: { sel: ".ov-controls", build: (n) => overlayControls(n.ref, model), wire: wireOverlayControls },
 };
 
 // Rebuild ONE node's DOM in place (used when its own layout changes, e.g. type).
@@ -1181,6 +1186,10 @@ function wireNode(div, n) {
         wireRouter(div, n);
     } else if (n.type === "toast") {
         wireToast(div, n);
+    } else if (n.type === "overlay") {
+        wireOverlayNode(div, n);
+    } else if (n.type === "overlaywidget") {
+        wireOverlayWidgetNode(div, n);
     } else if (n.type === "sound") {
         wireSound(div, n);
     } else if (n.type === "action") {

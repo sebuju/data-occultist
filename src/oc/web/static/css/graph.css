@@ -134,6 +134,8 @@
 .gnode.gate       { --nt: var(--nt-gate); }
 .gnode.router     { --nt: var(--nt-router); }
 .gnode.toast      { --nt: var(--nt-toast); }
+.gnode.overlay    { --nt: var(--nt-overlay); }
+.gnode.overlaywidget { --nt: var(--nt-overlaywidget); }
 .gnode.sound      { --nt: var(--nt-sound); }
 .gnode.action     { --nt: var(--nt-action); }
 .gnode.register   { --nt: var(--nt-register); }
@@ -261,7 +263,10 @@
 .gnode .btn-icon.on { color: var(--nt, var(--accent)); }
 /* the test button's bell glyph: shrink the shared 18px icon to button scale, inherit text colour (monochrome) */
 .tn-test { display: inline-flex; align-items: center; gap: 4px; }
-.tn-test .nicon, .sn-test .nicon { width: 13px; height: 13px; color: currentColor; }
+/* Foot-button glyphs. An inline <svg> with only a viewBox has no intrinsic size, so without an
+   explicit width/height it stretches to fill the button — every node's test button must join this
+   rule, not add its own block. */
+.tn-test .nicon, .sn-test .nicon, .ov-test .nicon { width: 13px; height: 13px; color: currentColor; }
 /* the toast body: an ordered list of styled text blocks + an "add block" button */
 .tn-blocks { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; min-width: 0; }
 .tn-blocks-h { font-size: 10px; letter-spacing: .02em; }
@@ -720,7 +725,8 @@ input.gi.gi-id:focus-visible { outline: unset; background-color: #0000002e; }
     .wd-verdict, .wd-collide, .prev-host, .pp-cols, .pp-result,
     .frule, .frule-list, .frule-empty, .tn-blocks, .tn-imgs, .il-tools,
     .wi-row, .wp-row, .wd-row, .ti-sum, .ti-row, .if-sum, .key-row, .pr-fields,
-    .enr-sum, .enr-meter, .src-matches, .src-fields, .pr-srcs, .frule-btns
+    .enr-sum, .enr-meter, .src-matches, .src-fields, .pr-srcs, .frule-btns,
+    .ov-controls, .ov-surface, .ov-palette, .ovw-xy
   ) { grid-column: 1 / -1; }
 /* Every trash button (trashBtn -> .btn-trash) arms via armConfirm: the first click sets
    [data-armed="1"] and turns it yellow, a second click fires (rule 2 — no confirm()). ONE rule
@@ -1776,3 +1782,64 @@ button.gp-scheme.sel { outline: 3px solid white; outline-offset: -1px; }
     color: var(--text); background: var(--panel); border: 1px solid var(--line);
     box-shadow: 0 2px 8px var(--shadow); white-space: nowrap; }
 .route-stats.bad { border-color: #ff4d4d; }
+
+/* ---- overlay node ---------------------------------------------------------- */
+/* The overlay is drawn by a transparent child window over the game; these styles are only the
+   node body and its inline layout surface (the bound capture with the widgets placed on it). */
+
+.gnode.overlay .ov-states { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.gnode.overlay .ov-state { display: inline-flex; align-items: center; gap: 4px; }
+.gnode.overlay .ov-host:not(:empty) { margin-top: 6px; font-size: 11px; }
+.gnode.overlay .ov-palette { display: flex; flex-wrap: wrap; gap: 3px; }
+
+/* widget node: paired number inputs (x/y, w/h) share one row */
+.gnode.overlaywidget .ovw-xy { display: flex; gap: 6px; }
+.gnode.overlaywidget .ovw-xy input { width: 100%; min-width: 0; }
+.gnode.overlaywidget .ovw-owner { margin-top: 6px; font-size: 11px; }
+
+/* Layout surface: the bound capture, with widgets positioned in FRACTIONS of it. 16/9 keeps the
+   surface the same shape as the frame behind it, so a fraction reads true while dragging. */
+.gnode.overlay .ov-surface {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    margin-top: 6px;
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    background-color: #0b0e12;
+    border: 1px solid var(--line);
+    overflow: hidden;
+}
+
+/* No capture bound to the window yet — say so rather than showing an unexplained black box. */
+.gnode.overlay .ov-surface.ov-nobg::after {
+    content: "no capture bound to this window — bind one on the window node to lay out against a real frame";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 18px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.gnode.overlay .ov-w {
+    position: absolute;
+    outline: 1px dashed color-mix(in srgb, var(--nt-overlay) 70%, transparent);
+    cursor: grab;
+}
+
+.gnode.overlay .ov-wdel {
+    position: absolute;
+    top: 2px;
+    right: 1px;
+    padding: 0px 4px;
+    font-size: 7px;
+    line-height: 12px;
+    opacity: 0;
+    min-height: 0;
+    border-radius: 2px;
+}
+
+.gnode.overlay .ov-w:hover .ov-wdel { opacity: 1; }

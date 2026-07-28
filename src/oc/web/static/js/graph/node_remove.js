@@ -59,6 +59,8 @@ export function removeNode(n) {
         gate:       { kill: () => model.removeGate(n.ref.id), after: () => autosave(null) },
         router:     { kill: () => model.removeRouter(n.ref.id), after: () => autosave(null) },
         toast:      { kill: () => model.removeToast(n.ref.id), after: () => autosave(null) },
+        overlay:    { kill: () => model.removeOverlay(n.ref.id), after: () => autosave(null) },
+        overlaywidget: { kill: () => model.removeOverlayWidget(n.ov.id, n.ref.id), after: () => autosave(null) },
         sound:      { kill: () => model.removeSound(n.ref.id), after: () => autosave(null) },
         action:     { kill: () => model.removeAction(n.ref.id), after: () => autosave(null) },
         register:   { kill: () => model.removeRegister(n.ref.id), after: () => autosave(null) },

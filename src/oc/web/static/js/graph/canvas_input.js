@@ -11,7 +11,8 @@ import { openContextMenu } from "../ctxmenu.js";
 import { registerKey, SCOPE } from "../inputbus.js";
 import {
     createWindowNode, createDatasetNode, createSubsetNode, createProducerNode, createFileSourceNode,
-    createTriggerNode, createGateNode, createRouterNode, createToastNode, createSoundNode, createActionNode,
+    createTriggerNode, createGateNode, createRouterNode, createToastNode,
+    createOverlayNode, createSoundNode, createActionNode,
     createRegisterNode, createProcessNode, createDictionaryNode,
 } from "./panels/toolbox.js";
 import { deselectAll, setMultiSelect, selectionIds } from "./main.js";
@@ -149,6 +150,7 @@ export function wireCanvasInput() {
             ["gate", "gate", createGateNode],
             ["router", "router", createRouterNode],
             ["toast", "toast", createToastNode],
+            ["overlay", "overlay", createOverlayNode],
             ["sound", "sound", createSoundNode],
             ["action", "action", createActionNode],
             ["register", "register", createRegisterNode],

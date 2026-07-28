@@ -322,6 +322,13 @@ export async function listCaptures(game) {
     const r = await tfetch(`/api/captures/${encodeURIComponent(game)}`);
     return r.ok ? r.json() : [];
 }
+// Overlay: host capability (is pywebview present?) and the manual "show it now" pulse the node's
+// test button fires — the SAME path a trigger takes, so testing exercises the real mechanism.
+export const overlayHost = () => tfetch("/api/overlays/host").then((r) => r.json());
+export const overlayPulse = (game, id, ms = 0) =>
+    tfetch(`/api/overlays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/pulse${ms ? `?ms=${ms}` : ""}`,
+        { method: "POST" }).then((r) => ok(r, "overlay pulse")).then((r) => r.json());
+
 export function captureUrl(game, name) {
     return `/api/captures/${encodeURIComponent(game)}/${encodeURIComponent(name)}`;
 }

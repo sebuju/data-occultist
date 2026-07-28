@@ -22,6 +22,7 @@ import { ITEM_KINDS, TELL_KINDS } from "./imaging.js";
 import { producerParts } from "./producer_node.js";
 import { sourceParts } from "./source_node.js";
 import { toastParts } from "./toast_node.js";
+import { overlayParts, overlayWidgetParts } from "./overlay_node.js";
 import { soundParts } from "./sound_node.js";
 import { triggerParts } from "./trigger_node.js";
 import { gateParts } from "./gate_node.js";
@@ -1295,6 +1296,8 @@ export function nodeParts(n) {
     if (n.type === "router") return { ...routerParts(n.ref, model),
         head: satToggleBtn(`routhist:${n.ref.id}`, "routerhistory") };
     if (n.type === "toast") return toastParts(n.ref, model);
+    if (n.type === "overlay") return overlayParts(n.ref, model);
+    if (n.type === "overlaywidget") return overlayWidgetParts(n.ref, n.ov);
     if (n.type === "sound") return { ...soundParts(n.ref, model),
         head: satToggleBtn(`sndhist:${n.ref.id}`, "soundhistory") };
     if (n.type === "action") return { ...actionParts(n.ref, model),

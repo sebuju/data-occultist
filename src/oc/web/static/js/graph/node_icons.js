@@ -124,6 +124,18 @@ const INNER = {
         P("M18 15.5v-4.5a6 6 0 1 0-12 0v4.5l-1.6 2v.5h15.2v-.5z"),
         P("M9.8 20.5a2.3 2.3 0 0 0 4.4 0"),
     ],
+    // overlay: a screen with a floating panel on it — live values drawn over the game.
+    overlay: () => [
+        P("M3 5h18v11H3z"),
+        P("M9 20h6M12 16v4"),
+        svg("rect", { x: "5.4", y: "7.2", width: "7", height: "4.4", rx: "1", fill: "currentColor",
+                      opacity: ".55", stroke: "none" }),
+    ],
+    // overlaywidget: a small framed box with a text line — one placed element on an overlay.
+    overlaywidget: () => [
+        svg("rect", { x: "3.5", y: "6", width: "17", height: "12", rx: "1.6", "stroke-dasharray": "2.4 2" }),
+        P("M7 11h10M7 14h6"),
+    ],
     // sound: a speaker cone + two sound waves — a browser-played sound raised on fire.
     sound: () => [
         P("M4 9v6h3l5 4V5L7 9z", fill),

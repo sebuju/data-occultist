@@ -73,6 +73,8 @@
     --nt-gate: #e0c15f;        /* amber  */
     --nt-router: #7cacff;      /* blue   */
     --nt-toast: #e878b0;       /* pink   */
+    --nt-overlay: #7fd4c8;    /* teal   */
+    --nt-overlaywidget: #9fe3d9; /* pale teal */
     --nt-sound: #c98cf0;       /* mauve  */
     --nt-action: #e5605e;      /* coral-red */
     --nt-register: #5fd68f;

@@ -52,6 +52,12 @@ export class GraphModel {
         this.profile.file_sources = this.profile.file_sources || [];
         this.profile.triggers = this.profile.triggers || [];
         this.profile.toasts = this.profile.toasts || [];   // OS-notification nodes (trigger targets)
+        this.profile.overlays = this.profile.overlays || [];   // in-game overlays (trigger/gate targets)
+        for (const x of this.profile.overlays) {
+            x.sources = x.sources || [];   // wired {{token}} feeders (prefixed refs)
+            x.widgets = x.widgets || [];   // front-end-owned widget list (pretty widget registry)
+            x.states = x.states || [];     // detect states that show it ([] = any state)
+        }
         for (const x of this.profile.toasts) {
             x.sources = x.sources || [];   // wired {{token}} feeders (prefixed refs)
             x.texts = x.texts || [];       // styled rich-text blocks (the toast body)
@@ -466,7 +472,7 @@ export class GraphModel {
         this._repoint("dataset", oldId, newId, { decl: true });   // move def + feeder decls + every ref
         if (!this.datasetDef(newId)) this.ensureDatasetDef(newId);   // a def must exist for the new name
         if (this._extraDatasets) this._extraDatasets = this._extraDatasets.filter((x) => x !== oldId);   // drop stale disk entry
-        this._rewriteToastTokens("dataset", oldId, newId);   // {{dataset:oldId...}} tokens in toast text
+        this._rewriteTokens("dataset", oldId, newId);   // {{dataset:oldId...}} tokens in toast text + overlay widgets
         this._emitRename("dataset", oldId, newId);
         return true;
     }
@@ -674,6 +680,14 @@ export class GraphModel {
                 ns.push({ id: `routhist:${x.id}`, type: "vttable", ref: { kind: "routerhistory", id: x.id } });
         }
         for (const x of this.profile.toasts || []) ns.push({ id: `toast:${x.id}`, type: "toast", ref: x });
+        for (const x of this.profile.overlays || []) {
+            ns.push({ id: `overlay:${x.id}`, type: "overlay", ref: x });
+            // Each widget is its OWN node carrying its settings, exactly as a window's regions and
+            // readouts are their own nodes rather than rows inside the window body. `ov` rides
+            // along so the node can edit the widget in place without re-looking-up its parent.
+            for (const w of x.widgets || [])
+                ns.push({ id: `ovw:${x.id}:${w.id}`, type: "overlaywidget", ref: w, ov: x });
+        }
         for (const x of this.profile.sounds || []) {
             ns.push({ id: `sound:${x.id}`, type: "sound", ref: x });
             // play-history satellite (opt-in): recent plays + the firing trigger, non-persisted — a
@@ -741,6 +755,7 @@ export class GraphModel {
         if (this.producerNode(ref)) return `producer:${ref}`;
         if (this.fileSource(ref)) return `src:${ref}`;
         if (this.toastNode(ref)) return `toast:${ref}`;
+        if (this.overlayNode(ref)) return `overlay:${ref}`;
         if (this.soundNode(ref)) return `sound:${ref}`;
         if (this.actionNode(ref)) return `action:${ref}`;
         if (this.processNode(ref)) return `process:${ref}`;
@@ -912,6 +927,20 @@ export class GraphModel {
                 const from = this.refNode(s.ref);
                 if (from) es.push({ from, to: `toast:${x.id}`, kind: "data" });
             }
+        // an overlay READS its wired sources as {{tokens}} (readout/dataset/subset -> overlay), and
+        // is ANCHORED to a window: the window's client rect is its coordinate space and (with
+        // follow_window) the state that shows it. The anchor draws window -> overlay so the edge
+        // reads the way the dependency runs.
+        for (const x of this.profile.overlays || []) {
+            for (const s of this.overlaySources(x.id)) {
+                const from = this.refNode(s.ref);
+                if (from) es.push({ from, to: `overlay:${x.id}`, kind: "data" });
+            }
+            if (x.window && this.window(x.window))
+                es.push({ from: `win:${x.window}`, to: `overlay:${x.id}`, kind: "data" });
+            for (const w of x.widgets || [])
+                es.push({ from: `overlay:${x.id}`, to: `ovw:${x.id}:${w.id}`, kind: "data" });
+        }
         // a register HOLDS its wired readouts' live values (readout -> register), and — when
         // `persist` names a dataset — ALSO writes the held map there (register -> dataset), so
         // that state becomes joinable/excludable like any other dataset.
@@ -1176,7 +1205,7 @@ export class GraphModel {
     addTriggerTarget(id, pid) {
         const t = this.trigger(id);
         // a target is a price node (sweep), a file source (read), a toast (notify), a sound (play), an action (dataset op), OR a router (branch) — accept any id
-        if (!t || !pid || !(this.producerNode(pid) || this.fileSource(pid) || this.toastNode(pid) || this.soundNode(pid) || this.actionNode(pid) || this.routerNode(pid))) return false;
+        if (!t || !pid || !(this.producerNode(pid) || this.fileSource(pid) || this.toastNode(pid) || this.overlayNode(pid) || this.soundNode(pid) || this.actionNode(pid) || this.routerNode(pid))) return false;
         t.targets = t.targets || [];
         if (t.targets.includes(pid)) return false;
         t.targets.push(pid);
@@ -1326,7 +1355,7 @@ export class GraphModel {
     addRouterTarget(id, bi, targetId) {
         const b = this._branch(id, bi);
         // a branch target is a producer/file source/toast/sound/action (same set a trigger fires) — validate + dedupe
-        if (!b || !targetId || !(this.producerNode(targetId) || this.fileSource(targetId) || this.toastNode(targetId) || this.soundNode(targetId) || this.actionNode(targetId))) return false;
+        if (!b || !targetId || !(this.producerNode(targetId) || this.fileSource(targetId) || this.toastNode(targetId) || this.overlayNode(targetId) || this.soundNode(targetId) || this.actionNode(targetId))) return false;
         b.targets = b.targets || [];
         if (b.targets.includes(targetId)) return false;
         b.targets.push(targetId);
@@ -1727,6 +1756,64 @@ export class GraphModel {
     setProcessSourceOut(id, ref, out) { const x = this.processNode(id); const s = x && (x.sources || []).find((s) => s.ref === ref); if (s) s.out = (out || "").trim(); }
     // Value type carried into the rules pipeline (gates which rules apply + final coercion) — text | number.
     setProcessType(id, t) { const x = this.processNode(id); if (x) x.type = t === "number" ? "number" : "text"; }
+
+    // ---- overlays: draw live values over the game (a trigger/gate target) -----
+    // Geometry is FRACTIONAL (0..1 of the bound window's client rect), like a region box, so a
+    // resolution change moves nothing. Widget shape is front-end-owned (the same widget registry
+    // the pretty canvas uses) and rides through the profile untyped.
+    overlayNode(id) { return (this.profile.overlays || []).find((x) => x.id === id) || null; }
+    addOverlay() {
+        this.profile.overlays = this.profile.overlays || [];
+        let n = 1, id = "overlay";
+        while (this.overlayNode(id)) id = `overlay_${++n}`;
+        this.profile.overlays.push({ id, window: "", widgets: [], sources: [], follow_window: true,
+            states: [], pulse_ms: 4000, manual: false, enabled: true });
+        return id;
+    }
+    removeOverlay(id) {
+        this.profile.overlays = (this.profile.overlays || []).filter((x) => x.id !== id);
+        this._unwire("overlay", id);
+    }
+    overlaySources(id) { return GraphModel._parseRefs(this.overlayNode(id)?.sources); }
+    addOverlaySource(id, ref) {
+        const x = this.overlayNode(id);
+        if (!x || !ref) return false;
+        x.sources = x.sources || [];
+        if (x.sources.includes(ref)) return false;
+        x.sources.push(ref);
+        return true;
+    }
+    removeOverlaySource(id, ref) {
+        const x = this.overlayNode(id);
+        if (x) x.sources = (x.sources || []).filter((r) => r !== ref);
+    }
+    overlayWidgets(id) { return this.overlayNode(id)?.widgets || []; }
+    addOverlayWidget(id, type = "label") {
+        const x = this.overlayNode(id);
+        if (!x) return null;
+        x.widgets = x.widgets || [];
+        let n = 1, wid = type;
+        while (x.widgets.some((w) => w.id === wid)) wid = `${type}_${++n}`;
+        x.widgets.push({ id: wid, type, x: 0.05, y: 0.05, w: 0.2, h: 0.05, style: {}, config: {} });
+        return wid;
+    }
+    overlayWidget(id, wid) { return (this.overlayNode(id)?.widgets || []).find((w) => w.id === wid) || null; }
+    // A widget id is local to its overlay (it keys nothing outside it), so uniqueness is checked
+    // per overlay rather than globally. No ref repointing: nothing else stores a widget id.
+    renameOverlayWidget(id, wid, newId) {
+        newId = (newId || "").trim();
+        const x = this.overlayNode(id);
+        if (!x || !newId || newId === wid) return false;
+        if ((x.widgets || []).some((w) => w.id === newId)) return false;
+        const w = this.overlayWidget(id, wid);
+        if (!w) return false;
+        w.id = newId;
+        return true;
+    }
+    removeOverlayWidget(id, wid) {
+        const x = this.overlayNode(id);
+        if (x) x.widgets = (x.widgets || []).filter((w) => w.id !== wid);
+    }
 
     // ---- toasts: raise an OS notification when fired (a trigger target) -------
     toastNode(id) { return (this.profile.toasts || []).find((x) => x.id === id) || null; }
@@ -2155,7 +2242,7 @@ export class GraphModel {
     removeDataset(id) {
         this.removeDatasetDef(id);   // drop the def object first...
         this._unwireDataset(id);     // ...then unwire every remaining holder
-        this._rewriteToastTokens("dataset", id, null);   // strip its now-dead tokens from toast text
+        this._rewriteTokens("dataset", id, null);   // strip its now-dead tokens from toast text
     }
 
     // mint a fresh empty dataset (e.g. dragging a producer's wire onto empty canvas)
@@ -2198,13 +2285,13 @@ export class GraphModel {
     removeSubset(id) {
         this.profile.subsets = (this.profile.subsets || []).filter((s) => s.id !== id);
         this._unwire("subset", id);   // subset ids live in the shared dataset/subset ref sites
-        this._rewriteToastTokens("subset", id, null);   // strip its now-dead tokens from toast text
+        this._rewriteTokens("subset", id, null);   // strip its now-dead tokens from toast text
     }
     renameSubset(oldId, newId) {
         newId = (newId || "").trim();
         if (!newId || newId === oldId || this.subsetDef(newId)) return false;
         this._repoint("subset", oldId, newId, { decl: true });   // def id + every subset ref (a subset can feed another)
-        this._rewriteToastTokens("subset", oldId, newId);   // {{subset:oldId...}} tokens in toast text
+        this._rewriteTokens("subset", oldId, newId);   // {{subset:oldId...}} tokens in toast text + overlay widgets
         this._emitRename("subset", oldId, newId);
         return true;
     }
@@ -2579,7 +2666,7 @@ export class GraphModel {
         if (!v) return false;
         v.id = newId;   // the readout id lives on the window (not a top-level def) — move it directly
         this._repoint("readout", vid, newId);   // toast/register "readout:" sources + trigger readout_watch
-        this._rewriteToastTokens("readout", vid, newId);   // {{readout:vid}} / legacy {{vid}} tokens in toast text
+        this._rewriteTokens("readout", vid, newId);   // {{readout:vid}} / legacy {{vid}} tokens in toast text + overlay widgets
         return true;
     }
     removeReadout(winId, vid) {
@@ -2590,7 +2677,7 @@ export class GraphModel {
         // drop the linked field if nothing else uses it
         if (v && v.field && !this._fieldUsed(w, v.field)) w.fields = (w.fields || []).filter((f) => f.id !== v.field);
         this._unwire("readout", vid);   // toast/register "readout:" sources + trigger readout_watch
-        this._rewriteToastTokens("readout", vid, null);   // strip its now-dead tokens from toast text
+        this._rewriteTokens("readout", vid, null);   // strip its now-dead tokens from toast text
     }
     // Rewrite (newId set) or strip (newId null) a graph id inside toast-text {{token}} strings, for
     // the three heads toast text supports (readout/dataset/subset — see collect/templating.py). The
@@ -2598,7 +2685,28 @@ export class GraphModel {
     // whole-value id slots, so they live outside the registry. Only the head id moves; every suffix
     // (.field / [slice] / |agg / ?? default) is preserved. Head-id boundary mirrors pretty_repoint.py
     // _HEAD_END — the id ends at `.` `[` `|` whitespace or `}`.
-    _rewriteToastTokens(head, oldId, newId) {
+    // Every token-bearing string on an OVERLAY, as {get,set} accessors — the widget-config twin of
+    // _toastTokenSites. Widget config is front-end-owned and its shape differs per widget type
+    // (label.text, table.binding, button.label, ...), so rather than enumerating types this walks
+    // every string in the config deeply. Type-agnostic on purpose: a new widget type gains rename
+    // safety for free, which enumerating would not give.
+    _overlayTokenSites(ov) {
+        const sites = [];
+        const walk = (obj) => {
+            if (!obj || typeof obj !== "object") return;
+            for (const k of Object.keys(obj)) {
+                const v = obj[k];
+                if (typeof v === "string") sites.push({ get: () => obj[k], set: (nv) => { obj[k] = nv; } });
+                else if (v && typeof v === "object") walk(v);
+            }
+        };
+        for (const w of ov.widgets || []) walk(w.config);
+        return sites;
+    }
+    // Rewrite {{head:id}} tokens across every surface that can hold one — toast text AND overlay
+    // widget config. ONE implementation so a rename can't repoint one surface and miss the other
+    // (rule 7); a new token-bearing node type adds a *_TokenSites list here, not a second rewriter.
+    _rewriteTokens(head, oldId, newId) {
         const reTok = /\{\{(.+?)\}\}/g;
         const idHead = new RegExp("^" + head + ":\\s*([^.\\[|\\s}]+)([\\s\\S]*)$");
         const rebuild = (inner) => {
@@ -2609,15 +2717,18 @@ export class GraphModel {
             if (head === "readout" && s === oldId) return newId === null ? null : `readout:${newId}`;
             return undefined;   // unrelated token — leave the whole match untouched
         };
-        for (const t of this.profile.toasts || [])
-            for (const st of this._toastTokenSites(t)) {
-                const s = st.get();
-                if (typeof s !== "string" || !s.includes("{{")) continue;
-                st.set(s.replace(reTok, (whole, inner) => {
-                    const r = rebuild(inner);
-                    return r === undefined ? whole : (r === null ? "" : `{{${r}}}`);
-                }));
-            }
+        const sites = [
+            ...(this.profile.toasts || []).flatMap((t) => this._toastTokenSites(t)),
+            ...(this.profile.overlays || []).flatMap((o) => this._overlayTokenSites(o)),
+        ];
+        for (const st of sites) {
+            const s = st.get();
+            if (typeof s !== "string" || !s.includes("{{")) continue;
+            st.set(s.replace(reTok, (whole, inner) => {
+                const r = rebuild(inner);
+                return r === undefined ? whole : (r === null ? "" : `{{${r}}}`);
+            }));
+        }
     }
     // Every readout across all windows, for trigger-watch listing: {id, win}.
     readouts() {

@@ -93,6 +93,12 @@ async function createToastNode(at = null, group = null) {
     await placeNewNode(`toast:${id}`, "toast", null, at);
     await finishCreate(`toast:${id}`, { at, group });
 }
+async function createOverlayNode(at = null, group = null) {
+    const id = model.addOverlay();   // draws live values over the game (bound to a window, wired after)
+    if (!id) return;
+    await placeNewNode(`overlay:${id}`, "overlay", null, at);
+    await finishCreate(`overlay:${id}`, { at, group });
+}
 async function createSoundNode(at = null, group = null) {
     const id = model.addSound();   // plays an audio file (in the browser) when a trigger fires it (wired after)
     if (!id) return;
@@ -340,5 +346,5 @@ function svgToPngBlob(svg, W, H) {
 export {
     tb, tbState, createWindowNode, createProducerNode, createTriggerNode, createGateNode, createRouterNode,
     createDictionaryNode, createDatasetNode, createSubsetNode, createFileSourceNode,
-    createToastNode, createSoundNode, createActionNode, createRegisterNode, createProcessNode, buildToolbox, runCollisionCheck,
+    createToastNode, createOverlayNode, createSoundNode, createActionNode, createRegisterNode, createProcessNode, buildToolbox, runCollisionCheck,
 };
