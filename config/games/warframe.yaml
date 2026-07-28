@@ -6404,6 +6404,56 @@ actions:
   repeat: 1
   repeat_ms: 300
   enabled: true
+overlays:
+- id: overlay
+  window: live_game_window
+  widgets:
+  - id: label
+    type: label
+    x: 0.540495577074856
+    y: 0.019827262736605004
+    w: 0.299645390070922
+    h: 0.4854215918045705
+    style: {}
+    config: {}
+  - id: chart
+    type: chart
+    x: 0.27572979844621404
+    y: 0.036422268231472266
+    w: 0.16843971631205673
+    h: 0.12293144208037825
+    style: {}
+    config: {}
+  - id: panel
+    type: panel
+    x: 0.31561438689347737
+    y: 0.16314776473773118
+    w: 0.2
+    h: 0.05
+    style: {}
+    config: {}
+  - id: button
+    type: button
+    x: 0.012661236347242796
+    y: 0.34871009890761023
+    w: 0.4698581560283688
+    h: 0.4318360914105595
+    style: {}
+    config: {}
+  - id: table
+    type: table
+    x: 0.05
+    y: 0.05
+    w: 0.2
+    h: 0.05
+    style: {}
+    config: {}
+  sources: []
+  follow_window: true
+  states: []
+  pulse_ms: 4000
+  manual: false
+  enabled: true
 registers:
 - id: loadout_register
   sources:
@@ -8339,12 +8389,12 @@ layout:
       x: -8980.0
       y: -5600.0
       w: 660.0
-      h: 3484.0
+      h: 1340.0
       collapsed: false
       custW: true
       custH: true
       softW: true
-      softH: false
+      softH: true
     rohist:live_game_window:value_ab_1:
       x: -8980.0
       y: -4220.0
@@ -8359,12 +8409,12 @@ layout:
       x: -8260.0
       y: -5600.0
       w: 660.0
-      h: 3484.0
+      h: 1340.0
       collapsed: false
       custW: true
       custH: true
       softW: true
-      softH: false
+      softH: true
     rohist:live_game_window:value_ab_2:
       x: -8260.0
       y: -4220.0
@@ -8379,12 +8429,12 @@ layout:
       x: -7540.0
       y: -5600.0
       w: 660.0
-      h: 3484.0
+      h: 1340.0
       collapsed: false
       custW: true
       custH: true
       softW: true
-      softH: false
+      softH: true
     rohist:live_game_window:value_ab_3:
       x: -7540.0
       y: -4220.0
@@ -8840,6 +8890,16 @@ layout:
       custH: true
       softW: false
       softH: true
+    overlay:overlay:
+      x: -6020.0
+      y: -3820.0
+      w: 580.0
+      h: 780.0
+      collapsed: false
+      custW: true
+      custH: true
+      softW: true
+      softH: true
   tables:
     warframe:ds:master:
       sorts:
@@ -9290,32 +9350,32 @@ layout:
         overwritten: 90
     rohist:live_game_window:value_ab_1:
       widths:
-        when: 206
-        gap: 140
-        raw: 95
-        value: 95
-        confidence: 95
+        when: 212
+        gap: 120
+        raw: 101
+        value: 101
+        confidence: 101
     rohist:live_game_window:value_ab_2:
       widths:
-        when: 205
-        gap: 139
-        raw: 99
-        value: 94
-        confidence: 94
+        when: 212
+        gap: 120
+        raw: 101
+        value: 101
+        confidence: 101
     rohist:live_game_window:value_ab_4:
       widths:
-        when: 206
-        gap: 140
-        raw: 95
-        value: 95
-        confidence: 95
+        when: 212
+        gap: 120
+        raw: 101
+        value: 101
+        confidence: 101
     rohist:live_game_window:value_ab_3:
       widths:
-        when: 206
-        gap: 140
-        raw: 95
-        value: 95
-        confidence: 95
+        when: 212
+        gap: 120
+        raw: 101
+        value: 101
+        confidence: 101
     prodhist:wf_market_live:
       widths:
         dataset: 123
@@ -10084,6 +10144,7 @@ layout:
     - rohist:live_game_window:value_ab_4
     - ro:live_game_window:warframe_name_live
     - rohist:live_game_window:warframe_name_live
+    - overlay:overlay
     outline:
       color: '#5aa9e6'
       style: none
