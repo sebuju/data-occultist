@@ -79,6 +79,7 @@ KINDS: tuple[Kind, ...] = (
     Kind(name="toast", pool="toasts", node_prefix="toast"),
     Kind(name="sound", pool="sounds", prefix="sound", node_prefix="sound"),
     Kind(name="action", pool="actions", prefix="action", node_prefix="action"),
+    Kind(name="overlay", pool="overlays", prefix="overlay", node_prefix="overlay"),
     Kind(name="process", pool="processes", prefix="process", node_prefix="process"),
     Kind(name="dictionary", pool="dictionaries", node_prefix="dict"),
     # the three register grammars over ONE pool: whole register, one slot, one slot's count facet
@@ -305,7 +306,7 @@ def op_ids(vocab: str, *, skip_blank: bool = True) -> frozenset[str]:
 # --------------------------------------------------------------------------- links
 
 # Every kind a trigger/gate/router may fire, and the extra one only a gate may hold back.
-TARGETABLE = ("producer", "file_source", "toast", "sound", "action", "router")
+TARGETABLE = ("producer", "file_source", "toast", "sound", "action", "router", "overlay")
 GATEABLE = ("trigger", *TARGETABLE)
 # The live-value grammar gates and routers test. A bare `register:<id>` is accepted alongside the
 # slot forms because a whole-register port drop writes one (port_wire.js).
@@ -408,6 +409,11 @@ LINKS: tuple[Link, ...] = (
 
     # ---- sinks / operators ----
     Link("toast", "sources", "prefixed", ("readout", "dataset", "subset"), port="ref"),
+    Link("overlay", "sources", "prefixed", ("readout", "dataset", "subset"), port="ref"),
+    # Which window's client rect the overlay is anchored to and sized against. `ref` port: the
+    # WINDOW's port drops onto the overlay, matching how a dataset drops onto the subset that
+    # joins it — the overlay is the dependant end.
+    Link("overlay", "window", "bare", ("window",), verb="overlays", port="ref"),
     Link("action", "sources", "prefixed",
          ("dataset", "register", "sound", "action", "window"), port="owner"),
     Link("action", "dest", "bare", ("dataset",), verb="writes to", label="destination dataset"),

@@ -1496,6 +1496,72 @@ class SoundDef(BaseModel):
     enabled: bool = True
 
 
+class OverlayWidgetDef(BaseModel):
+    """One widget on an overlay.
+
+    ``extra="allow"`` on purpose: the widget's *shape* is front-end-owned, exactly like the pretty
+    doc (see :mod:`oc.profile.pretty`). The overlay page renders these with the SAME widget registry
+    the pretty canvas uses (``js/pretty/widgets/index.js``), so per-type config (``config``,
+    ``style``, ``units``, ``anchors``, condition profiles, ...) rides through untyped rather than
+    being mirrored field-for-field in Python — which would guarantee the two drift.
+
+    Geometry is FRACTIONAL (0..1 of the bound window's client rect), matching how regions already
+    survive a resolution change (:class:`oc.types.FractionBox`). A game that changes resolution, or
+    a DLSS/upscaling change, moves nothing.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    type: str = "label"
+    x: float = 0.05
+    y: float = 0.05
+    w: float = 0.2
+    h: float = 0.05
+
+
+class OverlayDef(BaseModel):
+    """An *overlay node*: draws live values ON TOP of the game during play.
+
+    Rendered by a transparent, click-through, always-on-top child window
+    (:mod:`oc.overlay._overlay_child`) that tracks the bound window's client rect. The server never
+    draws it — it resolves WHICH overlays should be visible and publishes that set on
+    :mod:`oc.overlay.events`; the page shows/hides in the DOM.
+
+    Visibility composes from four independent sources, any of which can show it:
+
+    * ``follow_window`` — visible while the bound ``window`` is the live classified state (and, when
+      ``states`` is non-empty, only for those state ids).
+    * a **gate** — an overlay is ``GATEABLE``, so a :class:`GateDef` naming it holds it visible for
+      exactly as long as the predicate is true.
+    * a **trigger** — an overlay is ``TARGETABLE``, so a fire shows it for ``pulse_ms``.
+    * ``manual`` — forced on from the node, for authoring and testing.
+
+    **Constraint the renderer imposes on widgets:** the host window gets its transparency from a
+    colour key, which is BINARY — a pixel is fully opaque or fully gone. Translucent widget
+    backgrounds are not possible (they blend to a non-key shade and render as a solid slab), and
+    nothing may paint the key colour. See :mod:`oc.overlay._overlay_child` quirk 1.
+    """
+
+    id: str
+    # The window node whose client rect this overlay is anchored to and sized against. Window nodes
+    # are screens of the SAME OS window, so this picks the geometry basis and the state that shows
+    # it, not a separate physical window.
+    window: str = ""
+    widgets: list[OverlayWidgetDef] = Field(default_factory=list)
+    # Wired data sources whose live values the widgets interpolate as {{tokens}} — prefixed refs
+    # ("readout:<id>" | "dataset:<id>" | "subset:<id>"), one per connected node. Drives the
+    # token-suggestion chips only; a widget still resolves any token typed by hand (same contract
+    # as ToastDef.sources).
+    sources: list[str] = Field(default_factory=list)
+    # --- visibility ---
+    follow_window: bool = True          # show while the bound window is the live state
+    states: list[str] = Field(default_factory=list)   # limit to these detect states ("" = any)
+    pulse_ms: int = 4000                # how long a trigger fire shows it (0 = until re-resolved)
+    manual: bool = False                # forced visible (authoring/testing)
+    enabled: bool = True
+
+
 class RegisterWrite(BaseModel):
     """One key row of a register ``set`` op (:class:`RegisterOp`). ``key`` is a hand-typed register
     key — register keys are created at RUNTIME (fed by whatever wiring first reports them), so this
@@ -2115,6 +2181,9 @@ class GameProfile(BaseModel):
     toasts: list[ToastDef] = Field(default_factory=list)
     sounds: list[SoundDef] = Field(default_factory=list)
     actions: list[ActionDef] = Field(default_factory=list)
+    # Transparent in-game overlays drawn over the bound window during play (see OverlayDef). The
+    # definitions live here; the window itself is a child process (oc.overlay).
+    overlays: list[OverlayDef] = Field(default_factory=list)
     # In-memory keyed maps fed by readouts (never persisted; see RegisterDef). Only the node
     # definitions live here — the held values stay in the live session's server memory.
     registers: list[RegisterDef] = Field(default_factory=list)

@@ -44,7 +44,7 @@ NON_REF: dict[str, set[str]] = {
     "GameProfile": {"actions", "atlas", "datasets", "dictionaries", "exe", "fields",
                     "file_sources", "gates", "layout", "name", "notes", "process",
                     "process_names", "processes", "producers", "registers", "routers", "settings",
-                    "sounds", "subsets", "testing", "title", "toasts", "triggers",
+                    "overlays", "sounds", "subsets", "testing", "title", "toasts", "triggers",
                     "window_title_hint", "windows"},
     "WindowDef": {"capture", "config_collapsed", "cutouts", "data_area", "dedup", "detect",
                   "detect_mode", "enabled", "grid", "id", "items", "key", "live", "notes",
@@ -78,6 +78,12 @@ NON_REF: dict[str, set[str]] = {
                  "icon", "id", "images", "message", "muted", "notes", "replace_key", "show_icon",
                  "texts", "title"},
     "SoundDef": {"enabled", "file", "id", "notes", "synth", "volume"},
+    # `window` and `sources` ARE refs and carry LINKS rows; everything else here is plain config.
+    # `widgets` holds front-end-owned widget models (extra=allow), not node refs — a widget's own
+    # {{token}} bindings are resolved at render time, exactly like a toast's text.
+    "OverlayDef": {"enabled", "follow_window", "id", "manual", "notes", "pulse_ms", "states",
+                   "widgets"},
+    "OverlayWidgetDef": {"h", "id", "type", "w", "x", "y"},
     "ActionDef": {"id", "action", "delay_ms", "repeat", "repeat_ms", "enabled", "notes",
                   "input_events"},
     "RegisterOp": {"op", "keys", "writes"},
