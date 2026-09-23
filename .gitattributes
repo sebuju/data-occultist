@@ -1,0 +1,7 @@
+# Python backend; web UI under src/oc/web/static is incidental (no JS build step, see package.json).
+# Excluded from GitHub Linguist stats so Python shows as primary; syntax highlighting unaffected.
+src/oc/web/static/** linguist-detectable=false
+
+# Third-party JS and design mockups are not project source.
+src/oc/web/static/js/vendor/** linguist-vendored
+mockups/** linguist-documentation
